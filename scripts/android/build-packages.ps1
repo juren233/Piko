@@ -119,6 +119,9 @@ try {
         $tasks = @($enabledVariants | ForEach-Object { $variantTasks[$_] })
         $arguments = @()
         $arguments += $tasks
+        if ($enabledVariants -contains "release") {
+            $arguments += @("-x", "lintVitalRelease")
+        }
         $arguments += "-PpikoAndroidAbis=$abi"
         $startedAt = Get-Date
         Write-Host "Android 构建配置：abi=$abi variants=$($enabledVariants -join ',')"

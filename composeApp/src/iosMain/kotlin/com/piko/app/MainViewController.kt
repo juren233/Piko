@@ -7,5 +7,5 @@ fun MainViewController() = ComposeUIViewController {
 }
 
 fun MainViewController(tabName: String) = ComposeUIViewController {
-    App(tab = PikoTab.valueOf(tabName))
+    App(tab = PikoTab.entries.firstOrNull { tab -> tab.name == tabName } ?: PikoTab.Receive)
 }

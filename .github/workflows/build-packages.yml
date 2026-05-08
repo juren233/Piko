@@ -10,6 +10,9 @@ on:
 permissions:
   contents: write
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   prepare:
     name: Read build config
@@ -56,7 +59,7 @@ jobs:
 
   android-signed:
     name: Android signed APK
-    runs-on: windows-latest
+    runs-on: windows-2025-vs2026
     timeout-minutes: 15
     needs: prepare
     if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.android_enabled == 'true'
@@ -180,8 +183,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Download Android artifacts
         if: needs.android-signed.result == 'success'
@@ -218,7 +219,7 @@ jobs:
 
           {
             echo "## 更新内容"
-            git log -1 --pretty=format:"- %s (%h)"
+            git log -1 --pretty=format:%B
             echo
             echo
             echo "## 版本下载"
@@ -274,11 +275,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          args=()
+          create_args=()
+          edit_args=(--prerelease=false)
           if [[ "${{ needs.prepare.outputs.release_type }}" == "prerelease" ]]; then
-            args+=(--prerelease)
+            create_args+=(--prerelease)
+            edit_args=(--prerelease)
           fi
-          gh release create "${{ needs.prepare.outputs.release_tag }}" release-assets/* \
-            --title "${{ needs.prepare.outputs.release_title }}" \
-            --notes-file release-notes.md \
-            "${args[@]}"
+          if gh release view "${{ needs.prepare.outputs.release_tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ needs.prepare.outputs.release_tag }}" release-assets/* --clobber
+            gh release edit "${{ needs.prepare.outputs.release_tag }}" \
+              --title "${{ needs.prepare.outputs.release_title }}" \
+              --notes-file release-notes.md \
+              "${edit_args[@]}"
+          else
+            gh release create "${{ needs.prepare.outputs.release_tag }}" release-assets/* \
+              --title "${{ needs.prepare.outputs.release_title }}" \
+              --notes-file release-notes.md \
+              "${create_args[@]}"
+          fi

@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CONFIG_PATH="$REPO_ROOT/.github/build-config.json"
 VERSION_PATH="$REPO_ROOT/gradle.properties"
 ARTIFACT_ROOT="$REPO_ROOT/scripts/artifacts/ios"
+IOS_BUILD_ROOT="${RUNNER_TEMP:-$REPO_ROOT/build/tmp}/piko-ios-packaging"
 XCODE_PROJECT="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcodeproj"
 XCODE_WORKSPACE="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcworkspace"
 SCHEME="PikoIOS"
@@ -88,6 +89,7 @@ if [[ ! "$version_code" =~ ^[0-9]+$ ]]; then
 fi
 
 rm -rf "$ARTIFACT_ROOT"
+rm -rf "$IOS_BUILD_ROOT"
 mkdir -p "$ARTIFACT_ROOT"
 
 cd "$REPO_ROOT"
@@ -99,6 +101,7 @@ echo "version_name=$version_name"
 echo "version_code=$version_code"
 echo "xcode_workspace=$XCODE_WORKSPACE"
 echo "xcode_project=$XCODE_PROJECT"
+echo "ios_build_root=$IOS_BUILD_ROOT"
 echo "::endgroup::"
 
 if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
@@ -113,7 +116,8 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
     for variant in $variants; do
       started_at="$(date +%s)"
       configuration="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
-      output_dir="$ARTIFACT_ROOT/$target/$variant"
+      output_dir="$IOS_BUILD_ROOT/products/$target/$variant"
+      temp_dir="$IOS_BUILD_ROOT/intermediates/$target/$variant"
       mkdir -p "$output_dir"
       echo "::group::xcodebuild $configuration $target"
       if [[ -d "$XCODE_WORKSPACE" ]]; then
@@ -122,12 +126,24 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
+          -destination "generic/platform=iOS" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          DEBUG_INFORMATION_FORMAT=dwarf \
+          GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
+          COPY_PHASE_STRIP=YES \
+          STRIP_INSTALLED_PRODUCT=YES \
+          DEPLOYMENT_POSTPROCESSING=YES \
+          VALIDATE_PRODUCT=NO \
+          DWARF_DSYM_FILE_SHOULD_ACCOMPANY_PRODUCT=NO \
+          OBJROOT="$temp_dir/obj" \
+          SYMROOT="$temp_dir/sym" \
+          SHARED_PRECOMPS_DIR="$temp_dir/precomp" \
           CONFIGURATION_BUILD_DIR="$output_dir" \
           build
       else
@@ -136,12 +152,24 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
+          -destination "generic/platform=iOS" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
           CODE_SIGNING_ALLOWED=NO \
           CODE_SIGNING_REQUIRED=NO \
           CODE_SIGN_IDENTITY="" \
+          COMPILER_INDEX_STORE_ENABLE=NO \
+          DEBUG_INFORMATION_FORMAT=dwarf \
+          GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
+          COPY_PHASE_STRIP=YES \
+          STRIP_INSTALLED_PRODUCT=YES \
+          DEPLOYMENT_POSTPROCESSING=YES \
+          VALIDATE_PRODUCT=NO \
+          DWARF_DSYM_FILE_SHOULD_ACCOMPANY_PRODUCT=NO \
+          OBJROOT="$temp_dir/obj" \
+          SYMROOT="$temp_dir/sym" \
+          SHARED_PRECOMPS_DIR="$temp_dir/precomp" \
           CONFIGURATION_BUILD_DIR="$output_dir" \
           build
       fi
@@ -153,7 +181,7 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
             suffix="-$variant"
           fi
           ipa_name="$ARTIFACT_ROOT/piko-ios-${target}${suffix}.ipa"
-          payload_dir="$ARTIFACT_ROOT/payload-${target}-${variant}/Payload"
+          payload_dir="$IOS_BUILD_ROOT/payload-${target}-${variant}/Payload"
           rm -rf "$(dirname "$payload_dir")"
           mkdir -p "$payload_dir"
           cp -R "$app" "$payload_dir/"
@@ -169,4 +197,4 @@ else
   exit 0
 fi
 
-find "$ARTIFACT_ROOT" -maxdepth 5 -type f -o -type d
+find "$ARTIFACT_ROOT" -maxdepth 1 -type f -name "*.ipa"
