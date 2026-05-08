@@ -129,7 +129,7 @@ jobs:
 
   ios-unsigned:
     name: iOS unsigned artifacts
-    runs-on: macos-latest
+    runs-on: macos-26
     timeout-minutes: 20
     needs: prepare
     if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.ios_enabled == 'true'
@@ -154,6 +154,47 @@ jobs:
           key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'gradle.properties', '**/*.gradle.kts') }}
           restore-keys: |
             konan-${{ runner.os }}-
+
+      - name: Verify Xcode and iOS SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          latest_xcode="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          candidates = []
+          for path in Path("/Applications").glob("Xcode_26*.app"):
+              match = re.match(r"Xcode_(\d+(?:\.\d+){0,2})", path.name)
+              if match:
+                  version = tuple(int(part) for part in match.group(1).split("."))
+                  candidates.append((version, path))
+
+          if not candidates:
+              raise SystemExit(1)
+
+          print(max(candidates, key=lambda item: item[0])[1])
+          PY
+          )"
+          if [[ -z "$latest_xcode" || ! -d "$latest_xcode" ]]; then
+            echo "未找到 Xcode 26：" >&2
+            find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
+            exit 1
+          fi
+          export DEVELOPER_DIR="$latest_xcode/Contents/Developer"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          xcodebuild -version
+          xcodebuild -showsdks
+          sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+          case "$sdk_version" in
+            26.*)
+              echo "使用 iOS SDK $sdk_version 构建。"
+              ;;
+            *)
+              echo "当前 iOS SDK 不是 26.x：$sdk_version" >&2
+              exit 1
+              ;;
+          esac
 
       - name: Build iOS unsigned artifacts
         shell: bash
