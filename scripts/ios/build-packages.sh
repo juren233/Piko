@@ -151,17 +151,8 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
     done
   done
 else
-  echo "::warning::未找到 ios/PikoIOS/PikoIOS.xcodeproj 或 .xcworkspace，当前只能构建 KMP iOS framework，不能产出 iPhone IPA。"
-  for target in $targets; do
-    for variant in $variants; do
-      task_variant="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
-      ./gradlew ":composeApp:link${task_variant}Framework${target}"
-      framework_dir="$REPO_ROOT/composeApp/build/bin/$target/${variant}Framework/ComposeApp.framework"
-      target_dir="$ARTIFACT_ROOT/frameworks/$variant/$target"
-      mkdir -p "$target_dir"
-      cp -R "$framework_dir" "$target_dir/"
-    done
-  done
+  echo "::warning::未找到 ios/PikoIOS/PikoIOS.xcodeproj 或 .xcworkspace，已跳过 iOS IPA 构建。当前仓库没有可打包 iPhone IPA 的 Xcode 工程。"
+  exit 0
 fi
 
 find "$ARTIFACT_ROOT" -maxdepth 5 -type f -o -type d

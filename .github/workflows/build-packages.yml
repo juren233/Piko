@@ -123,6 +123,7 @@ jobs:
   ios-unsigned:
     name: iOS unsigned artifacts
     runs-on: macos-latest
+    timeout-minutes: 20
     needs: prepare
     if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.ios_enabled == 'true'
     steps:
@@ -146,6 +147,7 @@ jobs:
         with:
           name: ios-unsigned-artifacts
           path: scripts/artifacts/ios
+          if-no-files-found: warn
 
   github-release:
     name: GitHub Release
