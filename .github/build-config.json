@@ -1,0 +1,55 @@
+{
+  "_comment": "Piko 自动构建配置。除注释字段外，开关只改 true 或 false。",
+  "build": {
+    "_comment": "总构建开关。关闭后 GitHub Actions 不再构建任何平台。",
+    "enabled_comment": "true 表示开启自动构建；false 表示关闭全部构建。",
+    "enabled": true
+  },
+  "android": {
+    "_comment": "Android 构建配置。",
+    "enabled_comment": "true 表示构建 Android；false 表示跳过 Android。",
+    "enabled": true,
+    "variants": {
+      "_comment": "Android 构建类型开关。至少需要开启 debug 或 release 中的一个。",
+      "debug_comment": "true 表示构建 debug APK；false 表示不构建 debug APK。",
+      "debug": true,
+      "release_comment": "true 表示构建 release APK；false 表示不构建 release APK。",
+      "release": true
+    },
+    "architectures": {
+      "_comment": "Android 预设架构开关。只改 true 或 false，不需要手动填写 ABI。",
+      "arm64-v8a_comment": "大多数现代 Android 手机和平板使用的 64 位 ARM 架构。",
+      "arm64-v8a": true,
+      "armeabi-v7a_comment": "老款 32 位 Android 设备架构，通常默认关闭。",
+      "armeabi-v7a": false,
+      "x86_64_comment": "Android x86_64 模拟器或少量 x86_64 设备使用。",
+      "x86_64": false,
+      "x86_comment": "旧版 Android x86 模拟器或设备使用。",
+      "x86": false
+    }
+  },
+  "ios": {
+    "_comment": "iOS 构建配置。当前只面向 iPhone 真机。",
+    "enabled_comment": "true 表示构建 iOS；false 表示跳过 iOS。",
+    "enabled": true,
+    "variants": {
+      "_comment": "iOS 构建类型开关。至少需要开启 debug 或 release 中的一个。",
+      "debug_comment": "true 表示构建 iOS debug 产物；false 表示不构建 iOS debug 产物。",
+      "debug": true,
+      "release_comment": "true 表示构建 iOS release 产物；false 表示不构建 iOS release 产物。",
+      "release": true
+    },
+    "architectures": {
+      "_comment": "iOS 预设架构开关。当前只保留 iPhone 真机 arm64。",
+      "iosArm64_comment": "iPhone 真机使用的 arm64 架构，发布 IPA 时使用。",
+      "iosArm64": true
+    }
+  },
+  "githubRelease": {
+    "_comment": "GitHub Release 配置。版本号和构建号统一从 gradle.properties 的 piko.versionName / piko.versionCode 读取。",
+    "enabled_comment": "true 表示构建成功后创建 GitHub Release；false 表示只上传 Actions Artifacts。",
+    "enabled": false,
+    "type_comment": "release 表示正式版；prerelease 表示预发布版。",
+    "type": "prerelease"
+  }
+}

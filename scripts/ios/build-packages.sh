@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+CONFIG_PATH="$REPO_ROOT/.github/build-config.json"
+VERSION_PATH="$REPO_ROOT/gradle.properties"
+ARTIFACT_ROOT="$REPO_ROOT/scripts/artifacts/ios"
+XCODE_PROJECT="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcodeproj"
+XCODE_WORKSPACE="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcworkspace"
+SCHEME="PikoIOS"
+
+if [[ ! -f "$CONFIG_PATH" ]]; then
+  echo "未找到构建配置：$CONFIG_PATH" >&2
+  exit 1
+fi
+if [[ ! -f "$VERSION_PATH" ]]; then
+  echo "未找到版本配置：$VERSION_PATH" >&2
+  exit 1
+fi
+
+read_config() {
+  python3 - "$CONFIG_PATH" "$1" <<'PY'
+import json
+import sys
+
+path, query = sys.argv[1], sys.argv[2].split(".")
+value = json.load(open(path, encoding="utf-8"))
+for key in query:
+    value = value[key]
+if isinstance(value, bool):
+    print(str(value).lower())
+else:
+    print(value)
+PY
+}
+
+read_enabled_keys() {
+  python3 - "$CONFIG_PATH" "$1" <<'PY'
+import json
+import sys
+
+path, query = sys.argv[1], sys.argv[2].split(".")
+value = json.load(open(path, encoding="utf-8"))
+for key in query:
+    value = value[key]
+print(" ".join(key for key, enabled in value.items() if enabled is True))
+PY
+}
+
+read_property() {
+  local key="$1"
+  awk -F= -v key="$key" '
+    $0 !~ /^[[:space:]]*[#!]/ && $1 == key {
+      value = substr($0, index($0, "=") + 1)
+      gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      print value
+      exit
+    }
+  ' "$VERSION_PATH"
+}
+
+if [[ "$(read_config build.enabled)" != "true" || "$(read_config ios.enabled)" != "true" ]]; then
+  echo "iOS 构建已在配置中关闭。"
+  exit 0
+fi
+
+variants="$(read_enabled_keys ios.variants)"
+targets="$(read_enabled_keys ios.architectures)"
+if [[ -z "$variants" ]]; then
+  echo "iOS 至少需要开启 debug 或 release 中的一个构建类型。" >&2
+  exit 1
+fi
+if [[ -z "$targets" ]]; then
+  echo "iOS 至少需要开启一个预设架构。" >&2
+  exit 1
+fi
+
+version_name="$(read_property piko.versionName)"
+version_code="$(read_property piko.versionCode)"
+if [[ -z "$version_name" ]]; then
+  echo "gradle.properties 缺少 piko.versionName。" >&2
+  exit 1
+fi
+if [[ ! "$version_code" =~ ^[0-9]+$ ]]; then
+  echo "piko.versionCode 必须是整数，当前值：$version_code" >&2
+  exit 1
+fi
+
+rm -rf "$ARTIFACT_ROOT"
+mkdir -p "$ARTIFACT_ROOT"
+
+cd "$REPO_ROOT"
+
+if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
+  for target in $targets; do
+    if [[ "$target" != "iosArm64" ]]; then
+      echo "当前 iOS 发布只支持 iPhone 真机架构：iosArm64。" >&2
+      exit 1
+    fi
+    sdk="iphoneos"
+    arch="arm64"
+
+    for variant in $variants; do
+      configuration="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
+      output_dir="$ARTIFACT_ROOT/$target/$variant"
+      mkdir -p "$output_dir"
+      if [[ -d "$XCODE_WORKSPACE" ]]; then
+        xcodebuild \
+          -workspace "$XCODE_WORKSPACE" \
+          -scheme "$SCHEME" \
+          -configuration "$configuration" \
+          -sdk "$sdk" \
+          ARCHS="$arch" \
+          MARKETING_VERSION="$version_name" \
+          CURRENT_PROJECT_VERSION="$version_code" \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          CONFIGURATION_BUILD_DIR="$output_dir" \
+          build
+      else
+        xcodebuild \
+          -project "$XCODE_PROJECT" \
+          -scheme "$SCHEME" \
+          -configuration "$configuration" \
+          -sdk "$sdk" \
+          ARCHS="$arch" \
+          MARKETING_VERSION="$version_name" \
+          CURRENT_PROJECT_VERSION="$version_code" \
+          CODE_SIGNING_ALLOWED=NO \
+          CODE_SIGNING_REQUIRED=NO \
+          CODE_SIGN_IDENTITY="" \
+          CONFIGURATION_BUILD_DIR="$output_dir" \
+          build
+      fi
+      find "$output_dir" -maxdepth 1 -name "*.app" -print0 |
+        while IFS= read -r -d '' app; do
+          suffix=""
+          if [[ "$variant" != "release" ]]; then
+            suffix="-$variant"
+          fi
+          ipa_name="$ARTIFACT_ROOT/piko-ios-$target$suffix.ipa"
+          payload_dir="$ARTIFACT_ROOT/payload-$target-$variant/Payload"
+          rm -rf "$(dirname "$payload_dir")"
+          mkdir -p "$payload_dir"
+          cp -R "$app" "$payload_dir/"
+          (cd "$(dirname "$payload_dir")" && zip -qry "$ipa_name" "Payload")
+          echo "::warning::已生成未签名 iPhone IPA：$ipa_name。未签名 IPA 需要后续重签名或通过对应分发链路处理，不能直接给普通用户安装。"
+        done
+    done
+  done
+else
+  echo "::warning::未找到 ios/PikoIOS/PikoIOS.xcodeproj 或 .xcworkspace，当前只能构建 KMP iOS framework，不能产出 iPhone IPA。"
+  for target in $targets; do
+    for variant in $variants; do
+      task_variant="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
+      ./gradlew ":composeApp:link${task_variant}Framework${target}"
+      framework_dir="$REPO_ROOT/composeApp/build/bin/$target/${variant}Framework/ComposeApp.framework"
+      target_dir="$ARTIFACT_ROOT/frameworks/$variant/$target"
+      mkdir -p "$target_dir"
+      cp -R "$framework_dir" "$target_dir/"
+    done
+  done
+fi
+
+find "$ARTIFACT_ROOT" -maxdepth 5 -type f -o -type d

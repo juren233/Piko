@@ -1,0 +1,20 @@
+docs/
+
+# Android
+.gradle/
+.kotlin/
+**/build/
+local.properties
+captures/
+android/keystores/
+android/signing/*.properties
+
+# Apple
+DerivedData/
+*.xcuserdata/
+*.xcuserstate
+*.moved-aside
+
+# System
+.DS_Store
+Thumbs.db

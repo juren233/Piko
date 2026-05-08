@@ -1,0 +1,266 @@
+name: Build Packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Read build config
+    runs-on: ubuntu-latest
+    outputs:
+      build_enabled: ${{ steps.config.outputs.build_enabled }}
+      android_enabled: ${{ steps.config.outputs.android_enabled }}
+      ios_enabled: ${{ steps.config.outputs.ios_enabled }}
+      release_enabled: ${{ steps.config.outputs.release_enabled }}
+      release_type: ${{ steps.config.outputs.release_type }}
+      release_tag: ${{ steps.config.outputs.release_tag }}
+      release_title: ${{ steps.config.outputs.release_title }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read config
+        id: config
+        shell: pwsh
+        run: |
+          $config = Get-Content -LiteralPath ".github/build-config.json" -Raw | ConvertFrom-Json
+          $propertiesText = Get-Content -LiteralPath "gradle.properties" |
+            Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*[#!]' } |
+            Out-String
+          $properties = ConvertFrom-StringData $propertiesText
+          $versionName = $properties["piko.versionName"]
+          $versionCode = $properties["piko.versionCode"]
+          if ([string]::IsNullOrWhiteSpace($versionName)) {
+            throw "gradle.properties 缺少 piko.versionName"
+          }
+          if ([string]::IsNullOrWhiteSpace($versionCode)) {
+            throw "gradle.properties 缺少 piko.versionCode"
+          }
+          if ($versionCode -notmatch '^\d+$') {
+            throw "piko.versionCode 必须是整数，当前值：$versionCode"
+          }
+          "build_enabled=$($config.build.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "android_enabled=$($config.android.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "ios_enabled=$($config.ios.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "release_enabled=$($config.githubRelease.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "release_type=$($config.githubRelease.type)" >> $env:GITHUB_OUTPUT
+          "release_tag=v$versionName" >> $env:GITHUB_OUTPUT
+          "release_title=Piko v$versionName" >> $env:GITHUB_OUTPUT
+
+  android-signed:
+    name: Android signed APK
+    runs-on: windows-latest
+    needs: prepare
+    if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.android_enabled == 'true'
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PATH: keystores/piko-release.p12
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Restore Android release keystore
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_BASE64)) {
+            throw "缺少 GitHub Secret：ANDROID_KEYSTORE_BASE64"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEYSTORE_PASSWORD)) {
+            throw "缺少 GitHub Secret：ANDROID_KEYSTORE_PASSWORD"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEY_ALIAS)) {
+            throw "缺少 GitHub Secret：ANDROID_KEY_ALIAS"
+          }
+          if ([string]::IsNullOrWhiteSpace($env:ANDROID_KEY_PASSWORD)) {
+            throw "缺少 GitHub Secret：ANDROID_KEY_PASSWORD"
+          }
+          New-Item -ItemType Directory -Force -Path android\keystores | Out-Null
+          [IO.File]::WriteAllBytes(
+            "android\keystores\piko-release.p12",
+            [Convert]::FromBase64String($env:ANDROID_KEYSTORE_BASE64)
+          )
+
+      - name: Build Android packages
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-packages.ps1 -Platform android
+
+      - name: Verify signed Android release APKs
+        shell: pwsh
+        run: |
+          $apks = Get-ChildItem -LiteralPath "scripts\artifacts\android\release" -Filter "*.apk"
+          if ($apks.Count -eq 0) {
+            throw "未找到 Android 已签名 release APK"
+          }
+          $apksigner = Get-ChildItem -LiteralPath "$env:ANDROID_HOME\build-tools" -Recurse -Filter "apksigner.bat" |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
+          foreach ($apk in $apks) {
+            & $apksigner verify --verbose --print-certs $apk.FullName
+          }
+
+      - name: Upload Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-packages
+          path: scripts/artifacts/android
+
+  ios-unsigned:
+    name: iOS unsigned artifacts
+    runs-on: macos-latest
+    needs: prepare
+    if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.ios_enabled == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Build iOS unsigned artifacts
+        shell: bash
+        run: |
+          chmod +x ./gradlew ./scripts/ios/build-packages.sh
+          ./scripts/ios/build-packages.sh
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unsigned-artifacts
+          path: scripts/artifacts/ios
+
+  github-release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - android-signed
+      - ios-unsigned
+    if: >
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs.prepare.outputs.release_enabled == 'true' &&
+      (needs.android-signed.result == 'success' || needs.ios-unsigned.result == 'success')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Android artifacts
+        if: needs.android-signed.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: android-packages
+          path: release-input/android
+
+      - name: Download iOS artifacts
+        if: needs.ios-unsigned.result == 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: ios-unsigned-artifacts
+          path: release-input/ios
+
+      - name: Prepare release assets and notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ needs.prepare.outputs.release_tag }}"
+          repo="${{ github.repository }}"
+          mkdir -p release-assets
+
+          if [[ -d release-input/android/release ]]; then
+            find release-input/android/release -type f -name "piko-android-*.apk" -exec cp {} release-assets/ \;
+          fi
+          if [[ -d release-input/ios ]]; then
+            find release-input/ios -type f -name "piko-ios-*.ipa" ! -name "*-debug.ipa" -exec cp {} release-assets/ \;
+          fi
+          if ! find release-assets -type f | grep -q .; then
+            echo "没有可发布的安装包。" >&2
+            exit 1
+          fi
+
+          {
+            echo "## 更新内容"
+            git log -1 --pretty=format:"- %s (%h)"
+            echo
+            echo
+            echo "## 版本下载"
+          for asset in $(find release-assets -type f | sort); do
+            name="$(basename "$asset")"
+            url="https://github.com/$repo/releases/download/$tag/$name"
+            case "$name" in
+              piko-android-*.apk)
+                arch="${name#piko-android-}"
+                arch="${arch%.apk}"
+                case "$arch" in
+                  arm64-v8a)
+                    audience="大多数现代 Android 手机和平板"
+                    ;;
+                  armeabi-v7a)
+                    audience="老款 32 位 Android 设备"
+                    ;;
+                  x86_64)
+                    audience="Android x86_64 模拟器或设备"
+                    ;;
+                  x86)
+                    audience="旧版 Android x86 模拟器或设备"
+                    ;;
+                  *)
+                    audience="Android $arch 设备"
+                    ;;
+                esac
+                echo "- $audience 下载：[$name]($url)"
+                ;;
+              piko-ios-*.ipa)
+                arch="${name#piko-ios-}"
+                arch="${arch%.ipa}"
+                case "$arch" in
+                  iosArm64)
+                    audience="iPhone 用户"
+                    ;;
+                  *)
+                    audience="iPhone $arch 用户"
+                    ;;
+                esac
+                echo "- $audience 下载：[$name]($url)"
+                ;;
+              *)
+                echo "- 其他用户下载：[$name]($url)"
+                  ;;
+              esac
+            done
+          } > release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          if [[ "${{ needs.prepare.outputs.release_type }}" == "prerelease" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${{ needs.prepare.outputs.release_tag }}" release-assets/* \
+            --title "${{ needs.prepare.outputs.release_title }}" \
+            --notes-file release-notes.md \
+            "${args[@]}"
