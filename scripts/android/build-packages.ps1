@@ -116,11 +116,18 @@ Get-ChildItem -LiteralPath $artifactRoot -Recurse -Filter "piko-android-*.apk" |
 Push-Location $repoRoot
 try {
     foreach ($abi in $enabledAbis) {
-        $tasks = $enabledVariants | ForEach-Object { $variantTasks[$_] }
-        & $gradle @tasks "-PpikoAndroidAbis=$abi"
+        $tasks = @($enabledVariants | ForEach-Object { $variantTasks[$_] })
+        $arguments = @()
+        $arguments += $tasks
+        $arguments += "-PpikoAndroidAbis=$abi"
+        $startedAt = Get-Date
+        Write-Host "Android 构建配置：abi=$abi variants=$($enabledVariants -join ',')"
+        & $gradle @arguments
         if ($LASTEXITCODE -ne 0) {
             throw "Gradle 构建失败，退出码：$LASTEXITCODE"
         }
+        $elapsed = [int]((Get-Date) - $startedAt).TotalSeconds
+        Write-Host "Android abi=$abi Gradle 构建耗时 $elapsed 秒。"
 
         foreach ($variant in $enabledVariants) {
             $targetDir = Join-Path $artifactRoot $variant

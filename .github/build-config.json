@@ -11,8 +11,8 @@
     "enabled": true,
     "variants": {
       "_comment": "Android 构建类型开关。至少需要开启 debug 或 release 中的一个。",
-      "debug_comment": "true 表示构建 debug APK；false 表示不构建 debug APK。",
-      "debug": true,
+      "debug_comment": "true 表示构建 debug APK；false 表示不构建 debug APK。CI 默认关闭，避免每次 push 重复构建 debug 和 release。",
+      "debug": false,
       "release_comment": "true 表示构建 release APK；false 表示不构建 release APK。",
       "release": true
     },

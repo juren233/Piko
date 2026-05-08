@@ -57,6 +57,7 @@ jobs:
   android-signed:
     name: Android signed APK
     runs-on: windows-latest
+    timeout-minutes: 15
     needs: prepare
     if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.android_enabled == 'true'
     env:

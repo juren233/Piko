@@ -92,6 +92,15 @@ mkdir -p "$ARTIFACT_ROOT"
 
 cd "$REPO_ROOT"
 
+echo "::group::iOS 构建配置"
+echo "variants=$variants"
+echo "targets=$targets"
+echo "version_name=$version_name"
+echo "version_code=$version_code"
+echo "xcode_workspace=$XCODE_WORKSPACE"
+echo "xcode_project=$XCODE_PROJECT"
+echo "::endgroup::"
+
 if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
   for target in $targets; do
     if [[ "$target" != "iosArm64" ]]; then
@@ -102,9 +111,11 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
     arch="arm64"
 
     for variant in $variants; do
+      started_at="$(date +%s)"
       configuration="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
       output_dir="$ARTIFACT_ROOT/$target/$variant"
       mkdir -p "$output_dir"
+      echo "::group::xcodebuild $configuration $target"
       if [[ -d "$XCODE_WORKSPACE" ]]; then
         xcodebuild \
           -workspace "$XCODE_WORKSPACE" \
@@ -134,20 +145,23 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           CONFIGURATION_BUILD_DIR="$output_dir" \
           build
       fi
+      echo "::endgroup::"
       find "$output_dir" -maxdepth 1 -name "*.app" -print0 |
         while IFS= read -r -d '' app; do
           suffix=""
           if [[ "$variant" != "release" ]]; then
             suffix="-$variant"
           fi
-          ipa_name="$ARTIFACT_ROOT/piko-ios-$target$suffix.ipa"
-          payload_dir="$ARTIFACT_ROOT/payload-$target-$variant/Payload"
+          ipa_name="$ARTIFACT_ROOT/piko-ios-${target}${suffix}.ipa"
+          payload_dir="$ARTIFACT_ROOT/payload-${target}-${variant}/Payload"
           rm -rf "$(dirname "$payload_dir")"
           mkdir -p "$payload_dir"
           cp -R "$app" "$payload_dir/"
           (cd "$(dirname "$payload_dir")" && zip -qry "$ipa_name" "Payload")
-          echo "::warning::已生成未签名 iPhone IPA：$ipa_name。未签名 IPA 需要后续重签名或通过对应分发链路处理，不能直接给普通用户安装。"
+          echo "::warning::已生成未签名 iPhone IPA：${ipa_name}。未签名 IPA 需要后续重签名或通过对应分发链路处理，不能直接给普通用户安装。"
         done
+      finished_at="$(date +%s)"
+      echo "iOS $configuration $target 构建耗时 $((finished_at - started_at)) 秒。"
     done
   done
 else

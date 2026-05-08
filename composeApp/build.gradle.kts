@@ -14,7 +14,7 @@ kotlin {
         withHostTestBuilder {}.configure {}
     }
 
-    val iosTargets = listOf(iosX64(), iosArm64(), iosSimulatorArm64())
+    val iosTargets = listOf(iosArm64())
     iosTargets.forEach { target ->
         target.binaries.framework {
             baseName = "ComposeApp"
