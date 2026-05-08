@@ -1,6 +1,7 @@
 package com.piko.app
 
 import androidx.compose.foundation.layout.Arrangement
+import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -35,8 +36,11 @@ import com.piko.app.glass.LiquidSendFloatingButton
 
 @Composable
 fun AndroidPikoApp() {
+    val currentDeviceName = remember {
+        Build.MODEL.takeIf { it.isNotBlank() } ?: "Android 设备"
+    }
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
-    var state by remember { mutableStateOf(PikoHomeState.initial()) }
+    var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
         currentDeviceName = state.currentDeviceName,
     )

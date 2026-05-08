@@ -100,7 +100,8 @@ fun rememberIosSendPlatformActions(): SendPlatformActions {
     }
 
     DisposableEffect(coordinator) {
-        onDispose { coordinator.stopLanDiscovery() }
+        coordinator.startLanPresence()
+        onDispose { coordinator.stop() }
     }
 
     return remember(coordinator) {
@@ -202,7 +203,16 @@ private class IosSendCoordinator(
     }
 
     fun stopLanDiscovery() {
+        lanDiscovery.stopDiscovery()
+    }
+
+    fun startLanPresence() {
+        lanDiscovery.startPresence()
+    }
+
+    fun stop() {
         lanDiscovery.stop()
+        transferClient.cancelAll()
     }
 
     fun startTransfer(
@@ -322,15 +332,12 @@ private class IosLanDiscovery(
     private var service: NSNetService? = null
     private var transferServer: IosTransferServer? = null
     private var callback: ((SendLanDiscoveryState, List<SendDevice>) -> Unit)? = null
-    private var active = false
+    private var discoveryActive = false
 
-    fun start(callback: (SendLanDiscoveryState, List<SendDevice>) -> Unit) {
-        stop()
-        this.callback = callback
-        active = true
-        devices.clear()
-        post(SendLanDiscoveryState.Searching)
-
+    fun startPresence() {
+        if (service != null && transferServer != null) {
+            return
+        }
         val server = IosTransferServer().also { it.start() }
         transferServer = server
         service = NSNetService(
@@ -342,21 +349,34 @@ private class IosLanDiscovery(
             delegate = this@IosLanDiscovery
             publish()
         }
+    }
 
+    fun start(callback: (SendLanDiscoveryState, List<SendDevice>) -> Unit) {
+        stopDiscovery()
+        this.callback = callback
+        discoveryActive = true
+        devices.clear()
+        post(SendLanDiscoveryState.Searching)
+
+        startPresence()
         browser.delegate = this
         browser.searchForServicesOfType(PIKO_SERVICE_TYPE, inDomain = "local.")
     }
 
-    fun stop() {
-        active = false
+    fun stopDiscovery() {
+        discoveryActive = false
         browser.stop()
+        callback = null
+        devices.clear()
+        resolvingServices.clear()
+    }
+
+    fun stop() {
+        stopDiscovery()
         service?.stop()
         transferServer?.stop()
         service = null
         transferServer = null
-        callback = null
-        devices.clear()
-        resolvingServices.clear()
     }
 
     override fun netServiceBrowserWillSearch(browser: NSNetServiceBrowser) = Unit
@@ -376,7 +396,7 @@ private class IosLanDiscovery(
         didFindService: NSNetService,
         moreComing: Boolean,
     ) {
-        if (didFindService.name == service?.name || didFindService.name.startsWith("Piko-$currentDeviceName")) {
+        if (didFindService.name == service?.name) {
             return
         }
         resolvingServices[didFindService.name] = didFindService
@@ -422,7 +442,7 @@ private class IosLanDiscovery(
     private fun post(state: SendLanDiscoveryState) {
         val nextCallback = callback ?: return
         postToMain {
-            if (active) {
+            if (discoveryActive) {
                 nextCallback(state, devices.values.toList())
             }
         }
@@ -564,6 +584,13 @@ private class IosTransferClient {
             if (activeSocket >= 0) {
                 close(activeSocket)
             }
+        }
+    }
+
+    fun cancelAll() {
+        requestedStop = SendTransferStatus.Canceled
+        if (activeSocket >= 0) {
+            close(activeSocket)
         }
     }
 

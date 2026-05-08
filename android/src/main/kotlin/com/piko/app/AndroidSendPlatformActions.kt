@@ -11,6 +11,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -91,6 +92,7 @@ fun rememberAndroidSendPlatformActions(currentDeviceName: String): SendPlatformA
     }
 
     DisposableEffect(lanDiscovery) {
+        lanDiscovery.startPresence()
         onDispose {
             lanDiscovery.stop()
             transferClient.cancelAll()
@@ -119,7 +121,7 @@ fun rememberAndroidSendPlatformActions(currentDeviceName: String): SendPlatformA
             lanDiscovery.start(callback)
         },
         stopLanDiscovery = {
-            lanDiscovery.stop()
+            lanDiscovery.stopDiscovery()
         },
         startTransfer = transferClient::startTransfer,
         pauseTransfer = transferClient::pauseTransfer,
@@ -254,17 +256,25 @@ private class AndroidLanDiscovery(
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
+    private val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val devices = linkedMapOf<String, SendDevice>()
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
     private var registeredServiceName: String? = null
-    private var active = false
+    private var discoveryActive = false
+
+    fun startPresence() {
+        runCatching {
+            registerLocalService()
+        }
+    }
 
     fun start(callback: (SendLanDiscoveryState, List<SendDevice>) -> Unit) {
-        stop()
-        active = true
+        stopDiscovery()
+        discoveryActive = true
         devices.clear()
         post(callback, SendLanDiscoveryState.Searching)
         runCatching {
@@ -278,8 +288,7 @@ private class AndroidLanDiscovery(
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (serviceInfo.serviceType.normalizedServiceType() != PIKO_SERVICE_TYPE.normalizedServiceType() ||
-                    serviceInfo.serviceName == registeredServiceName ||
-                    serviceInfo.serviceName.startsWith("Piko-$currentDeviceName")
+                    serviceInfo.serviceName == registeredServiceName
                 ) {
                     return
                 }
@@ -325,30 +334,40 @@ private class AndroidLanDiscovery(
             post(callback, SendLanDiscoveryState.Failed)
         }
         mainHandler.postDelayed({
-            if (active && devices.isEmpty()) {
+            if (discoveryActive && devices.isEmpty()) {
                 post(callback, SendLanDiscoveryState.Empty)
             }
         }, 2_500L)
     }
 
-    fun stop() {
-        active = false
+    fun stopDiscovery() {
+        discoveryActive = false
         discoveryListener?.let { listener ->
             runCatching { nsdManager.stopServiceDiscovery(listener) }
         }
+        discoveryListener = null
+        devices.clear()
+    }
+
+    fun stop() {
+        stopDiscovery()
         registrationListener?.let { listener ->
             runCatching { nsdManager.unregisterService(listener) }
         }
         runCatching { serverSocket?.close() }
         acceptThread?.interrupt()
-        discoveryListener = null
         registrationListener = null
+        releaseMulticastLock()
         serverSocket = null
         acceptThread = null
         registeredServiceName = null
     }
 
     private fun registerLocalService() {
+        if (serverSocket != null && registrationListener != null) {
+            return
+        }
+        acquireMulticastLock()
         val socket = ServerSocket(0)
         serverSocket = socket
         startAcceptLoop(socket)
@@ -357,6 +376,7 @@ private class AndroidLanDiscovery(
             serviceType = PIKO_SERVICE_TYPE
             port = socket.localPort
         }
+        registeredServiceName = serviceInfo.serviceName
         val listener = object : NsdManager.RegistrationListener {
             override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
                 registeredServiceName = serviceInfo.serviceName
@@ -366,10 +386,33 @@ private class AndroidLanDiscovery(
             override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
             override fun onUnregistrationFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
         }
-        registrationListener = listener
-        runCatching {
+        try {
             nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+            registrationListener = listener
+        } catch (error: RuntimeException) {
+            runCatching { socket.close() }
+            serverSocket = null
+            throw error
         }
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) {
+            return
+        }
+        multicastLock = wifiManager?.createMulticastLock("PikoLanDiscovery")?.apply {
+            setReferenceCounted(false)
+            runCatching { acquire() }
+        }
+    }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.let { lock ->
+            if (lock.isHeld) {
+                runCatching { lock.release() }
+            }
+        }
+        multicastLock = null
     }
 
     private fun startAcceptLoop(socket: ServerSocket) {
@@ -396,7 +439,7 @@ private class AndroidLanDiscovery(
         state: SendLanDiscoveryState,
     ) {
         mainHandler.post {
-            if (active) {
+            if (discoveryActive) {
                 callback(state, devices.values.toList())
             }
         }

@@ -75,10 +75,11 @@ enum class PikoTab(
 @Composable
 fun App(
     tab: PikoTab = PikoTab.Receive,
+    currentDeviceName: String = "当前设备",
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     sendOverlayController: SendOverlayController? = null,
 ) {
-    var state by remember { mutableStateOf(PikoHomeState.initial()) }
+    var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {

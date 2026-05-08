@@ -17,13 +17,13 @@ data class PikoHomeState(
     }
 
     companion object {
-        fun initial(): PikoHomeState {
+        fun initial(currentDeviceName: String = "当前设备"): PikoHomeState {
             return PikoHomeState(
-                currentDeviceName = "当前设备",
+                currentDeviceName = currentDeviceName,
                 trustedDeviceCount = 0,
                 pendingReceiveCount = 0,
                 receiveHistory = emptyList(),
-                sendPage = SendPageState.initial(currentDeviceName = "当前设备"),
+                sendPage = SendPageState.initial(currentDeviceName = currentDeviceName),
             )
         }
 
