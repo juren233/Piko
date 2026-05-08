@@ -8,6 +8,7 @@ local.properties
 captures/
 android/keystores/
 android/signing/*.properties
+scripts/artifacts/
 
 # Apple
 DerivedData/
