@@ -53,6 +53,27 @@ private enum LucideTabIcon {
     case send
     case settings
 
+    private var pathData: [String] {
+        switch self {
+        case .download:
+            return [
+                "M21,15v4a2,2 0,0 1,-2 2H5a2,2 0,0 1,-2 -2v-4",
+                "M7,10l5,5 5,-5",
+                "M12,15V3"
+            ]
+        case .send:
+            return [
+                "M22,2L15,22 11,13 2,9Z",
+                "M22,2L11,13"
+            ]
+        case .settings:
+            return [
+                "M12.22,2h-0.44a2,2 0,0 0,-2 2v0.18a2,2 0,0 1,-1 1.73l-0.43,0.25a2,2 0,0 1,-2 0l-0.15,-0.08a2,2 0,0 0,-2.73 0.73l-0.22,0.38a2,2 0,0 0,0.73 2.73l0.15,0.1a2,2 0,0 1,1 1.72v0.51a2,2 0,0 1,-1 1.74l-0.15,0.09a2,2 0,0 0,-0.73 2.73l0.22,0.38a2,2 0,0 0,2.73 0.73l0.15,-0.08a2,2 0,0 1,2 0l0.43,0.25a2,2 0,0 1,1 1.73V20a2,2 0,0 0,2 2h0.44a2,2 0,0 0,2 -2v-0.18a2,2 0,0 1,1 -1.73l0.43,-0.25a2,2 0,0 1,2 0l0.15,0.08a2,2 0,0 0,2.73 -0.73l0.22,-0.39a2,2 0,0 0,-0.73 -2.73l-0.15,-0.08a2,2 0,0 1,-1 -1.74v-0.5a2,2 0,0 1,1 -1.74l0.15,-0.09a2,2 0,0 0,0.73 -2.73l-0.22,-0.38a2,2 0,0 0,-2.73 -0.73l-0.15,0.08a2,2 0,0 1,-2 0l-0.43,-0.25a2,2 0,0 1,-1 -1.73V4a2,2 0,0 0,-2 -2z",
+                "M12,12m-3,0a3,3 0,1 0,6 0a3,3 0,1 0,-6 0"
+            ]
+        }
+    }
+
     var image: UIImage {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24))
         let image = renderer.image { _ in
@@ -62,14 +83,9 @@ private enum LucideTabIcon {
             path.lineWidth = 2
             path.lineCapStyle = .round
             path.lineJoinStyle = .round
-
-            switch self {
-            case .download:
-                drawDownload(in: path)
-            case .send:
-                drawSend(in: path)
-            case .settings:
-                drawSettings(in: path)
+            pathData.forEach { data in
+                var parser = LucidePathParser(data)
+                path.append(parser.parse())
             }
 
             path.stroke()
@@ -77,76 +93,286 @@ private enum LucideTabIcon {
 
         return image.withRenderingMode(.alwaysTemplate)
     }
+}
 
-    private func drawDownload(in path: UIBezierPath) {
-        path.move(to: CGPoint(x: 21, y: 15))
-        path.addLine(to: CGPoint(x: 21, y: 19))
-        path.addQuadCurve(to: CGPoint(x: 19, y: 21), controlPoint: CGPoint(x: 21, y: 21))
-        path.addLine(to: CGPoint(x: 5, y: 21))
-        path.addQuadCurve(to: CGPoint(x: 3, y: 19), controlPoint: CGPoint(x: 3, y: 21))
-        path.addLine(to: CGPoint(x: 3, y: 15))
+private struct LucidePathParser {
+    private let data: String
+    private var cursor: String.Index
+    private var currentPoint = CGPoint.zero
+    private var subpathStart = CGPoint.zero
 
-        path.move(to: CGPoint(x: 7, y: 10))
-        path.addLine(to: CGPoint(x: 12, y: 15))
-        path.addLine(to: CGPoint(x: 17, y: 10))
-
-        path.move(to: CGPoint(x: 12, y: 15))
-        path.addLine(to: CGPoint(x: 12, y: 3))
+    init(_ data: String) {
+        self.data = data
+        cursor = data.startIndex
     }
 
-    private func drawSend(in path: UIBezierPath) {
-        path.move(to: CGPoint(x: 22, y: 2))
-        path.addLine(to: CGPoint(x: 15, y: 22))
-        path.addLine(to: CGPoint(x: 11, y: 13))
-        path.addLine(to: CGPoint(x: 2, y: 9))
-        path.close()
+    mutating func parse() -> UIBezierPath {
+        let path = UIBezierPath()
+        var command: Character?
 
-        path.move(to: CGPoint(x: 22, y: 2))
-        path.addLine(to: CGPoint(x: 11, y: 13))
+        while true {
+            skipSeparators()
+            guard cursor < data.endIndex else {
+                break
+            }
+
+            if let explicitCommand = readCommand() {
+                command = explicitCommand
+            }
+
+            guard let activeCommand = command else {
+                break
+            }
+
+            switch activeCommand {
+            case "M", "m":
+                parseMove(path: path, relative: activeCommand == "m")
+                command = activeCommand == "m" ? "l" : "L"
+            case "L", "l":
+                parseLines(path: path, relative: activeCommand == "l")
+            case "H", "h":
+                parseHorizontalLines(path: path, relative: activeCommand == "h")
+            case "V", "v":
+                parseVerticalLines(path: path, relative: activeCommand == "v")
+            case "A", "a":
+                parseArcs(path: path, relative: activeCommand == "a")
+            case "Z", "z":
+                path.close()
+                currentPoint = subpathStart
+                command = nil
+            default:
+                command = nil
+            }
+        }
+
+        return path
     }
 
-    private func drawSettings(in path: UIBezierPath) {
-        let teeth = [
-            CGPoint(x: 12, y: 2),
-            CGPoint(x: 14, y: 2),
-            CGPoint(x: 14.8, y: 5),
-            CGPoint(x: 17.4, y: 4.2),
-            CGPoint(x: 19.8, y: 6.6),
-            CGPoint(x: 18.6, y: 9.4),
-            CGPoint(x: 21, y: 11),
-            CGPoint(x: 21, y: 13),
-            CGPoint(x: 18.6, y: 14.6),
-            CGPoint(x: 19.8, y: 17.4),
-            CGPoint(x: 17.4, y: 19.8),
-            CGPoint(x: 14.8, y: 19),
-            CGPoint(x: 14, y: 22),
-            CGPoint(x: 10, y: 22),
-            CGPoint(x: 9.2, y: 19),
-            CGPoint(x: 6.6, y: 19.8),
-            CGPoint(x: 4.2, y: 17.4),
-            CGPoint(x: 5.4, y: 14.6),
-            CGPoint(x: 3, y: 13),
-            CGPoint(x: 3, y: 11),
-            CGPoint(x: 5.4, y: 9.4),
-            CGPoint(x: 4.2, y: 6.6),
-            CGPoint(x: 6.6, y: 4.2),
-            CGPoint(x: 9.2, y: 5),
-            CGPoint(x: 10, y: 2)
-        ]
+    private mutating func parseMove(path: UIBezierPath, relative: Bool) {
+        guard let x = readNumber(), let y = readNumber() else {
+            return
+        }
 
-        path.move(to: teeth[0])
-        teeth.dropFirst().forEach { point in
+        let point = resolvedPoint(x: x, y: y, relative: relative)
+        path.move(to: point)
+        currentPoint = point
+        subpathStart = point
+    }
+
+    private mutating func parseLines(path: UIBezierPath, relative: Bool) {
+        while hasNumberAhead() {
+            guard let x = readNumber(), let y = readNumber() else {
+                return
+            }
+
+            let point = resolvedPoint(x: x, y: y, relative: relative)
+            path.addLine(to: point)
+            currentPoint = point
+        }
+    }
+
+    private mutating func parseHorizontalLines(path: UIBezierPath, relative: Bool) {
+        while hasNumberAhead() {
+            guard let x = readNumber() else {
+                return
+            }
+
+            let point = CGPoint(x: relative ? currentPoint.x + x : x, y: currentPoint.y)
+            path.addLine(to: point)
+            currentPoint = point
+        }
+    }
+
+    private mutating func parseVerticalLines(path: UIBezierPath, relative: Bool) {
+        while hasNumberAhead() {
+            guard let y = readNumber() else {
+                return
+            }
+
+            let point = CGPoint(x: currentPoint.x, y: relative ? currentPoint.y + y : y)
+            path.addLine(to: point)
+            currentPoint = point
+        }
+    }
+
+    private mutating func parseArcs(path: UIBezierPath, relative: Bool) {
+        while hasNumberAhead() {
+            guard
+                let radiusX = readNumber(),
+                let radiusY = readNumber(),
+                let rotation = readNumber(),
+                let largeArc = readNumber(),
+                let sweep = readNumber(),
+                let x = readNumber(),
+                let y = readNumber()
+            else {
+                return
+            }
+
+            let endPoint = resolvedPoint(x: x, y: y, relative: relative)
+            addArc(
+                to: path,
+                from: currentPoint,
+                end: endPoint,
+                radiusX: radiusX,
+                radiusY: radiusY,
+                rotation: rotation,
+                largeArc: largeArc != 0,
+                sweep: sweep != 0
+            )
+            currentPoint = endPoint
+        }
+    }
+
+    private func resolvedPoint(x: CGFloat, y: CGFloat, relative: Bool) -> CGPoint {
+        if relative {
+            return CGPoint(x: currentPoint.x + x, y: currentPoint.y + y)
+        }
+
+        return CGPoint(x: x, y: y)
+    }
+
+    private mutating func addArc(
+        to path: UIBezierPath,
+        from start: CGPoint,
+        end: CGPoint,
+        radiusX: CGFloat,
+        radiusY: CGFloat,
+        rotation: CGFloat,
+        largeArc: Bool,
+        sweep: Bool
+    ) {
+        guard radiusX > 0, radiusY > 0, start != end else {
+            path.addLine(to: end)
+            return
+        }
+
+        let phi = rotation * .pi / 180
+        let cosPhi = cos(phi)
+        let sinPhi = sin(phi)
+        let dx = (start.x - end.x) / 2
+        let dy = (start.y - end.y) / 2
+        let x1 = cosPhi * dx + sinPhi * dy
+        let y1 = -sinPhi * dx + cosPhi * dy
+        var rx = abs(radiusX)
+        var ry = abs(radiusY)
+        let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry)
+
+        if lambda > 1 {
+            let scale = sqrt(lambda)
+            rx *= scale
+            ry *= scale
+        }
+
+        let rx2 = rx * rx
+        let ry2 = ry * ry
+        let x12 = x1 * x1
+        let y12 = y1 * y1
+        let denominator = rx2 * y12 + ry2 * x12
+
+        guard denominator != 0 else {
+            path.addLine(to: end)
+            return
+        }
+
+        let sign: CGFloat = largeArc == sweep ? -1 : 1
+        let numerator = max(0, rx2 * ry2 - rx2 * y12 - ry2 * x12)
+        let coefficient = sign * sqrt(numerator / denominator)
+        let centerX1 = coefficient * (rx * y1 / ry)
+        let centerY1 = coefficient * (-ry * x1 / rx)
+        let center = CGPoint(
+            x: cosPhi * centerX1 - sinPhi * centerY1 + (start.x + end.x) / 2,
+            y: sinPhi * centerX1 + cosPhi * centerY1 + (start.y + end.y) / 2
+        )
+        let vectorStart = CGVector(dx: (x1 - centerX1) / rx, dy: (y1 - centerY1) / ry)
+        let vectorEnd = CGVector(dx: (-x1 - centerX1) / rx, dy: (-y1 - centerY1) / ry)
+        let startAngle = vectorAngle(from: CGVector(dx: 1, dy: 0), to: vectorStart)
+        var deltaAngle = vectorAngle(from: vectorStart, to: vectorEnd)
+
+        if !sweep && deltaAngle > 0 {
+            deltaAngle -= 2 * .pi
+        } else if sweep && deltaAngle < 0 {
+            deltaAngle += 2 * .pi
+        }
+
+        let steps = max(8, Int(ceil(abs(deltaAngle) / (.pi / 8))))
+        for step in 1...steps {
+            let angle = startAngle + deltaAngle * CGFloat(step) / CGFloat(steps)
+            let point = CGPoint(
+                x: center.x + cosPhi * rx * cos(angle) - sinPhi * ry * sin(angle),
+                y: center.y + sinPhi * rx * cos(angle) + cosPhi * ry * sin(angle)
+            )
             path.addLine(to: point)
         }
-        path.close()
+    }
 
-        path.move(to: CGPoint(x: 15, y: 12))
-        path.addArc(
-            withCenter: CGPoint(x: 12, y: 12),
-            radius: 3,
-            startAngle: 0,
-            endAngle: CGFloat.pi * 2,
-            clockwise: true
-        )
+    private func vectorAngle(from start: CGVector, to end: CGVector) -> CGFloat {
+        let dot = start.dx * end.dx + start.dy * end.dy
+        let determinant = start.dx * end.dy - start.dy * end.dx
+        return atan2(determinant, dot)
+    }
+
+    private mutating func readCommand() -> Character? {
+        skipSeparators()
+        guard cursor < data.endIndex else {
+            return nil
+        }
+
+        let character = data[cursor]
+        guard "MmLlHhVvAaZz".contains(character) else {
+            return nil
+        }
+
+        cursor = data.index(after: cursor)
+        return character
+    }
+
+    private mutating func readNumber() -> CGFloat? {
+        skipSeparators()
+        guard cursor < data.endIndex else {
+            return nil
+        }
+
+        let start = cursor
+        if data[cursor] == "-" || data[cursor] == "+" {
+            cursor = data.index(after: cursor)
+        }
+
+        while cursor < data.endIndex {
+            let character = data[cursor]
+            if character.isNumber || character == "." {
+                cursor = data.index(after: cursor)
+            } else if character == "e" || character == "E" {
+                cursor = data.index(after: cursor)
+                if cursor < data.endIndex, data[cursor] == "-" || data[cursor] == "+" {
+                    cursor = data.index(after: cursor)
+                }
+            } else {
+                break
+            }
+        }
+
+        guard start != cursor, let value = Double(String(data[start..<cursor])) else {
+            cursor = start
+            return nil
+        }
+
+        return CGFloat(value)
+    }
+
+    private func hasNumberAhead() -> Bool {
+        var parser = self
+        return parser.readNumber() != nil
+    }
+
+    private mutating func skipSeparators() {
+        while cursor < data.endIndex {
+            let character = data[cursor]
+            if character == " " || character == "\n" || character == "\t" || character == "," {
+                cursor = data.index(after: cursor)
+            } else {
+                break
+            }
+        }
     }
 }
