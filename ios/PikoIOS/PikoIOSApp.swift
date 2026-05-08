@@ -16,7 +16,7 @@ struct PikoIOSApp: App {
                         }
                     }
 
-                ComposeView(tabName: "Send")
+                SendTabView()
                     .tabItem {
                         Label {
                             Text("发送")
@@ -38,11 +38,54 @@ struct PikoIOSApp: App {
     }
 }
 
+struct SendTabView: View {
+    private let sendOverlayController = SendOverlayController()
+    @State private var canSend = false
+    private let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            ComposeView(
+                tabName: "Send",
+                sendOverlayController: sendOverlayController
+            )
+
+            if canSend {
+                Button {
+                    sendOverlayController.send()
+                    canSend = sendOverlayController.canSend
+                } label: {
+                    Label("发送", systemImage: "paperplane.fill")
+                        .font(.headline)
+                        .padding(.horizontal, 26)
+                        .frame(height: 58)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+                .padding(.bottom, 92)
+            }
+        }
+        .onReceive(timer) { _ in
+            canSend = sendOverlayController.canSend
+        }
+    }
+}
+
 struct ComposeView: UIViewControllerRepresentable {
     let tabName: String
+    var sendOverlayController: SendOverlayController? = nil
 
     func makeUIViewController(context: Context) -> UIViewController {
-        MainViewControllerKt.MainViewController(tabName: tabName)
+        MainViewControllerKt.MainViewController(
+            tabName: tabName,
+            sendOverlayController: sendOverlayController
+        )
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}

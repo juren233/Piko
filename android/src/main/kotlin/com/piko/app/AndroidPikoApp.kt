@@ -3,6 +3,7 @@ package com.piko.app
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -30,11 +31,15 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.juren233.piko.R
 import com.piko.app.glass.LiquidBottomTab
 import com.piko.app.glass.LiquidBottomTabs
+import com.piko.app.glass.LiquidSendFloatingButton
 
 @Composable
 fun AndroidPikoApp() {
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
     var state by remember { mutableStateOf(PikoHomeState.initial()) }
+    val sendPlatformActions = rememberAndroidSendPlatformActions(
+        currentDeviceName = state.currentDeviceName,
+    )
     val backdrop = rememberLayerBackdrop()
 
     MaterialTheme {
@@ -48,12 +53,13 @@ fun AndroidPikoApp() {
                 PikoTabScreen(
                     tab = selectedTab,
                     state = state,
-                    onCreateSampleTransfer = {
-                        state = state.withSampleTransfer()
+                    onStateMutate = { transform -> state = transform(state) },
+                    onCreateSampleReceiveHistory = {
+                        state = state.withSampleReceiveHistory()
                     },
-                    modifier = Modifier
-                        .statusBarsPadding()
-                        .padding(bottom = 104.dp),
+                    sendPlatformActions = sendPlatformActions,
+                    bottomContentPadding = 104.dp,
+                    modifier = Modifier.statusBarsPadding(),
                 )
             }
 
@@ -87,6 +93,41 @@ fun AndroidPikoApp() {
                                 fontWeight = if (tab == selectedTab) FontWeight.SemiBold else FontWeight.Medium,
                             )
                         }
+                    }
+                }
+            }
+
+            if (selectedTab == PikoTab.Send && state.sendPage.canSend) {
+                LiquidSendFloatingButton(
+                    backdrop = backdrop,
+                    onClick = {
+                        startSendTransfer(
+                            sendPage = state.sendPage,
+                            onStateMutate = { transform -> state = transform(state) },
+                            sendPlatformActions = sendPlatformActions,
+                        )
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(bottom = 104.dp),
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Icon(
+                            painter = PikoTab.Send.iconPainter(),
+                            contentDescription = null,
+                            modifier = Modifier.size(21.dp),
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
+                        Text(
+                            text = "发送",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                     }
                 }
             }
