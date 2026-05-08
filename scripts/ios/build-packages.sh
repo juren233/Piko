@@ -176,6 +176,19 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
       echo "::endgroup::"
       find "$output_dir" -maxdepth 1 -name "*.app" -print0 |
         while IFS= read -r -d '' app; do
+          plist_path="$app/Info.plist"
+          python3 - "$plist_path" <<'PY'
+import plistlib
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as file:
+    plist = plistlib.load(file)
+
+if plist.get("CADisableMinimumFrameDurationOnPhone") is not True:
+    print(f"{path} 缺少 CADisableMinimumFrameDurationOnPhone=true，Compose iOS 真机会在启动时崩溃。", file=sys.stderr)
+    sys.exit(1)
+PY
           suffix=""
           if [[ "$variant" != "release" ]]; then
             suffix="-$variant"
