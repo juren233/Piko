@@ -126,7 +126,6 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
-          -destination "generic/platform=iOS" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
@@ -152,7 +151,6 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
-          -destination "generic/platform=iOS" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
