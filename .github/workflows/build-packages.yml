@@ -204,13 +204,14 @@ jobs:
           set -euo pipefail
           tag="${{ needs.prepare.outputs.release_tag }}"
           repo="${{ github.repository }}"
+          version="${tag#v}"
           mkdir -p release-assets
 
           if [[ -d release-input/android/release ]]; then
-            find release-input/android/release -type f -name "piko-android-*.apk" -exec cp {} release-assets/ \;
+            find release-input/android/release -type f -name "piko-${version}-android-*.apk" -exec cp {} release-assets/ \;
           fi
           if [[ -d release-input/ios ]]; then
-            find release-input/ios -type f -name "piko-ios-*.ipa" ! -name "*-debug.ipa" -exec cp {} release-assets/ \;
+            find release-input/ios -type f -name "piko-${version}-ios-unsigned.ipa" -exec cp {} release-assets/ \;
           fi
           if ! find release-assets -type f | grep -q .; then
             echo "没有可发布的安装包。" >&2
@@ -227,8 +228,8 @@ jobs:
             name="$(basename "$asset")"
             url="https://github.com/$repo/releases/download/$tag/$name"
             case "$name" in
-              piko-android-*.apk)
-                arch="${name#piko-android-}"
+              piko-${version}-android-*.apk)
+                arch="${name#piko-${version}-android-}"
                 arch="${arch%.apk}"
                 case "$arch" in
                   arm64-v8a)
@@ -249,18 +250,8 @@ jobs:
                 esac
                 echo "- $audience 下载：[$name]($url)"
                 ;;
-              piko-ios-*.ipa)
-                arch="${name#piko-ios-}"
-                arch="${arch%.ipa}"
-                case "$arch" in
-                  iosArm64)
-                    audience="iPhone 用户"
-                    ;;
-                  *)
-                    audience="iPhone $arch 用户"
-                    ;;
-                esac
-                echo "- $audience 下载：[$name]($url)"
+              piko-${version}-ios-unsigned.ipa)
+                echo "- iPhone 用户下载：[$name]($url)"
                 ;;
               *)
                 echo "- 其他用户下载：[$name]($url)"

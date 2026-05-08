@@ -4,6 +4,7 @@ $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repoRoot = Resolve-Path (Join-Path $scriptRoot "..\..")
 $gradle = Join-Path $repoRoot "gradlew.bat"
 $configPath = Join-Path $repoRoot ".github\build-config.json"
+$versionPath = Join-Path $repoRoot "gradle.properties"
 $artifactRoot = Join-Path $repoRoot "scripts\artifacts\android"
 
 if (-not (Test-Path -LiteralPath $gradle)) {
@@ -12,8 +13,20 @@ if (-not (Test-Path -LiteralPath $gradle)) {
 if (-not (Test-Path -LiteralPath $configPath)) {
     throw "未找到构建配置：$configPath"
 }
+if (-not (Test-Path -LiteralPath $versionPath)) {
+    throw "未找到版本配置：$versionPath"
+}
 
 $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+$propertiesText = Get-Content -LiteralPath $versionPath |
+    Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*[#!]' } |
+    Out-String
+$properties = ConvertFrom-StringData $propertiesText
+$versionName = $properties["piko.versionName"]
+if ([string]::IsNullOrWhiteSpace($versionName)) {
+    throw "gradle.properties 缺少 piko.versionName。"
+}
+
 if (-not $config.build.enabled -or -not $config.android.enabled) {
     Write-Host "Android 构建已在配置中关闭。"
     exit 0
@@ -110,7 +123,7 @@ $variantTasks = @{
 }
 
 New-Item -ItemType Directory -Force -Path $artifactRoot | Out-Null
-Get-ChildItem -LiteralPath $artifactRoot -Recurse -Filter "piko-android-*.apk" |
+Get-ChildItem -LiteralPath $artifactRoot -Recurse -Filter "*.apk" |
     ForEach-Object { Remove-ApkWithRetry -Path $_.FullName }
 
 Push-Location $repoRoot
@@ -138,7 +151,7 @@ try {
 
             $source = Get-Apk -Variant $variant
             $suffix = if ($variant -eq "debug") { "-debug" } else { "" }
-            $target = Join-Path $targetDir "piko-android-$abi$suffix.apk"
+            $target = Join-Path $targetDir "piko-$versionName-android-$abi$suffix.apk"
             Copy-Apk -Source $source -Destination $target
         }
     }

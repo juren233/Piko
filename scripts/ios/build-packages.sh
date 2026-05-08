@@ -180,7 +180,7 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           if [[ "$variant" != "release" ]]; then
             suffix="-$variant"
           fi
-          ipa_name="$ARTIFACT_ROOT/piko-ios-${target}${suffix}.ipa"
+          ipa_name="$ARTIFACT_ROOT/piko-${version_name}-ios-unsigned${suffix}.ipa"
           payload_dir="$IOS_BUILD_ROOT/payload-${target}-${variant}/Payload"
           rm -rf "$(dirname "$payload_dir")"
           mkdir -p "$payload_dir"
