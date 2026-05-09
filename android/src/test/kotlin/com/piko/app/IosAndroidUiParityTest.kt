@@ -104,8 +104,10 @@ class IosAndroidUiParityTest {
         val xcodeCandidateLoop = workflow.substringBefore("if [[ -z \"\$selected_xcode\" ]]; then")
 
         assertFalse("xcodebuild -downloadPlatform iOS" in workflow)
-        assertFalse("generic/platform=iOS" in workflow)
-        assertFalse("-destination" in iosScript)
+        assertFalse("iphonesimulator" in workflow)
+        assertFalse("iphonesimulator" in iosScript)
+        assertTrue("generic/platform=iOS" in xcodeCandidateLoop)
+        assertTrue("generic/platform=iOS" in iosScript)
         assertTrue("26.5*)" in xcodeCandidateLoop)
         assertTrue("26.5*)" in iosScript)
         assertTrue("-showBuildSettings" in xcodeCandidateLoop)
@@ -114,9 +116,16 @@ class IosAndroidUiParityTest {
             "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
             "26.5*)",
             "build_settings=\"\$(xcodebuild \\",
+            "-destination \"generic/platform=iOS\"",
             "-showBuildSettings",
         )
-        assertInOrder(iosScript, "-sdk \"\$sdk\"", "ARCHS=\"\$arch\"", "CONFIGURATION_BUILD_DIR=\"\$output_dir\"")
+        assertInOrder(
+            iosScript,
+            "-sdk \"\$sdk\"",
+            "-destination \"\$destination\"",
+            "ARCHS=\"\$arch\"",
+            "CONFIGURATION_BUILD_DIR=\"\$output_dir\"",
+        )
     }
 
     @Test

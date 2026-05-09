@@ -194,9 +194,10 @@ jobs:
               -project ios/Piko.xcodeproj \
               -scheme Piko \
               -sdk iphoneos \
+              -destination "generic/platform=iOS" \
               -showBuildSettings 2>&1 || true)"
             if grep -q "xcodebuild: error:" <<< "$build_settings"; then
-              echo "跳过：该 Xcode 无法读取 iPhoneOS 构建设置。"
+              echo "跳过：该 Xcode 无法读取 iPhoneOS 真机构建设置。"
               printf '%s\n' "$build_settings"
               continue
             fi
@@ -206,7 +207,7 @@ jobs:
           done <<< "$xcode_candidates"
 
           if [[ -z "$selected_xcode" ]]; then
-            echo "未找到可用的 Xcode 26.5 iPhoneOS SDK。" >&2
+            echo "未找到可直接构建 iPhoneOS 的 Xcode 26.5。" >&2
             find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
             exit 1
           fi

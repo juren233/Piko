@@ -123,6 +123,7 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
     fi
     sdk="iphoneos"
     arch="arm64"
+    destination="generic/platform=iOS"
 
     for variant in $variants; do
       started_at="$(date +%s)"
@@ -137,6 +138,7 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
+          -destination "$destination" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
@@ -162,6 +164,7 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
+          -destination "$destination" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
