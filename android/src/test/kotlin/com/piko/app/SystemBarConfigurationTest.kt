@@ -31,7 +31,7 @@ class SystemBarConfigurationTest {
 
     @Test
     fun iosSystemBarsUseTransparentBackgrounds() {
-        val swift = File(rootDir, "ios/PikoIOS/PikoIOSApp.swift").readText()
+        val swift = File(rootDir, "ios/PikoApp.swift").readText()
 
         assertTrue("configureWithTransparentBackground()" in swift)
         assertTrue("UITabBar.appearance().isTranslucent = true" in swift)

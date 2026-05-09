@@ -7,13 +7,35 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		8F2E59B12C00000100A10001 /* PikoIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59B02C00000100A10001 /* PikoIOSApp.swift */; };
+		8F2E59B12C00000100A10001 /* PikoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59B02C00000100A10001 /* PikoApp.swift */; };
+		8F2E59D02C00000100A10001 /* PikoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C02C00000100A10001 /* PikoRootView.swift */; };
+		8F2E59D12C00000100A10001 /* NativeReceiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C12C00000100A10001 /* NativeReceiveView.swift */; };
+		8F2E59D22C00000100A10001 /* NativeSendView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C22C00000100A10001 /* NativeSendView.swift */; };
+		8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C32C00000100A10001 /* NativeSettingsView.swift */; };
+		8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C42C00000100A10001 /* NativePikoModel.swift */; };
+		8F2E59D52C00000100A10001 /* NativeTransferProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */; };
+		8F2E59D62C00000100A10001 /* NativePickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C62C00000100A10001 /* NativePickers.swift */; };
+		8F2E59D72C00000100A10001 /* PikoStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C72C00000100A10001 /* PikoStyle.swift */; };
+		8F2E59D82C00000100A10001 /* NativeSendDeviceSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */; };
+		8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */; };
+		8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		8F2E59A92C00000100A10001 /* PikoIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PikoIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8F2E59A92C00000100A10001 /* Piko.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Piko.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8F2E59B32C00000100A10001 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		8F2E59B02C00000100A10001 /* PikoIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoIOSApp.swift; sourceTree = "<group>"; };
+		8F2E59B02C00000100A10001 /* PikoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoApp.swift; sourceTree = "<group>"; };
+		8F2E59C02C00000100A10001 /* PikoRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoRootView.swift; sourceTree = "<group>"; };
+		8F2E59C12C00000100A10001 /* NativeReceiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeReceiveView.swift; sourceTree = "<group>"; };
+		8F2E59C22C00000100A10001 /* NativeSendView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendView.swift; sourceTree = "<group>"; };
+		8F2E59C32C00000100A10001 /* NativeSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSettingsView.swift; sourceTree = "<group>"; };
+		8F2E59C42C00000100A10001 /* NativePikoModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePikoModel.swift; sourceTree = "<group>"; };
+		8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferProtocol.swift; sourceTree = "<group>"; };
+		8F2E59C62C00000100A10001 /* NativePickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePickers.swift; sourceTree = "<group>"; };
+		8F2E59C72C00000100A10001 /* PikoStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoStyle.swift; sourceTree = "<group>"; };
+		8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendDeviceSection.swift; sourceTree = "<group>"; };
+		8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendItemSection.swift; sourceTree = "<group>"; };
+		8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendTransferSection.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -30,7 +52,7 @@
 		8F2E599F2C00000100A10001 = {
 			isa = PBXGroup;
 			children = (
-				8F2E59AF2C00000100A10001 /* PikoIOS */,
+				8F2E59AF2C00000100A10001 /* Piko */,
 				8F2E59AA2C00000100A10001 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -38,26 +60,37 @@
 		8F2E59AA2C00000100A10001 /* Products */ = {
 			isa = PBXGroup;
 			children = (
-				8F2E59A92C00000100A10001 /* PikoIOS.app */,
+				8F2E59A92C00000100A10001 /* Piko.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
-		8F2E59AF2C00000100A10001 /* PikoIOS */ = {
+		8F2E59AF2C00000100A10001 /* Piko */ = {
 			isa = PBXGroup;
 			children = (
 				8F2E59B32C00000100A10001 /* Info.plist */,
-				8F2E59B02C00000100A10001 /* PikoIOSApp.swift */,
+				8F2E59B02C00000100A10001 /* PikoApp.swift */,
+				8F2E59C02C00000100A10001 /* PikoRootView.swift */,
+				8F2E59C12C00000100A10001 /* NativeReceiveView.swift */,
+				8F2E59C22C00000100A10001 /* NativeSendView.swift */,
+				8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */,
+				8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */,
+				8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */,
+				8F2E59C32C00000100A10001 /* NativeSettingsView.swift */,
+				8F2E59C42C00000100A10001 /* NativePikoModel.swift */,
+				8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */,
+				8F2E59C62C00000100A10001 /* NativePickers.swift */,
+				8F2E59C72C00000100A10001 /* PikoStyle.swift */,
 			);
-			name = PikoIOS;
+			name = Piko;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		8F2E59A82C00000100A10001 /* PikoIOS */ = {
+		8F2E59A82C00000100A10001 /* Piko */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 8F2E59BA2C00000100A10001 /* Build configuration list for PBXNativeTarget "PikoIOS" */;
+			buildConfigurationList = 8F2E59BA2C00000100A10001 /* Build configuration list for PBXNativeTarget "Piko" */;
 			buildPhases = (
 				8F2E59A52C00000100A10001 /* Sources */,
 				8F2E59A62C00000100A10001 /* Frameworks */,
@@ -67,9 +100,9 @@
 			);
 			dependencies = (
 			);
-			name = PikoIOS;
-			productName = PikoIOS;
-			productReference = 8F2E59A92C00000100A10001 /* PikoIOS.app */;
+			name = Piko;
+			productName = Piko;
+			productReference = 8F2E59A92C00000100A10001 /* Piko.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -87,7 +120,7 @@
 					};
 				};
 			};
-			buildConfigurationList = 8F2E59A32C00000100A10001 /* Build configuration list for PBXProject "PikoIOS" */;
+			buildConfigurationList = 8F2E59A32C00000100A10001 /* Build configuration list for PBXProject "Piko" */;
 			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
@@ -100,7 +133,7 @@
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
-				8F2E59A82C00000100A10001 /* PikoIOS */,
+				8F2E59A82C00000100A10001 /* Piko */,
 			);
 		};
 /* End PBXProject section */
@@ -120,7 +153,18 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				8F2E59B12C00000100A10001 /* PikoIOSApp.swift in Sources */,
+				8F2E59B12C00000100A10001 /* PikoApp.swift in Sources */,
+				8F2E59D02C00000100A10001 /* PikoRootView.swift in Sources */,
+				8F2E59D12C00000100A10001 /* NativeReceiveView.swift in Sources */,
+				8F2E59D22C00000100A10001 /* NativeSendView.swift in Sources */,
+				8F2E59D82C00000100A10001 /* NativeSendDeviceSection.swift in Sources */,
+				8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */,
+				8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */,
+				8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */,
+				8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */,
+				8F2E59D52C00000100A10001 /* NativeTransferProtocol.swift in Sources */,
+				8F2E59D62C00000100A10001 /* NativePickers.swift in Sources */,
+				8F2E59D72C00000100A10001 /* PikoStyle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -319,7 +363,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		8F2E59A32C00000100A10001 /* Build configuration list for PBXProject "PikoIOS" */ = {
+		8F2E59A32C00000100A10001 /* Build configuration list for PBXProject "Piko" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8F2E59BD2C00000100A10001 /* Debug */,
@@ -328,7 +372,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		8F2E59BA2C00000100A10001 /* Build configuration list for PBXNativeTarget "PikoIOS" */ = {
+		8F2E59BA2C00000100A10001 /* Build configuration list for PBXNativeTarget "Piko" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				8F2E59BB2C00000100A10001 /* Debug */,

@@ -7,9 +7,9 @@ CONFIG_PATH="$REPO_ROOT/.github/build-config.json"
 VERSION_PATH="$REPO_ROOT/gradle.properties"
 ARTIFACT_ROOT="$REPO_ROOT/scripts/artifacts/ios"
 IOS_BUILD_ROOT="${RUNNER_TEMP:-$REPO_ROOT/build/tmp}/piko-ios-packaging"
-XCODE_PROJECT="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcodeproj"
-XCODE_WORKSPACE="$REPO_ROOT/ios/PikoIOS/PikoIOS.xcworkspace"
-SCHEME="PikoIOS"
+XCODE_PROJECT="$REPO_ROOT/ios/Piko.xcodeproj"
+XCODE_WORKSPACE="$REPO_ROOT/ios/Piko.xcworkspace"
+SCHEME="Piko"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "未找到构建配置：$CONFIG_PATH" >&2
@@ -207,7 +207,7 @@ PY
     done
   done
 else
-  echo "::warning::未找到 ios/PikoIOS/PikoIOS.xcodeproj 或 .xcworkspace，已跳过 iOS IPA 构建。当前仓库没有可打包 iPhone IPA 的 Xcode 工程。"
+  echo "::warning::未找到 ios/Piko.xcodeproj 或 .xcworkspace，已跳过 iOS IPA 构建。当前仓库没有可打包 iPhone IPA 的 Xcode 工程。"
   exit 0
 fi
 

@@ -65,9 +65,6 @@ fun AndroidPikoApp() {
                     tab = selectedTab,
                     state = state,
                     onStateMutate = { transform -> state = transform(state) },
-                    onCreateSampleReceiveHistory = {
-                        state = state.withSampleReceiveHistory()
-                    },
                     sendPlatformActions = sendPlatformActions,
                     bottomContentPadding = 104.dp,
                     modifier = Modifier,

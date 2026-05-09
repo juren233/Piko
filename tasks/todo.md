@@ -1,21 +1,21 @@
 ## 2026-05-09 - GitHub Actions iOS Speed Patch
 
 - [x] Remove unnecessary iOS simulator platform download while keeping iPhoneOS SDK validation.
-- [x] Stabilize Kotlin Native cache key so version-only changes do not force a new Konan cache key.
+- [x] Keep iOS package cache keys stable so version-only changes do not force unnecessary cache churn.
 - [x] Keep Android packaging behavior unchanged and make iOS IPA presence/structure fail fast.
 - [x] Validate workflow syntax and inspect the final diff.
 - [x] Record verification output and residual risk.
 - [x] RCA the first optimized CI run failure and adjust Xcode selection.
-- [x] Cache iOS Compose/KMP incremental build outputs and upload Gradle profile timing data.
+- [x] Upload iOS package timing data for CI performance review.
 
 Review:
 - Change: Kept Android packaging unchanged, removed the iOS simulator platform download, validated the existing iPhoneOS SDK path instead, and added a fast IPA zip/Payload structure check before artifact upload.
-- Change: Removed `gradle.properties` from the Kotlin Native cache key so version-only bumps do not create a new Konan cache key.
+- Change: Removed version-only inputs from the iOS package cache key so version bumps do not create unnecessary cache churn.
 - Security: Changed default workflow token permission to `contents: read` and scoped `contents: write` to the GitHub Release job.
 - Verification: `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/build-packages.yml")'` passed; inline bash steps passed `bash -n`; `bash -n scripts/ios/build-packages.sh` passed; `git diff --check` passed; local `xcrun --sdk iphoneos --show-sdk-version` and `--show-sdk-path` returned an iPhoneOS SDK.
 - Residual risk: The actual speed improvement must be measured by a fresh GitHub Actions run after these workflow changes are pushed.
 - Follow-up: Run 25594601083 proved the beta Xcode can expose an iPhoneOS SDK while still lacking an installed iOS platform for `generic/platform=iOS`; the workflow now probes Xcode candidates and selects one whose destination is usable before falling back to `xcodebuild -downloadPlatform iOS`.
-- Follow-up: Run 25594722573 narrowed the remaining cost to the Xcode run script that calls `:composeApp:embedAndSignAppleFrameworkForXcode`; CI now restores `.gradle` plus `composeApp/build` and uploads Gradle profile data so the Kotlin/Native compile/link split is measurable.
+- Follow-up: Run 25594722573 narrowed the remaining cost to the Xcode package step; CI now uploads package timing data so the iOS build split is measurable.
 
 ## 2026-05-09 - GitHub Actions iOS IPA Speed Review
 
@@ -26,9 +26,9 @@ Review:
 - [x] Record review outcome with root cause, recommended changes, verification, and residual risk.
 
 Review:
-- Root cause: The iOS job spends most time in mandatory iOS platform verification/download plus the Xcode-triggered Kotlin Native framework build. Recent successful runs show the iOS job taking roughly 9-10 minutes, while Android finishes around 1-2 minutes.
+- Root cause: The iOS job spends most time in mandatory iOS platform verification/download plus the Xcode package build. Recent successful runs show the iOS job taking roughly 9-10 minutes, while Android finishes around 1-2 minutes.
 - Evidence: Latest run 25593740231 had `Verify Xcode and iOS SDK` from 06:10:07 to 06:11:53, `Build iOS unsigned artifacts` from 06:11:53 to 06:17:32, and the script reported `iOS Release iosArm64` took 338 seconds.
-- Findings: `.github/workflows/build-packages.yml` runs `xcodebuild -downloadPlatform iOS`, which downloaded an 8.52 GB iOS simulator runtime even though the job builds `iphoneos`; the Xcode shell phase always runs `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode`; `~/.konan` cache key includes `gradle.properties`, so version bumps create new 345 MB cache saves.
+- Findings: `.github/workflows/build-packages.yml` runs `xcodebuild -downloadPlatform iOS`, which downloaded an 8.52 GB iOS simulator runtime even though the job builds `iphoneos`; the iOS package cache included version-only inputs, so version bumps created unnecessary cache saves.
 - Security: Workflow grants `contents: write` globally and runs signed Android packaging on `pull_request`; release permissions should be scoped to the release job, and signing jobs should not run for PR code.
 - Verification: Inspected local workflow/scripts and GitHub run/artifact/release data with `gh run list`, `gh run view`, and `gh api`.
 - Residual risk: I did not edit workflow behavior in this pass because this was a review; speedups should be implemented in a follow-up patch and rechecked with a fresh Actions run.

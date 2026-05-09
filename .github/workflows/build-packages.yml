@@ -191,8 +191,8 @@ jobs:
               continue
             fi
             destinations="$(xcodebuild \
-              -project ios/PikoIOS/PikoIOS.xcodeproj \
-              -scheme PikoIOS \
+              -project ios/Piko.xcodeproj \
+              -scheme Piko \
               -sdk iphoneos \
               -destination "generic/platform=iOS" \
               -showdestinations 2>&1 || true)"
@@ -221,8 +221,8 @@ jobs:
             export DEVELOPER_DIR="$selected_xcode/Contents/Developer"
             xcodebuild -downloadPlatform iOS
             selected_destinations="$(xcodebuild \
-              -project ios/PikoIOS/PikoIOS.xcodeproj \
-              -scheme PikoIOS \
+              -project ios/Piko.xcodeproj \
+              -scheme Piko \
               -sdk iphoneos \
               -destination "generic/platform=iOS" \
               -showdestinations)"

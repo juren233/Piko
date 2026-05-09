@@ -16,9 +16,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "8F2E59A82C00000100A10001"
-               BuildableName = "PikoIOS.app"
-               BlueprintName = "PikoIOS"
-               ReferencedContainer = "container:PikoIOS.xcodeproj">
+               BuildableName = "Piko.app"
+               BlueprintName = "Piko"
+               ReferencedContainer = "container:Piko.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -46,9 +46,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8F2E59A82C00000100A10001"
-            BuildableName = "PikoIOS.app"
-            BlueprintName = "PikoIOS"
-            ReferencedContainer = "container:PikoIOS.xcodeproj">
+            BuildableName = "Piko.app"
+            BlueprintName = "Piko"
+            ReferencedContainer = "container:Piko.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>
@@ -63,9 +63,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "8F2E59A82C00000100A10001"
-            BuildableName = "PikoIOS.app"
-            BlueprintName = "PikoIOS"
-            ReferencedContainer = "container:PikoIOS.xcodeproj">
+            BuildableName = "Piko.app"
+            BlueprintName = "Piko"
+            ReferencedContainer = "container:Piko.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </ProfileAction>
