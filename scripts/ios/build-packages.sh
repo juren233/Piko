@@ -10,6 +10,8 @@ IOS_BUILD_ROOT="${RUNNER_TEMP:-$REPO_ROOT/build/tmp}/piko-ios-packaging"
 XCODE_PROJECT="$REPO_ROOT/ios/Piko.xcodeproj"
 XCODE_WORKSPACE="$REPO_ROOT/ios/Piko.xcworkspace"
 SCHEME="Piko"
+BUNDLE_IDENTIFIER="com.juren233.piko"
+DEPLOYMENT_TARGET="15.0"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "未找到构建配置：$CONFIG_PATH" >&2
@@ -110,114 +112,122 @@ echo "targets=$targets"
 echo "version_name=$version_name"
 echo "version_code=$version_code"
 echo "ios_sdk_version=$sdk_version"
+echo "ios_compile_target=arm64-apple-ios${DEPLOYMENT_TARGET}"
 echo "xcode_workspace=$XCODE_WORKSPACE"
 echo "xcode_project=$XCODE_PROJECT"
 echo "ios_build_root=$IOS_BUILD_ROOT"
 echo "::endgroup::"
 
-if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
+if [[ -d "$REPO_ROOT/ios" ]]; then
+  swift_sources=()
+  while IFS= read -r source; do
+    swift_sources+=("$source")
+  done < <(find "$REPO_ROOT/ios" -maxdepth 1 -type f -name "*.swift" | sort)
+
+  if [[ "${#swift_sources[@]}" -eq 0 ]]; then
+    echo "未找到 iOS Swift 源文件，无法生成 iPhone IPA。" >&2
+    exit 1
+  fi
+
+  sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
+  if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
+    echo "未找到 iPhoneOS SDK 路径：$sdk_path" >&2
+    exit 1
+  fi
+
   for target in $targets; do
     if [[ "$target" != "iosArm64" ]]; then
       echo "当前 iOS 发布只支持 iPhone 真机架构：iosArm64。" >&2
       exit 1
     fi
-    sdk="iphoneos26.5"
-    arch="arm64"
 
     for variant in $variants; do
       started_at="$(date +%s)"
       configuration="$(tr '[:lower:]' '[:upper:]' <<< "${variant:0:1}")${variant:1}"
       output_dir="$IOS_BUILD_ROOT/products/$target/$variant"
       temp_dir="$IOS_BUILD_ROOT/intermediates/$target/$variant"
-      mkdir -p "$output_dir"
-      echo "::group::xcodebuild $configuration $target"
-      if [[ -d "$XCODE_WORKSPACE" ]]; then
-        xcodebuild \
-          -workspace "$XCODE_WORKSPACE" \
-          -scheme "$SCHEME" \
-          -configuration "$configuration" \
-          -sdk "$sdk" \
-          ARCHS="$arch" \
-          SUPPORTED_PLATFORMS=iphoneos \
-          MARKETING_VERSION="$version_name" \
-          CURRENT_PROJECT_VERSION="$version_code" \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY="" \
-          COMPILER_INDEX_STORE_ENABLE=NO \
-          DEBUG_INFORMATION_FORMAT=dwarf \
-          GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
-          COPY_PHASE_STRIP=YES \
-          STRIP_INSTALLED_PRODUCT=YES \
-          DEPLOYMENT_POSTPROCESSING=YES \
-          VALIDATE_PRODUCT=NO \
-          DWARF_DSYM_FILE_SHOULD_ACCOMPANY_PRODUCT=NO \
-          OBJROOT="$temp_dir/obj" \
-          SYMROOT="$temp_dir/sym" \
-          SHARED_PRECOMPS_DIR="$temp_dir/precomp" \
-          CONFIGURATION_BUILD_DIR="$output_dir" \
-          build
-      else
-        xcodebuild \
-          -project "$XCODE_PROJECT" \
-          -scheme "$SCHEME" \
-          -configuration "$configuration" \
-          -sdk "$sdk" \
-          ARCHS="$arch" \
-          SUPPORTED_PLATFORMS=iphoneos \
-          MARKETING_VERSION="$version_name" \
-          CURRENT_PROJECT_VERSION="$version_code" \
-          CODE_SIGNING_ALLOWED=NO \
-          CODE_SIGNING_REQUIRED=NO \
-          CODE_SIGN_IDENTITY="" \
-          COMPILER_INDEX_STORE_ENABLE=NO \
-          DEBUG_INFORMATION_FORMAT=dwarf \
-          GCC_GENERATE_DEBUGGING_SYMBOLS=NO \
-          COPY_PHASE_STRIP=YES \
-          STRIP_INSTALLED_PRODUCT=YES \
-          DEPLOYMENT_POSTPROCESSING=YES \
-          VALIDATE_PRODUCT=NO \
-          DWARF_DSYM_FILE_SHOULD_ACCOMPANY_PRODUCT=NO \
-          OBJROOT="$temp_dir/obj" \
-          SYMROOT="$temp_dir/sym" \
-          SHARED_PRECOMPS_DIR="$temp_dir/precomp" \
-          CONFIGURATION_BUILD_DIR="$output_dir" \
-          build
+      app="$output_dir/Piko.app"
+      executable="$app/Piko"
+      plist_path="$app/Info.plist"
+      rm -rf "$output_dir" "$temp_dir"
+      mkdir -p "$app" "$temp_dir"
+
+      compile_flags=("-O")
+      if [[ "$variant" != "release" ]]; then
+        compile_flags=("-Onone" "-g" "-D" "DEBUG")
       fi
-      echo "::endgroup::"
-      find "$output_dir" -maxdepth 1 -name "*.app" -print0 |
-        while IFS= read -r -d '' app; do
-          plist_path="$app/Info.plist"
-          python3 - "$plist_path" <<'PY'
+
+      echo "::group::swiftc $configuration $target"
+      xcrun swiftc \
+        -target "arm64-apple-ios${DEPLOYMENT_TARGET}" \
+        -sdk "$sdk_path" \
+        -parse-as-library \
+        -module-name "$SCHEME" \
+        "${compile_flags[@]}" \
+        "${swift_sources[@]}" \
+        -o "$executable"
+
+      python3 - "$REPO_ROOT/ios/Info.plist" "$plist_path" "$BUNDLE_IDENTIFIER" "$version_name" "$version_code" "$DEPLOYMENT_TARGET" <<'PY'
 import plistlib
 import sys
 
-path = sys.argv[1]
-with open(path, "rb") as file:
+source_path, output_path, bundle_id, version_name, version_code, deployment_target = sys.argv[1:7]
+with open(source_path, "rb") as file:
     plist = plistlib.load(file)
 
+plist.update({
+    "CFBundleDevelopmentRegion": "zh_CN",
+    "CFBundleDisplayName": "Piko",
+    "CFBundleExecutable": "Piko",
+    "CFBundleIdentifier": bundle_id,
+    "CFBundleInfoDictionaryVersion": "6.0",
+    "CFBundleName": "Piko",
+    "CFBundlePackageType": "APPL",
+    "CFBundleShortVersionString": version_name,
+    "CFBundleVersion": version_code,
+    "LSApplicationCategoryType": "public.app-category.productivity",
+    "MinimumOSVersion": deployment_target,
+    "UIApplicationSceneManifest": {
+        "UIApplicationSupportsMultipleScenes": False,
+    },
+    "UIApplicationSupportsIndirectInputEvents": True,
+    "UILaunchScreen": {},
+    "UIDeviceFamily": [1],
+    "UISupportedInterfaceOrientations": [
+        "UIInterfaceOrientationPortrait",
+        "UIInterfaceOrientationLandscapeLeft",
+        "UIInterfaceOrientationLandscapeRight",
+    ],
+})
+
 if plist.get("CADisableMinimumFrameDurationOnPhone") is not True:
-    print(f"{path} 缺少 CADisableMinimumFrameDurationOnPhone=true，iOS 真机高刷新显示配置不完整。", file=sys.stderr)
+    print(f"{source_path} 缺少 CADisableMinimumFrameDurationOnPhone=true，iOS 真机高刷新显示配置不完整。", file=sys.stderr)
     sys.exit(1)
+
+with open(output_path, "wb") as file:
+    plistlib.dump(plist, file, sort_keys=True)
 PY
-          suffix=""
-          if [[ "$variant" != "release" ]]; then
-            suffix="-$variant"
-          fi
-          ipa_name="$ARTIFACT_ROOT/piko-${version_name}-ios-unsigned${suffix}.ipa"
-          payload_dir="$IOS_BUILD_ROOT/payload-${target}-${variant}/Payload"
-          rm -rf "$(dirname "$payload_dir")"
-          mkdir -p "$payload_dir"
-          cp -R "$app" "$payload_dir/"
-          (cd "$(dirname "$payload_dir")" && zip -qry "$ipa_name" "Payload")
-          echo "::warning::已生成未签名 iPhone IPA：${ipa_name}。未签名 IPA 需要后续重签名或通过对应分发链路处理，不能直接给普通用户安装。"
-        done
+      echo "APPL" > "$app/PkgInfo"
+      chmod +x "$executable"
+      echo "::endgroup::"
+
+      suffix=""
+      if [[ "$variant" != "release" ]]; then
+        suffix="-$variant"
+      fi
+      ipa_name="$ARTIFACT_ROOT/piko-${version_name}-ios-unsigned${suffix}.ipa"
+      payload_dir="$IOS_BUILD_ROOT/payload-${target}-${variant}/Payload"
+      rm -rf "$(dirname "$payload_dir")"
+      mkdir -p "$payload_dir"
+      cp -R "$app" "$payload_dir/"
+      (cd "$(dirname "$payload_dir")" && zip -qry "$ipa_name" "Payload")
+      echo "::warning::已生成未签名 iPhone IPA：${ipa_name}。未签名 IPA 需要后续重签名或通过对应分发链路处理，不能直接给普通用户安装。"
       finished_at="$(date +%s)"
       echo "iOS $configuration $target 构建耗时 $((finished_at - started_at)) 秒。"
     done
   done
 else
-  echo "::warning::未找到 ios/Piko.xcodeproj 或 .xcworkspace，已跳过 iOS IPA 构建。当前仓库没有可打包 iPhone IPA 的 Xcode 工程。"
+  echo "::warning::未找到 ios 目录，已跳过 iOS IPA 构建。当前仓库没有可打包 iPhone IPA 的 Swift 源码。"
   exit 0
 fi
 

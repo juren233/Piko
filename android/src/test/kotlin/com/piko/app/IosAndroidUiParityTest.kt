@@ -108,9 +108,15 @@ class IosAndroidUiParityTest {
         assertFalse("iphonesimulator" in iosScript)
         assertFalse("-destination" in workflow)
         assertFalse("-destination" in iosScript)
+        assertFalse("xcodebuild \\" in iosScript)
+        assertFalse("SUPPORTED_PLATFORMS=iphoneos" in iosScript)
         assertTrue("26.5*)" in xcodeCandidateLoop)
         assertTrue("26.5*)" in iosScript)
-        assertTrue("sdk=\"iphoneos26.5\"" in iosScript)
+        assertTrue("xcrun swiftc" in iosScript)
+        assertTrue("-target \"arm64-apple-ios\${DEPLOYMENT_TARGET}\"" in iosScript)
+        assertTrue("sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"" in iosScript)
+        assertTrue("\"CFBundleIdentifier\": bundle_id" in iosScript)
+        assertTrue("\"MinimumOSVersion\": deployment_target" in iosScript)
         assertInOrder(
             xcodeCandidateLoop,
             "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
@@ -120,10 +126,12 @@ class IosAndroidUiParityTest {
         )
         assertInOrder(
             iosScript,
-            "-sdk \"\$sdk\"",
-            "ARCHS=\"\$arch\"",
-            "SUPPORTED_PLATFORMS=iphoneos",
-            "CONFIGURATION_BUILD_DIR=\"\$output_dir\"",
+            "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
+            "xcrun swiftc",
+            "-sdk \"\$sdk_path\"",
+            "-parse-as-library",
+            "-module-name \"\$SCHEME\"",
+            "-o \"\$executable\"",
         )
     }
 
