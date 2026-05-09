@@ -98,17 +98,25 @@ class IosAndroidUiParityTest {
     }
 
     @Test
-    fun iosWorkflowInstallsPlatformBeforeTrustingDestinations() {
+    fun iosWorkflowBuildsWithLatestPhoneSdkWithoutInstallingSimulator() {
         val workflow = File(rootDir, ".github/workflows/build-packages.yml").readText()
+        val iosScript = File(rootDir, "scripts/ios/build-packages.sh").readText()
         val xcodeCandidateLoop = workflow.substringBefore("if [[ -z \"\$selected_xcode\" ]]; then")
 
-        assertTrue("xcodebuild -downloadPlatform iOS" in xcodeCandidateLoop)
+        assertFalse("xcodebuild -downloadPlatform iOS" in workflow)
+        assertFalse("generic/platform=iOS" in workflow)
+        assertFalse("-destination" in iosScript)
+        assertTrue("26.5*)" in xcodeCandidateLoop)
+        assertTrue("26.5*)" in iosScript)
+        assertTrue("-showBuildSettings" in xcodeCandidateLoop)
         assertInOrder(
             xcodeCandidateLoop,
-            "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
-            "xcodebuild -downloadPlatform iOS",
-            "destinations=\"\$(xcodebuild \\",
+            "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
+            "26.5*)",
+            "build_settings=\"\$(xcodebuild \\",
+            "-showBuildSettings",
         )
+        assertInOrder(iosScript, "-sdk \"\$sdk\"", "ARCHS=\"\$arch\"", "CONFIGURATION_BUILD_DIR=\"\$output_dir\"")
     }
 
     @Test

@@ -166,7 +166,7 @@ jobs:
           )"
 
           selected_xcode=""
-          selected_destinations=""
+          selected_build_settings=""
           while IFS= read -r candidate; do
             if [[ -z "$candidate" || ! -d "$candidate" ]]; then
               continue
@@ -177,11 +177,11 @@ jobs:
             xcodebuild -showsdks
             sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
             case "$sdk_version" in
-              26.*)
+              26.5*)
                 echo "候选 iOS SDK：$sdk_version"
                 ;;
               *)
-                echo "跳过：当前 iOS SDK 不是 26.x：$sdk_version"
+                echo "跳过：当前 iOS SDK 不是 26.5：$sdk_version"
                 continue
                 ;;
             esac
@@ -190,53 +190,23 @@ jobs:
               echo "跳过：未找到 iPhoneOS SDK 路径：$sdk_path"
               continue
             fi
-            echo "确保 iOS platform 已安装。"
-            if ! xcodebuild -downloadPlatform iOS; then
-              echo "跳过：该 Xcode 无法安装 iOS platform。"
-              continue
-            fi
-            sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-            sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
-            destinations="$(xcodebuild \
+            build_settings="$(xcodebuild \
               -project ios/Piko.xcodeproj \
               -scheme Piko \
               -sdk iphoneos \
-              -destination "generic/platform=iOS" \
-              -showdestinations 2>&1 || true)"
-            if grep -q "xcodebuild: error:" <<< "$destinations"; then
-              echo "跳过：该 Xcode 无法解析 iOS 构建目标。"
-              printf '%s\n' "$destinations"
-              continue
-            fi
-            if grep -q "iOS .* is not installed" <<< "$destinations"; then
-              echo "跳过：该 Xcode 的 iOS platform 未安装完整。"
+              -showBuildSettings 2>&1 || true)"
+            if grep -q "xcodebuild: error:" <<< "$build_settings"; then
+              echo "跳过：该 Xcode 无法读取 iPhoneOS 构建设置。"
+              printf '%s\n' "$build_settings"
               continue
             fi
             selected_xcode="$candidate"
-            selected_destinations="$destinations"
+            selected_build_settings="$build_settings"
             break
           done <<< "$xcode_candidates"
 
           if [[ -z "$selected_xcode" ]]; then
-            echo "未找到可直接构建 iPhoneOS 的 Xcode 26，尝试为首个候选安装 iOS platform。" >&2
-            selected_xcode="$(printf '%s\n' "$xcode_candidates" | head -n 1)"
-            if [[ -z "$selected_xcode" || ! -d "$selected_xcode" ]]; then
-              echo "未找到 Xcode 26：" >&2
-              find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
-              exit 1
-            fi
-            export DEVELOPER_DIR="$selected_xcode/Contents/Developer"
-            xcodebuild -downloadPlatform iOS
-            selected_destinations="$(xcodebuild \
-              -project ios/Piko.xcodeproj \
-              -scheme Piko \
-              -sdk iphoneos \
-              -destination "generic/platform=iOS" \
-              -showdestinations)"
-          fi
-
-          if [[ -z "$selected_xcode" || ! -d "$selected_xcode" ]]; then
-            echo "未找到可用 Xcode 26：" >&2
+            echo "未找到可用的 Xcode 26.5 iPhoneOS SDK。" >&2
             find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
             exit 1
           fi
@@ -247,7 +217,7 @@ jobs:
           sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
           echo "使用 iOS SDK $sdk_version 构建。"
           echo "iPhoneOS SDK 路径：$sdk_path"
-          printf '%s\n' "$selected_destinations"
+          printf '%s\n' "$selected_build_settings" | grep -E 'SDKROOT|SUPPORTED_PLATFORMS|ARCHS|IPHONEOS_DEPLOYMENT_TARGET' || true
 
       - name: Build iOS unsigned artifacts
         shell: bash

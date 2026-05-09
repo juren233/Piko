@@ -94,11 +94,22 @@ mkdir -p "$ARTIFACT_ROOT"
 
 cd "$REPO_ROOT"
 
+sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+case "$sdk_version" in
+  26.5*)
+    ;;
+  *)
+    echo "iOS unsigned artifacts 必须使用 iOS 26.5 SDK，当前为：$sdk_version。" >&2
+    exit 1
+    ;;
+esac
+
 echo "::group::iOS 构建配置"
 echo "variants=$variants"
 echo "targets=$targets"
 echo "version_name=$version_name"
 echo "version_code=$version_code"
+echo "ios_sdk_version=$sdk_version"
 echo "xcode_workspace=$XCODE_WORKSPACE"
 echo "xcode_project=$XCODE_PROJECT"
 echo "ios_build_root=$IOS_BUILD_ROOT"
@@ -112,7 +123,6 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
     fi
     sdk="iphoneos"
     arch="arm64"
-    destination="generic/platform=iOS"
 
     for variant in $variants; do
       started_at="$(date +%s)"
@@ -127,7 +137,6 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
-          -destination "$destination" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
@@ -153,7 +162,6 @@ if [[ -d "$XCODE_WORKSPACE" || -d "$XCODE_PROJECT" ]]; then
           -scheme "$SCHEME" \
           -configuration "$configuration" \
           -sdk "$sdk" \
-          -destination "$destination" \
           ARCHS="$arch" \
           MARKETING_VERSION="$version_name" \
           CURRENT_PROJECT_VERSION="$version_code" \
