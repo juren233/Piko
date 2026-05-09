@@ -168,7 +168,7 @@ jobs:
               match = re.match(r"Xcode_(\d+(?:\.\d+){0,2})", path.name)
               if match:
                   version = tuple(int(part) for part in match.group(1).split("."))
-                  candidates.append((version, path))
+                  candidates.append((version, path.resolve()))
 
           if not candidates:
               raise SystemExit(1)
@@ -181,6 +181,7 @@ jobs:
             find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
             exit 1
           fi
+          echo "选择 Xcode：$latest_xcode"
           export DEVELOPER_DIR="$latest_xcode/Contents/Developer"
           echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           xcodebuild -version
@@ -195,6 +196,13 @@ jobs:
               exit 1
               ;;
           esac
+          xcodebuild -downloadPlatform iOS
+          xcodebuild \
+            -project ios/PikoIOS/PikoIOS.xcodeproj \
+            -scheme PikoIOS \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            -showdestinations
 
       - name: Build iOS unsigned artifacts
         shell: bash
