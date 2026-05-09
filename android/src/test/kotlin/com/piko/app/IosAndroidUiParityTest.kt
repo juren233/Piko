@@ -98,6 +98,20 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun iosWorkflowInstallsPlatformBeforeTrustingDestinations() {
+        val workflow = File(rootDir, ".github/workflows/build-packages.yml").readText()
+        val xcodeCandidateLoop = workflow.substringBefore("if [[ -z \"\$selected_xcode\" ]]; then")
+
+        assertTrue("xcodebuild -downloadPlatform iOS" in xcodeCandidateLoop)
+        assertInOrder(
+            xcodeCandidateLoop,
+            "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
+            "xcodebuild -downloadPlatform iOS",
+            "destinations=\"\$(xcodebuild \\",
+        )
+    }
+
+    @Test
     fun sendPagesDoNotExposeCurrentDeviceAndUseRandomNicknameBanner() {
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()

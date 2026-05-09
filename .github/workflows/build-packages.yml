@@ -190,6 +190,13 @@ jobs:
               echo "跳过：未找到 iPhoneOS SDK 路径：$sdk_path"
               continue
             fi
+            echo "确保 iOS platform 已安装。"
+            if ! xcodebuild -downloadPlatform iOS; then
+              echo "跳过：该 Xcode 无法安装 iOS platform。"
+              continue
+            fi
+            sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+            sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
             destinations="$(xcodebuild \
               -project ios/Piko.xcodeproj \
               -scheme Piko \
