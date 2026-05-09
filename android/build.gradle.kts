@@ -75,8 +75,13 @@ android {
 }
 
 dependencies {
-    implementation(project(":composeApp"))
+    implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.backdrop)
+    implementation(libs.compose.foundation)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.runtime)
+    implementation(libs.compose.ui)
     implementation(libs.kyant.shapes)
+    testImplementation(kotlin("test-junit"))
 }

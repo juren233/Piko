@@ -137,34 +137,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up JDK
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "21"
-
-      - name: Set up Gradle cache
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Restore Kotlin Native cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/*.gradle.kts') }}
-          restore-keys: |
-            konan-${{ runner.os }}-
-
-      - name: Restore iOS incremental build cache
-        uses: actions/cache@v5
-        with:
-          path: |
-            .gradle
-            composeApp/build
-          key: ios-incremental-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', 'settings.gradle.kts', 'build.gradle.kts', 'composeApp/build.gradle.kts', 'composeApp/src/**') }}
-          restore-keys: |
-            ios-incremental-${{ runner.os }}-
-
       - name: Verify Xcode and iOS SDK
         shell: bash
         run: |
@@ -273,7 +245,7 @@ jobs:
       - name: Build iOS unsigned artifacts
         shell: bash
         run: |
-          chmod +x ./gradlew ./scripts/ios/build-packages.sh
+          chmod +x ./scripts/ios/build-packages.sh
           ./scripts/ios/build-packages.sh
 
       - name: Verify iOS unsigned IPA

@@ -187,7 +187,7 @@ with open(path, "rb") as file:
     plist = plistlib.load(file)
 
 if plist.get("CADisableMinimumFrameDurationOnPhone") is not True:
-    print(f"{path} 缺少 CADisableMinimumFrameDurationOnPhone=true，Compose iOS 真机会在启动时崩溃。", file=sys.stderr)
+    print(f"{path} 缺少 CADisableMinimumFrameDurationOnPhone=true，iOS 真机高刷新显示配置不完整。", file=sys.stderr)
     sys.exit(1)
 PY
           suffix=""

@@ -19,5 +19,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Piko"
-include(":composeApp")
 include(":android")

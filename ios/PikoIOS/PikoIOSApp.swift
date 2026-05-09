@@ -1,23 +1,26 @@
-import ComposeApp
+import Network
+import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 @main
 struct PikoIOSApp: App {
     init() {
         let tabBarAppearance = UITabBarAppearance()
         tabBarAppearance.configureWithTransparentBackground()
-        tabBarAppearance.backgroundEffect = nil
-        tabBarAppearance.backgroundImage = UIImage()
-        tabBarAppearance.backgroundColor = .clear
-        tabBarAppearance.shadowColor = .clear
-        tabBarAppearance.shadowImage = UIImage()
 
         UITabBar.appearance().standardAppearance = tabBarAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
         UITabBar.appearance().isTranslucent = true
-        UITabBar.appearance().backgroundImage = UIImage()
         UITabBar.appearance().shadowImage = UIImage()
+
+        let navigationBarAppearance = UINavigationBarAppearance()
+        navigationBarAppearance.configureWithTransparentBackground()
+        UINavigationBar.appearance().standardAppearance = navigationBarAppearance
+        UINavigationBar.appearance().scrollEdgeAppearance = navigationBarAppearance
+        UINavigationBar.appearance().compactAppearance = navigationBarAppearance
+        UINavigationBar.appearance().isTranslucent = true
     }
 
     var body: some Scene {
@@ -31,14 +34,16 @@ struct PikoIOSApp: App {
 }
 
 private struct PikoRootView: View {
+    @StateObject private var model = NativePikoModel()
+
     var body: some View {
         ZStack {
             PikoIOSPalette.surface
                 .ignoresSafeArea()
 
             TabView {
-                ComposeView(tabName: "Receive")
-                    .ignoresSafeArea(.container, edges: .vertical)
+                NativeReceiveView(model: model)
+                    .systemBarBackgrounds()
                     .tabItem {
                         Label {
                             Text("接收")
@@ -47,8 +52,8 @@ private struct PikoRootView: View {
                         }
                     }
 
-                SendTabView()
-                    .ignoresSafeArea(.container, edges: .vertical)
+                NativeSendView(model: model)
+                    .systemBarBackgrounds()
                     .tabItem {
                         Label {
                             Text("发送")
@@ -57,8 +62,8 @@ private struct PikoRootView: View {
                         }
                     }
 
-                ComposeView(tabName: "Settings")
-                    .ignoresSafeArea(.container, edges: .vertical)
+                NativeSettingsView(model: model)
+                    .systemBarBackgrounds()
                     .tabItem {
                         Label {
                             Text("设置")
@@ -68,6 +73,11 @@ private struct PikoRootView: View {
                     }
             }
             .tint(PikoIOSPalette.accent)
+            .background(PikoIOSPalette.surface.ignoresSafeArea())
+        }
+        .onAppear {
+            model.startPresence()
+            model.startDiscovery()
         }
     }
 }
@@ -81,13 +91,16 @@ private struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> ImmersiveHostingController<Content> {
         let controller = ImmersiveHostingController(rootView: content)
-        controller.view.backgroundColor = .clear
-        controller.view.isOpaque = false
+        controller.view.backgroundColor = PikoIOSPalette.surfaceUIColor
+        controller.view.isOpaque = true
+        controller.edgesForExtendedLayout = .all
+        controller.extendedLayoutIncludesOpaqueBars = true
         return controller
     }
 
     func updateUIViewController(_ controller: ImmersiveHostingController<Content>, context: Context) {
         controller.rootView = content
+        controller.view.backgroundColor = PikoIOSPalette.surfaceUIColor
         controller.setNeedsStatusBarAppearanceUpdate()
         controller.setNeedsUpdateOfHomeIndicatorAutoHidden()
         controller.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
@@ -95,10 +108,6 @@ private struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 }
 
 private final class ImmersiveHostingController<Content: View>: UIHostingController<Content> {
-    override var prefersStatusBarHidden: Bool {
-        true
-    }
-
     override var prefersHomeIndicatorAutoHidden: Bool {
         true
     }
@@ -106,31 +115,93 @@ private final class ImmersiveHostingController<Content: View>: UIHostingControll
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
         .all
     }
+}
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        setNeedsStatusBarAppearanceUpdate()
-        setNeedsUpdateOfHomeIndicatorAutoHidden()
-        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+private extension View {
+    @ViewBuilder
+    func systemBarBackgrounds() -> some View {
+        if #available(iOS 16.0, *) {
+            toolbarBackground(.hidden, for: .navigationBar, .tabBar)
+        } else {
+            self
+        }
     }
 }
 
-struct SendTabView: View {
-    private let sendOverlayController = SendOverlayController()
-    @State private var canSend = false
-    private let timer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
+private struct NativeReceiveView: View {
+    @ObservedObject var model: NativePikoModel
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            ComposeView(
-                tabName: "Send",
-                sendOverlayController: sendOverlayController
-            )
+        NavigationView {
+            Group {
+                if model.receiveHistory.isEmpty {
+                    VStack(spacing: 18) {
+                        Image(uiImage: LucideTabIcon.download.image)
+                            .resizable()
+                            .frame(width: 54, height: 54)
+                            .foregroundStyle(.secondary)
+                        Text("还没有接收过文件")
+                            .font(.headline)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(model.receiveHistory) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(item.title)
+                                .font(.headline)
+                            Text(item.subtitle)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 6)
+                    }
+                }
+            }
+            .background(PikoIOSPalette.surface)
+            .systemBarBackgrounds()
+            .navigationTitle("Piko")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationViewStyle(.stack)
+    }
+}
 
-            if canSend {
+private struct NativeSendView: View {
+    @ObservedObject var model: NativePikoModel
+    @State private var showingPhotoPicker = false
+    @State private var showingDocumentPicker = false
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    deviceSection
+                    itemSection
+                    transferSection
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 120)
+            }
+            .background(PikoIOSPalette.surface)
+            .systemBarBackgrounds()
+            .navigationTitle("发送")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        model.startDiscovery()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .accessibilityLabel("刷新")
+                }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if model.canSend {
                 Button {
-                    sendOverlayController.send()
-                    canSend = sendOverlayController.canSend
+                    model.sendSelectedItems()
                 } label: {
                     Label("发送", systemImage: "paperplane.fill")
                         .font(.headline)
@@ -138,7 +209,7 @@ struct SendTabView: View {
                         .frame(height: 58)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.blue)
+                .foregroundStyle(PikoIOSPalette.accent)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(
                     Capsule()
@@ -148,29 +219,712 @@ struct SendTabView: View {
                 .padding(.bottom, 92)
             }
         }
-        .onReceive(timer) { _ in
-            canSend = sendOverlayController.canSend
+        .sheet(isPresented: $showingPhotoPicker) {
+            NativePhotoPicker { items in
+                model.addItems(items)
+            }
+        }
+        .sheet(isPresented: $showingDocumentPicker) {
+            NativeDocumentPicker { items in
+                model.addItems(items)
+            }
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private var deviceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("局域网设备")
+                    .font(.headline)
+                Spacer()
+                Text(model.discoveryLabel)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if model.lanDevices.isEmpty {
+                Text("暂无局域网设备")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                ForEach(model.lanDevices) { device in
+                    Button {
+                        model.toggleDevice(device.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Circle()
+                                .fill(model.selectedDeviceIds.contains(device.id) ? PikoIOSPalette.accent : Color.secondary.opacity(0.25))
+                                .frame(width: 36, height: 36)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(device.name)
+                                    .font(.body.weight(.semibold))
+                                Text(device.subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if model.selectedDeviceIds.contains(device.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(PikoIOSPalette.accent)
+                            }
+                        }
+                        .padding()
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var itemSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("待发送")
+                    .font(.headline)
+                Spacer()
+                Button("图片") {
+                    showingPhotoPicker = true
+                }
+                Button("文件") {
+                    showingDocumentPicker = true
+                }
+            }
+
+            if model.items.isEmpty {
+                Text("请选择图片或文件")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            } else {
+                ForEach(model.items) { item in
+                    Button {
+                        model.toggleItem(item.id)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: item.systemImage)
+                                .frame(width: 30)
+                                .foregroundStyle(PikoIOSPalette.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.displayName)
+                                    .font(.body.weight(.medium))
+                                    .lineLimit(1)
+                                Text(item.sizeLabel)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if model.selectedItemIds.contains(item.id) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(PikoIOSPalette.accent)
+                            }
+                        }
+                        .padding()
+                        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var transferSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("传输")
+                .font(.headline)
+            Text(model.transferLabel)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            if let progress = model.transferProgress {
+                ProgressView(value: progress)
+            }
+        }
+        .padding()
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct NativeSettingsView: View {
+    @ObservedObject var model: NativePikoModel
+
+    var body: some View {
+        NavigationView {
+            List {
+                NativeSettingsRow(title: "当前设备", value: model.currentDeviceName)
+                NativeSettingsRow(title: "局域网设备", value: "\(model.lanDevices.count)")
+                NativeSettingsRow(title: "接收记录", value: "\(model.receiveHistory.count)")
+            }
+            .background(PikoIOSPalette.surface)
+            .systemBarBackgrounds()
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationViewStyle(.stack)
+    }
+}
+
+private struct NativeSettingsRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text(value)
+                .foregroundColor(.secondary)
         }
     }
 }
 
-struct ComposeView: UIViewControllerRepresentable {
-    let tabName: String
-    var sendOverlayController: SendOverlayController? = nil
+private final class NativePikoModel: ObservableObject {
+    @Published var lanDevices: [NativeSendDevice] = []
+    @Published var selectedDeviceIds: Set<String> = []
+    @Published var items: [NativeTransferItem] = []
+    @Published var selectedItemIds: Set<String> = []
+    @Published var receiveHistory: [NativeReceiveHistoryItem] = []
+    @Published var transferLabel = "等待发送"
+    @Published var transferProgress: Double?
+    @Published var discoveryLabel = "正在搜索"
+
+    let currentDeviceName = UIDevice.current.name
+
+    private let queue = DispatchQueue(label: "piko.native.network")
+    private var listener: NWListener?
+    private var browser: NWBrowser?
+
+    var canSend: Bool {
+        !selectedDeviceIds.isEmpty && !selectedItems.isEmpty && transferProgress == nil
+    }
+
+    private var selectedItems: [NativeTransferItem] {
+        items.filter { selectedItemIds.contains($0.id) }
+    }
+
+    func startPresence() {
+        guard listener == nil else {
+            return
+        }
+
+        do {
+            let listener = try NWListener(using: .tcp)
+            listener.service = NWListener.Service(
+                name: "Piko-\(currentDeviceName)",
+                type: "_piko-share._tcp"
+            )
+            listener.newConnectionHandler = { [weak self] connection in
+                self?.receive(connection)
+            }
+            listener.start(queue: queue)
+            self.listener = listener
+        } catch {
+            DispatchQueue.main.async {
+                self.transferLabel = "接收服务启动失败"
+            }
+        }
+    }
+
+    func startDiscovery() {
+        browser?.cancel()
+        discoveryLabel = "正在搜索"
+
+        let browser = NWBrowser(for: .bonjour(type: "_piko-share._tcp", domain: "local."), using: .tcp)
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            guard let self else {
+                return
+            }
+
+            let devices = results.compactMap { result -> NativeSendDevice? in
+                guard case let .service(name, type, domain, _) = result.endpoint else {
+                    return nil
+                }
+                guard name != "Piko-\(self.currentDeviceName)" else {
+                    return nil
+                }
+                return NativeSendDevice(
+                    id: "\(name).\(type).\(domain)",
+                    name: name.replacingOccurrences(of: "Piko-", with: ""),
+                    subtitle: domain.isEmpty ? type : domain,
+                    endpoint: result.endpoint
+                )
+            }
+
+            DispatchQueue.main.async {
+                self.lanDevices = devices.sorted { $0.name < $1.name }
+                self.selectedDeviceIds = self.selectedDeviceIds.intersection(Set(devices.map(\.id)))
+                self.discoveryLabel = devices.isEmpty ? "暂无设备" : "已发现 \(devices.count) 台"
+            }
+        }
+        browser.stateUpdateHandler = { [weak self] state in
+            DispatchQueue.main.async {
+                if case .failed = state {
+                    self?.discoveryLabel = "搜索失败"
+                }
+            }
+        }
+        browser.start(queue: queue)
+        self.browser = browser
+    }
+
+    func toggleDevice(_ id: String) {
+        if selectedDeviceIds.contains(id) {
+            selectedDeviceIds.remove(id)
+        } else {
+            selectedDeviceIds.insert(id)
+        }
+    }
+
+    func addItems(_ newItems: [NativeTransferItem]) {
+        let existingIds = Set(items.map(\.id))
+        let uniqueItems = newItems.filter { !existingIds.contains($0.id) }
+        items.append(contentsOf: uniqueItems)
+        selectedItemIds.formUnion(uniqueItems.map(\.id))
+    }
+
+    func toggleItem(_ id: String) {
+        if selectedItemIds.contains(id) {
+            selectedItemIds.remove(id)
+        } else {
+            selectedItemIds.insert(id)
+        }
+    }
+
+    func sendSelectedItems() {
+        let targets = lanDevices.filter { selectedDeviceIds.contains($0.id) }
+        let payloadItems = selectedItems
+        guard !targets.isEmpty, !payloadItems.isEmpty else {
+            return
+        }
+
+        transferLabel = "正在发送"
+        transferProgress = 0
+
+        queue.async {
+            let totalBytes = max(payloadItems.reduce(0) { $0 + $1.data.count } * targets.count, 1)
+            var sentBytes = 0
+
+            for target in targets {
+                let connection = NWConnection(to: target.endpoint, using: .tcp)
+                let ready = DispatchSemaphore(value: 0)
+                var failed = false
+
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        ready.signal()
+                    case .failed, .cancelled:
+                        failed = true
+                        ready.signal()
+                    default:
+                        break
+                    }
+                }
+                let connectionQueue = DispatchQueue(label: "piko.native.connection.\(UUID().uuidString)")
+                connection.start(queue: connectionQueue)
+                ready.wait()
+
+                guard !failed else {
+                    connection.cancel()
+                    DispatchQueue.main.async {
+                        self.transferLabel = "发送失败"
+                        self.transferProgress = nil
+                    }
+                    return
+                }
+
+                let header = NativeTransferProtocol.encodeHeader(items: payloadItems)
+                if !self.send(header, over: connection) {
+                    connection.cancel()
+                    DispatchQueue.main.async {
+                        self.transferLabel = "发送失败"
+                        self.transferProgress = nil
+                    }
+                    return
+                }
+
+                for item in payloadItems {
+                    guard self.send(item.data, over: connection) else {
+                        connection.cancel()
+                        DispatchQueue.main.async {
+                            self.transferLabel = "发送失败"
+                            self.transferProgress = nil
+                        }
+                        return
+                    }
+                    sentBytes += item.data.count
+                    DispatchQueue.main.async {
+                        self.transferProgress = Double(sentBytes) / Double(totalBytes)
+                    }
+                }
+                connection.cancel()
+            }
+
+            DispatchQueue.main.async {
+                self.transferLabel = "发送完成"
+                self.transferProgress = nil
+            }
+        }
+    }
+
+    private func send(_ data: Data, over connection: NWConnection) -> Bool {
+        let finished = DispatchSemaphore(value: 0)
+        var succeeded = true
+        connection.send(content: data, completion: .contentProcessed { error in
+            succeeded = error == nil
+            finished.signal()
+        })
+        finished.wait()
+        return succeeded
+    }
+
+    private func receive(_ connection: NWConnection) {
+        connection.stateUpdateHandler = { state in
+            if case .ready = state {
+                self.receiveNextChunk(from: connection, buffer: Data())
+            }
+        }
+        connection.start(queue: queue)
+    }
+
+    private func receiveNextChunk(from connection: NWConnection, buffer: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
+            var nextBuffer = buffer
+            if let data {
+                nextBuffer.append(data)
+            }
+
+            if let transfer = NativeTransferProtocol.decodeTransfer(nextBuffer) {
+                self.saveReceivedTransfer(transfer)
+                connection.cancel()
+                return
+            }
+
+            if isComplete {
+                connection.cancel()
+            } else {
+                self.receiveNextChunk(from: connection, buffer: nextBuffer)
+            }
+        }
+    }
+
+    private func saveReceivedTransfer(_ transfer: NativeReceivedTransfer) {
+        let directory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Piko", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        for file in transfer.files {
+            let url = directory.appendingPathComponent(file.displayName.sanitizedFileName)
+            try? file.data.write(to: url, options: .atomic)
+        }
+
+        DispatchQueue.main.async {
+            let names = transfer.files.map(\.displayName)
+            self.receiveHistory.insert(
+                NativeReceiveHistoryItem(
+                    title: names.count == 1 ? names[0] : "\(names[0])+\(names.count - 1)个文件",
+                    subtitle: "刚刚 - 来自局域网设备"
+                ),
+                at: 0
+            )
+        }
+    }
+}
+
+private struct NativeSendDevice: Identifiable {
+    let id: String
+    let name: String
+    let subtitle: String
+    let endpoint: NWEndpoint
+}
+
+private struct NativeTransferItem: Identifiable {
+    let id: String
+    let displayName: String
+    let fileType: NativeFileType
+    let data: Data
+
+    var sizeLabel: String {
+        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+    }
+
+    var systemImage: String {
+        fileType == .image ? "photo" : "doc"
+    }
+}
+
+private struct NativeReceiveHistoryItem: Identifiable {
+    let id = UUID()
+    let title: String
+    let subtitle: String
+}
+
+private enum NativeFileType: Int {
+    case document = 0
+    case spreadsheet = 1
+    case image = 2
+    case video = 3
+    case archive = 4
+    case other = 5
+}
+
+private struct NativeReceivedFile {
+    let displayName: String
+    let data: Data
+}
+
+private struct NativeReceivedTransfer {
+    let files: [NativeReceivedFile]
+}
+
+private enum NativeTransferProtocol {
+    private static let magic = Data([0x50, 0x49, 0x4B, 0x4F])
+    private static let version = 1
+
+    static func encodeHeader(items: [NativeTransferItem]) -> Data {
+        var data = Data()
+        data.append(magic)
+        data.appendInt32(version)
+        data.appendInt32(items.count)
+        for item in items {
+            let nameBytes = Data(item.displayName.utf8)
+            data.appendInt32(nameBytes.count)
+            data.append(nameBytes)
+            data.appendInt32(item.fileType.rawValue)
+            data.appendInt64(item.data.count)
+        }
+        return data
+    }
+
+    static func decodeTransfer(_ data: Data) -> NativeReceivedTransfer? {
+        var offset = 0
+        guard data.count >= 12, data.readData(count: magic.count, offset: &offset) == magic else {
+            return nil
+        }
+        guard data.readInt32(offset: &offset) == version else {
+            return nil
+        }
+        guard let count = data.readInt32(offset: &offset), count >= 0 else {
+            return nil
+        }
+
+        var metadata: [(String, Int)] = []
+        for _ in 0..<count {
+            guard let nameLength = data.readInt32(offset: &offset), nameLength >= 0 else {
+                return nil
+            }
+            guard let nameData = data.readData(count: nameLength, offset: &offset) else {
+                return nil
+            }
+            guard let name = String(data: nameData, encoding: .utf8) else {
+                return nil
+            }
+            guard data.readInt32(offset: &offset) != nil else {
+                return nil
+            }
+            guard let size = data.readInt64(offset: &offset), size >= 0 else {
+                return nil
+            }
+            metadata.append((name, size))
+        }
+
+        var files: [NativeReceivedFile] = []
+        for (name, size) in metadata {
+            guard let bytes = data.readData(count: size, offset: &offset) else {
+                return nil
+            }
+            files.append(NativeReceivedFile(displayName: name, data: bytes))
+        }
+
+        return NativeReceivedTransfer(files: files)
+    }
+}
+
+private struct NativePhotoPicker: UIViewControllerRepresentable {
+    let onSelect: ([NativeTransferItem]) -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
-        let controller = MainViewControllerKt.MainViewController(
-            tabName: tabName,
-            sendOverlayController: sendOverlayController
-        )
-        controller.view.backgroundColor = .clear
-        controller.view.isOpaque = false
-        controller.edgesForExtendedLayout = .all
-        controller.extendedLayoutIncludesOpaqueBars = true
+        var configuration = PHPickerConfiguration(photoLibrary: .shared())
+        configuration.filter = .images
+        configuration.selectionLimit = 30
+        let controller = PHPickerViewController(configuration: configuration)
+        controller.delegate = context.coordinator
         return controller
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    final class Coordinator: NSObject, PHPickerViewControllerDelegate {
+        private let onSelect: ([NativeTransferItem]) -> Void
+
+        init(onSelect: @escaping ([NativeTransferItem]) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
+            picker.dismiss(animated: true)
+            guard !results.isEmpty else {
+                return
+            }
+
+            let group = DispatchGroup()
+            let lock = NSLock()
+            var items: [NativeTransferItem] = []
+
+            for result in results {
+                let provider = result.itemProvider
+                guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+                    continue
+                }
+
+                group.enter()
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    defer {
+                        group.leave()
+                    }
+                    guard let data else {
+                        return
+                    }
+                    let name = provider.suggestedName.map { "\($0).jpg" } ?? "image-\(UUID().uuidString).jpg"
+                    let item = NativeTransferItem(
+                        id: "photo-\(UUID().uuidString)",
+                        displayName: name,
+                        fileType: .image,
+                        data: data
+                    )
+                    lock.lock()
+                    items.append(item)
+                    lock.unlock()
+                }
+            }
+
+            group.notify(queue: .main) {
+                self.onSelect(items)
+            }
+        }
+    }
+}
+
+private struct NativeDocumentPicker: UIViewControllerRepresentable {
+    let onSelect: ([NativeTransferItem]) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let controller = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+        controller.allowsMultipleSelection = true
+        controller.delegate = context.coordinator
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onSelect: ([NativeTransferItem]) -> Void
+
+        init(onSelect: @escaping ([NativeTransferItem]) -> Void) {
+            self.onSelect = onSelect
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            let items = urls.compactMap { url -> NativeTransferItem? in
+                let allowed = url.startAccessingSecurityScopedResource()
+                defer {
+                    if allowed {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
+                guard let data = try? Data(contentsOf: url) else {
+                    return nil
+                }
+                return NativeTransferItem(
+                    id: url.absoluteString,
+                    displayName: url.lastPathComponent,
+                    fileType: NativeFileType(url: url),
+                    data: data
+                )
+            }
+            onSelect(items)
+        }
+    }
+}
+
+private extension NativeFileType {
+    init(url: URL) {
+        switch url.pathExtension.lowercased() {
+        case "jpg", "jpeg", "png", "gif", "heic", "webp":
+            self = .image
+        case "mp4", "mov", "m4v":
+            self = .video
+        case "zip", "rar", "7z":
+            self = .archive
+        case "xls", "xlsx", "csv":
+            self = .spreadsheet
+        case "pdf", "doc", "docx", "txt", "md":
+            self = .document
+        default:
+            self = .other
+        }
+    }
+}
+
+private extension String {
+    var sanitizedFileName: String {
+        let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
+        return components(separatedBy: invalid).joined(separator: "_")
+    }
+}
+
+private extension Data {
+    mutating func appendInt32(_ value: Int) {
+        append(contentsOf: [
+            UInt8((value >> 24) & 0xFF),
+            UInt8((value >> 16) & 0xFF),
+            UInt8((value >> 8) & 0xFF),
+            UInt8(value & 0xFF),
+        ])
+    }
+
+    mutating func appendInt64(_ value: Int) {
+        for shift in stride(from: 56, through: 0, by: -8) {
+            append(UInt8((value >> shift) & 0xFF))
+        }
+    }
+
+    func readData(count: Int, offset: inout Int) -> Data? {
+        guard count >= 0, offset + count <= self.count else {
+            return nil
+        }
+        defer {
+            offset += count
+        }
+        return subdata(in: offset..<(offset + count))
+    }
+
+    func readInt32(offset: inout Int) -> Int? {
+        guard let bytes = readData(count: 4, offset: &offset) else {
+            return nil
+        }
+        return bytes.reduce(0) { ($0 << 8) | Int($1) }
+    }
+
+    func readInt64(offset: inout Int) -> Int? {
+        guard let bytes = readData(count: 8, offset: &offset) else {
+            return nil
+        }
+        return bytes.reduce(0) { ($0 << 8) | Int($1) }
+    }
 }
 
 private enum PikoIOSPalette {

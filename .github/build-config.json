@@ -34,7 +34,7 @@
     "enabled": true,
     "variants": {
       "_comment": "iOS 构建类型开关。至少需要开启 debug 或 release 中的一个。",
-      "debug_comment": "true 表示构建 iOS debug 产物；false 表示不构建 iOS debug 产物。CI 默认关闭，避免重复触发 Xcode 和 Kotlin Native 构建。",
+      "debug_comment": "true 表示构建 iOS debug 产物；false 表示不构建 iOS debug 产物。CI 默认关闭，避免重复触发 Xcode 构建。",
       "debug": false,
       "release_comment": "true 表示构建 iOS release 产物；false 表示不构建 iOS release 产物。",
       "release": true
