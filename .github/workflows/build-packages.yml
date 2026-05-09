@@ -155,6 +155,16 @@ jobs:
           restore-keys: |
             konan-${{ runner.os }}-
 
+      - name: Restore iOS incremental build cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            .gradle
+            composeApp/build
+          key: ios-incremental-${{ runner.os }}-${{ hashFiles('gradle/wrapper/gradle-wrapper.properties', 'gradle/libs.versions.toml', 'settings.gradle.kts', 'build.gradle.kts', 'composeApp/build.gradle.kts', 'composeApp/src/**') }}
+          restore-keys: |
+            ios-incremental-${{ runner.os }}-
+
       - name: Verify Xcode and iOS SDK
         shell: bash
         run: |
@@ -288,6 +298,14 @@ jobs:
           name: ios-unsigned-artifacts
           path: scripts/artifacts/ios
           if-no-files-found: error
+
+      - name: Upload iOS Gradle profile
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-gradle-profile
+          path: build/reports/profile
+          if-no-files-found: ignore
 
   github-release:
     name: GitHub Release
