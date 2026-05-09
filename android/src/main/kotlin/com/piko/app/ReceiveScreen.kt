@@ -2,6 +2,7 @@ package com.piko.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -33,6 +35,7 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun PikoReceiveScreen(
     state: PikoHomeState,
+    onResetCurrentDeviceName: () -> Unit = {},
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -55,6 +58,12 @@ internal fun PikoReceiveScreen(
                     metric = "${state.receiveHistoryDescending.size} 次",
                 )
             }
+            item {
+                CurrentDeviceNicknameBanner(
+                    nickname = state.currentDeviceName,
+                    onReset = onResetCurrentDeviceName,
+                )
+            }
             if (state.receiveHistoryDescending.isEmpty()) {
                 item {
                     ReceiveHistoryEmptyState()
@@ -71,6 +80,54 @@ internal fun PikoReceiveScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CurrentDeviceNicknameBanner(
+    nickname: String,
+    onReset: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                shape = RoundedCornerShape(20.dp),
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = LucideInboxIcon,
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+            text = "本设备名称：$nickname",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = "换个昵称",
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(onClick = onReset)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
     }
 }
 

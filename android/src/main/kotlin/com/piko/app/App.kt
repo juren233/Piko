@@ -24,6 +24,7 @@ enum class PikoTab(
 fun App(
     tab: PikoTab = PikoTab.Receive,
     currentDeviceName: String = "当前设备",
+    onResetCurrentDeviceName: () -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     bottomContentPadding: Dp = 0.dp,
 ) {
@@ -35,6 +36,7 @@ fun App(
                 tab = tab,
                 state = state,
                 onStateMutate = { transform -> state = transform(state) },
+                onResetCurrentDeviceName = onResetCurrentDeviceName,
                 sendPlatformActions = sendPlatformActions,
                 bottomContentPadding = bottomContentPadding,
             )
@@ -47,6 +49,7 @@ fun PikoTabScreen(
     tab: PikoTab,
     state: PikoHomeState,
     onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
+    onResetCurrentDeviceName: () -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
@@ -54,6 +57,7 @@ fun PikoTabScreen(
     when (tab) {
         PikoTab.Receive -> PikoReceiveScreen(
             state = state,
+            onResetCurrentDeviceName = onResetCurrentDeviceName,
             bottomContentPadding = bottomContentPadding,
             modifier = modifier,
         )

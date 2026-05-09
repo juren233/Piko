@@ -11,6 +11,10 @@ struct NativeReceiveView: View {
                     subtitle: "接收记录和本机收件箱",
                     metric: "\(model.receiveHistory.count) 次"
                 )
+                NativeDeviceNicknameBanner(
+                    nickname: model.currentDeviceName,
+                    onReset: model.resetDeviceNickname
+                )
                 if model.receiveHistory.isEmpty {
                     NativeReceiveEmptyState()
                 } else {
@@ -23,6 +27,37 @@ struct NativeReceiveView: View {
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
+    }
+}
+
+private struct NativeDeviceNicknameBanner: View {
+    let nickname: String
+    let onReset: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(uiImage: LucideTabIcon.inbox.image)
+                .resizable()
+                .frame(width: 22, height: 22)
+                .foregroundStyle(PikoPalette.accent)
+            Text("本设备名称：\(nickname)")
+                .font(.subheadline)
+                .lineLimit(1)
+            Spacer()
+            Button("换个昵称", action: onReset)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(PikoPalette.accent)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(PikoPalette.accent.opacity(0.1), in: Capsule())
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(PikoPalette.surface.opacity(0.58), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        )
     }
 }
 

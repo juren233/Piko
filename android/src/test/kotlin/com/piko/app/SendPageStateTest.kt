@@ -40,6 +40,25 @@ class SendPageStateTest {
     }
 
     @Test
+    fun updateLanDevicesKeepsRandomNicknameTitleAndCodeSubtitle() {
+        val remoteDevice = SendDevice(
+            id = "lan-1",
+            name = "清亮竹影",
+            group = SendDeviceGroup.Lan,
+            subtitle = "4971",
+            host = "192.168.1.8",
+            port = 42001,
+        )
+
+        val state = SendPageState.initial(currentDeviceName = "赤色星河@0007")
+            .updateLanDevices(listOf(remoteDevice))
+
+        assertEquals("清亮竹影", state.lanDevices.single().name)
+        assertEquals("4971", state.lanDevices.single().subtitle)
+        assertFalse(state.lanDevices.single().subtitle == remoteDevice.host)
+    }
+
+    @Test
     fun toggleDeviceSelectionAddsAndRemovesDeviceId() {
         val device = SendDevice(
             id = "device-mac",

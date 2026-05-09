@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import UIKit
 
 final class NativePikoModel: ObservableObject {
     @Published var lanDevices: [NativeSendDevice] = []
@@ -13,17 +12,22 @@ final class NativePikoModel: ObservableObject {
     @Published var discoveryLabel = "正在搜索"
     @Published var imageSectionExpanded = false
 
-    let currentDeviceName: String
+    @Published private(set) var nickname: NativeDeviceNickname
 
     private let queue = DispatchQueue(label: "piko.native.network")
     private var listener: NWListener?
     private var browser: NWBrowser?
-    private let currentServiceName: String
 
     init() {
-        let currentDeviceName = Self.currentUserAssignedDeviceName()
-        self.currentDeviceName = currentDeviceName
-        self.currentServiceName = "Piko-\(currentDeviceName)"
+        self.nickname = NativeDeviceNicknameStore.loadOrCreate()
+    }
+
+    var currentDeviceName: String {
+        nickname.fullName
+    }
+
+    private var currentServiceName: String {
+        "Piko-\(nickname.fullName)"
     }
 
     var canSend: Bool {
@@ -85,7 +89,9 @@ final class NativePikoModel: ObservableObject {
             let listener = try NWListener(using: .tcp)
             listener.service = NWListener.Service(
                 name: currentServiceName,
-                type: "_piko-share._tcp"
+                type: "_piko-share._tcp",
+                domain: nil,
+                txtRecord: Self.txtRecordData(for: nickname)
             )
             listener.newConnectionHandler = { [weak self] connection in
                 self?.receive(connection)
@@ -103,7 +109,7 @@ final class NativePikoModel: ObservableObject {
         browser?.cancel()
         discoveryLabel = "正在搜索"
 
-        let browser = NWBrowser(for: .bonjour(type: "_piko-share._tcp", domain: "local."), using: .tcp)
+        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_piko-share._tcp", domain: "local."), using: .tcp)
         browser.browseResultsChangedHandler = { [weak self] results, _ in
             guard let self else {
                 return
@@ -113,13 +119,14 @@ final class NativePikoModel: ObservableObject {
                 guard case let .service(name, type, domain, _) = result.endpoint else {
                     return nil
                 }
-                guard name != self.currentServiceName else {
+                let nickname = Self.nickname(fromServiceName: name, metadata: result.metadata)
+                guard name != self.currentServiceName, nickname.fingerprint != self.nickname.fingerprint else {
                     return nil
                 }
                 return NativeSendDevice(
                     id: "\(name).\(type).\(domain)",
-                    name: Self.displayName(fromServiceName: name),
-                    subtitle: domain.isEmpty ? type : domain,
+                    name: nickname.title,
+                    subtitle: nickname.code,
                     endpoint: result.endpoint
                 )
             }
@@ -139,6 +146,19 @@ final class NativePikoModel: ObservableObject {
         }
         browser.start(queue: queue)
         self.browser = browser
+    }
+
+    func resetDeviceNickname() {
+        nickname = NativeDeviceNicknameStore.regenerate(keeping: nickname.fingerprint)
+        let hadListener = listener != nil
+        listener?.cancel()
+        listener = nil
+        if hadListener {
+            startPresence()
+        }
+        if browser != nil {
+            startDiscovery()
+        }
     }
 
     func toggleDevice(_ id: String) {
@@ -320,21 +340,117 @@ final class NativePikoModel: ObservableObject {
         .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: 9)!)
     }
 
-    private static func currentUserAssignedDeviceName() -> String {
-        let trimmedName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedName.isEmpty {
-            return trimmedName
+    private static func nickname(fromServiceName serviceName: String, metadata: NWBrowser.Result.Metadata) -> NativeDeviceNickname {
+        let fallback = NativeDeviceNickname.from(serviceName: serviceName)
+        guard case let .bonjour(txtRecord) = metadata else {
+            return fallback
         }
-        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        let dictionary = txtRecord.dictionary
+        return NativeDeviceNickname(
+            title: dictionary["title"]?.nilIfBlank ?? fallback.title,
+            code: dictionary["code"]?.fourDigitCode ?? fallback.code,
+            fingerprint: dictionary["fp"]?.nilIfBlank ?? ""
+        )
     }
 
-    private static func displayName(fromServiceName serviceName: String) -> String {
-        if serviceName.hasPrefix("Piko-") {
-            return String(serviceName.dropFirst("Piko-".count))
+    private static func txtRecordData(for nickname: NativeDeviceNickname) -> Data {
+        var data = Data()
+        [
+            "title": nickname.title,
+            "code": nickname.code,
+            "fp": nickname.fingerprint,
+        ].forEach { key, value in
+            let entry = "\(key)=\(value)"
+            guard let entryData = entry.data(using: .utf8), entryData.count <= 255 else {
+                return
+            }
+            data.append(contentsOf: [UInt8(entryData.count)])
+            data.append(entryData)
         }
-        return serviceName
+        return data
     }
 
+}
+
+struct NativeDeviceNickname: Equatable {
+    let title: String
+    let code: String
+    let fingerprint: String
+
+    var fullName: String {
+        "\(title)@\(code)"
+    }
+
+    static func from(serviceName: String) -> NativeDeviceNickname {
+        let rawName = serviceName.hasPrefix("Piko-") ? String(serviceName.dropFirst("Piko-".count)) : serviceName
+        let pieces = rawName.split(separator: "@", maxSplits: 1).map(String.init)
+        return NativeDeviceNickname(
+            title: pieces.first?.nilIfBlank ?? rawName,
+            code: pieces.dropFirst().first?.fourDigitCode ?? "0000",
+            fingerprint: ""
+        )
+    }
+}
+
+private enum NativeDeviceNicknameStore {
+    private static let titleKey = "piko.deviceNickname.title"
+    private static let codeKey = "piko.deviceNickname.code"
+    private static let fingerprintKey = "piko.deviceNickname.fingerprint"
+
+    static func loadOrCreate() -> NativeDeviceNickname {
+        if let existing = load() {
+            return existing
+        }
+        let fingerprint = UserDefaults.standard.string(forKey: fingerprintKey)?.nilIfBlank ?? UUID().uuidString
+        let nickname = generate(fingerprint: fingerprint)
+        save(nickname)
+        return nickname
+    }
+
+    static func regenerate(keeping fingerprint: String) -> NativeDeviceNickname {
+        let nickname = generate(fingerprint: fingerprint.nilIfBlank ?? UUID().uuidString)
+        save(nickname)
+        return nickname
+    }
+
+    private static func load() -> NativeDeviceNickname? {
+        guard
+            let title = UserDefaults.standard.string(forKey: titleKey)?.nilIfBlank,
+            let code = UserDefaults.standard.string(forKey: codeKey)?.fourDigitCode,
+            let fingerprint = UserDefaults.standard.string(forKey: fingerprintKey)?.nilIfBlank
+        else {
+            return nil
+        }
+        return NativeDeviceNickname(title: title, code: code, fingerprint: fingerprint)
+    }
+
+    private static func save(_ nickname: NativeDeviceNickname) {
+        UserDefaults.standard.set(nickname.title, forKey: titleKey)
+        UserDefaults.standard.set(nickname.code, forKey: codeKey)
+        UserDefaults.standard.set(nickname.fingerprint, forKey: fingerprintKey)
+    }
+
+    private static func generate(fingerprint: String) -> NativeDeviceNickname {
+        NativeDeviceNickname(
+            title: "\(adjectives.randomElement() ?? "赤色")\(nouns.randomElement() ?? "星河")",
+            code: String(format: "%04d", Int.random(in: 0...9999)),
+            fingerprint: fingerprint
+        )
+    }
+
+    private static let adjectives = [
+        "赤色", "清亮", "轻快", "温柔", "安静", "明朗", "灵巧", "松弛", "锋利", "柔软",
+        "澄澈", "灿烂", "沉稳", "敏捷", "悠然", "热烈", "青蓝", "晴朗", "微光", "薄荷",
+        "银白", "琥珀", "翠绿", "深空", "流云", "暖阳", "星辉", "锦瑟", "远山", "新雪",
+        "晨雾", "暮色", "海盐", "月白", "花火", "竹青", "霜蓝", "橙光", "静好", "飞扬",
+    ]
+
+    private static let nouns = [
+        "星河", "山谷", "竹影", "海湾", "云帆", "月台", "风铃", "灯塔", "溪流", "花园",
+        "书页", "岛屿", "晨星", "松林", "港口", "旅人", "音符", "纸鹤", "晴空", "贝壳",
+        "锦鲤", "银杏", "山岚", "雪线", "茶盏", "木舟", "麦田", "星尘", "雨巷", "南风",
+        "北辰", "长桥", "清泉", "花径", "云雀", "青石", "灯火", "白鹭", "秋水", "春山",
+    ]
 }
 
 struct NativeSendDevice: Identifiable {
@@ -405,6 +521,16 @@ struct NativeReceivedTransfer {
 }
 
 extension String {
+    var nilIfBlank: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var fourDigitCode: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.range(of: #"^\d{4}$"#, options: .regularExpression) == nil ? nil : trimmed
+    }
+
     var sanitizedFileName: String {
         let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         return components(separatedBy: invalid).joined(separator: "_")

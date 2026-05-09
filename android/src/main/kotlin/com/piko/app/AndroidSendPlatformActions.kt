@@ -44,12 +44,16 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 private const val PIKO_SERVICE_TYPE = "_piko-share._tcp."
+private const val PIKO_SERVICE_PREFIX = "Piko-"
+private const val PIKO_ATTR_TITLE = "title"
+private const val PIKO_ATTR_CODE = "code"
+private const val PIKO_ATTR_FINGERPRINT = "fp"
 private const val RECENT_IMAGE_LIMIT = 24
 private val PIKO_MAGIC = byteArrayOf(0x50, 0x49, 0x4B, 0x4F)
 private const val PIKO_PROTOCOL_VERSION = 1
 
 @Composable
-fun rememberAndroidSendPlatformActions(currentDeviceName: String): SendPlatformActions {
+internal fun rememberAndroidSendPlatformActions(currentNickname: DeviceNickname): SendPlatformActions {
     val context = LocalContext.current
     val appContext = context.applicationContext
     var recentImagesCallback by remember {
@@ -61,10 +65,10 @@ fun rememberAndroidSendPlatformActions(currentDeviceName: String): SendPlatformA
     var pickedFilesCallback by remember {
         mutableStateOf<((List<SendFileItem>) -> Unit)?>(null)
     }
-    val lanDiscovery = remember(appContext, currentDeviceName) {
+    val lanDiscovery = remember(appContext, currentNickname) {
         AndroidLanDiscovery(
             context = appContext,
-            currentDeviceName = currentDeviceName,
+            currentNickname = currentNickname,
         )
     }
     val transferClient = remember(appContext) {
@@ -252,7 +256,7 @@ private fun resolveFileType(mimeType: String?, displayName: String): SendFileTyp
 
 private class AndroidLanDiscovery(
     private val context: Context,
-    private val currentDeviceName: String,
+    private val currentNickname: DeviceNickname,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -298,15 +302,18 @@ private class AndroidLanDiscovery(
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
 
                         override fun onServiceResolved(resolvedService: NsdServiceInfo) {
-                            if (isRegisteredLocalService(resolvedService.serviceName)) {
+                            val nickname = resolvedService.deviceNickname()
+                            if (isRegisteredLocalService(resolvedService.serviceName) ||
+                                nickname.fingerprint == currentNickname.fingerprint
+                            ) {
                                 return
                             }
                             val id = "${resolvedService.serviceName}-${resolvedService.host?.hostAddress}-${resolvedService.port}"
                             devices[id] = SendDevice(
                                 id = id,
-                                name = resolvedService.serviceName.removePrefix("Piko-"),
+                                name = nickname.title,
                                 group = SendDeviceGroup.Lan,
-                                subtitle = resolvedService.host?.hostAddress,
+                                subtitle = nickname.code,
                                 host = resolvedService.host?.hostAddress,
                                 port = resolvedService.port,
                                 platformHint = "android",
@@ -318,7 +325,7 @@ private class AndroidLanDiscovery(
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
-                devices.entries.removeAll { (_, device) -> device.name == serviceInfo.serviceName.removePrefix("Piko-") }
+                devices.entries.removeAll { (id, _) -> id.startsWith("${serviceInfo.serviceName}-") }
                 post(callback, if (devices.isEmpty()) SendLanDiscoveryState.Empty else SendLanDiscoveryState.Found)
             }
 
@@ -375,9 +382,12 @@ private class AndroidLanDiscovery(
         serverSocket = socket
         startAcceptLoop(socket)
         val serviceInfo = NsdServiceInfo().apply {
-            serviceName = "Piko-$currentDeviceName"
+            serviceName = "$PIKO_SERVICE_PREFIX${currentNickname.fullName}"
             serviceType = PIKO_SERVICE_TYPE
             port = socket.localPort
+            setAttribute(PIKO_ATTR_TITLE, currentNickname.title)
+            setAttribute(PIKO_ATTR_CODE, currentNickname.code)
+            setAttribute(PIKO_ATTR_FINGERPRINT, currentNickname.fingerprint)
         }
         registeredServiceName = serviceInfo.serviceName
         val listener = object : NsdManager.RegistrationListener {
@@ -455,6 +465,20 @@ private class AndroidLanDiscovery(
 
 private fun String.normalizedServiceType(): String {
     return trim().trimEnd('.')
+}
+
+private fun NsdServiceInfo.deviceNickname(): DeviceNickname {
+    val txtAttributes = this.attributes
+    val serviceNickname = serviceName.removePrefix(PIKO_SERVICE_PREFIX)
+    val fallbackTitle = serviceNickname.substringBefore("@").ifBlank { serviceNickname }
+    val fallbackCode = serviceNickname.substringAfter("@", "").takeIf { it.matches(Regex("\\d{4}")) }
+    return DeviceNickname(
+        title = txtAttributes[PIKO_ATTR_TITLE]?.toString(Charsets.UTF_8)?.ifBlank { null } ?: fallbackTitle,
+        code = txtAttributes[PIKO_ATTR_CODE]?.toString(Charsets.UTF_8)?.takeIf { it.matches(Regex("\\d{4}")) }
+            ?: fallbackCode
+            ?: "0000",
+        fingerprint = txtAttributes[PIKO_ATTR_FINGERPRINT]?.toString(Charsets.UTF_8).orEmpty(),
+    )
 }
 
 private class AndroidTransferClient(

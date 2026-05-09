@@ -144,5 +144,15 @@ private fun SendDeviceAvatar(
             overflow = TextOverflow.Ellipsis,
             textAlign = TextAlign.Center,
         )
+        device.subtitle?.let { subtitle ->
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }

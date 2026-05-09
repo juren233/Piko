@@ -70,23 +70,36 @@ class IosAndroidUiParityTest {
     }
 
     @Test
-    fun sendPagesDoNotExposeCurrentDeviceAndIosNormalizesGenericDeviceName() {
+    fun sendPagesDoNotExposeCurrentDeviceAndUseRandomNicknameBanner() {
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
+        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
+        val iosReceive = readIos("NativeReceiveView.swift")
         val iosProject = File(rootDir, "ios/Piko.xcodeproj/project.pbxproj").readText()
         val iosEntitlements = File(rootDir, "ios/Piko.entitlements")
 
         assertTrue("myDevices = emptyList()" in androidState)
         assertTrue("var myDevices: [NativeSendDevice] { [] }" in iosModel)
-        assertTrue("private let currentServiceName: String" in iosModel)
+        assertTrue("name: nickname.title" in iosModel)
+        assertTrue("subtitle: nickname.code" in iosModel)
         assertTrue("name: currentServiceName" in iosModel)
-        assertTrue("guard name != self.currentServiceName" in iosModel)
+        assertTrue("nickname.fingerprint != self.nickname.fingerprint" in iosModel)
         assertFalse("name: currentDeviceName" in iosModel)
+        assertFalse("UIDevice.current.name" in iosModel)
         assertFalse("identifierForVendor" in iosModel)
         assertFalse("iPhone A567" in iosModel)
-        assertTrue(iosEntitlements.isFile)
-        assertTrue("com.apple.developer.device-information.user-assigned-device-name" in iosEntitlements.readText())
-        assertTrue("CODE_SIGN_ENTITLEMENTS = Piko.entitlements;" in iosProject)
+        assertFalse(iosEntitlements.isFile)
+        assertFalse("CODE_SIGN_ENTITLEMENTS = Piko.entitlements;" in iosProject)
+        assertFalse("Settings.Global.DEVICE_NAME" in androidApp)
+        assertFalse("Build.MODEL" in androidApp)
+        assertTrue("本设备名称：" in androidReceive)
+        assertTrue("换个昵称" in androidReceive)
+        assertTrue("本设备名称：" in iosReceive)
+        assertTrue("换个昵称" in iosReceive)
+        assertTrue("subtitle = nickname.code" in androidDiscovery)
+        assertFalse("subtitle = resolvedService.host?.hostAddress" in androidDiscovery)
     }
 
     private fun readIos(name: String): String =

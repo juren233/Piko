@@ -3,8 +3,6 @@ package com.piko.app
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
-import android.os.Build
-import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,17 +40,14 @@ import com.piko.app.glass.LiquidSendFloatingButton
 @Composable
 fun AndroidPikoApp() {
     val appContext = LocalContext.current.applicationContext
-    val currentDeviceName = remember(appContext) {
-        resolveAndroidDeviceName(
-            systemDeviceName = Settings.Global.getString(appContext.contentResolver, Settings.Global.DEVICE_NAME),
-            manufacturer = Build.MANUFACTURER,
-            model = Build.MODEL,
-        )
+    val nicknameRepository = remember(appContext) {
+        DeviceNicknameRepository(AndroidDeviceNicknameStorage(appContext))
     }
+    var currentNickname by remember(nicknameRepository) { mutableStateOf(nicknameRepository.loadOrCreate()) }
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
-    var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
+    var state by remember { mutableStateOf(PikoHomeState.initial(currentNickname.fullName)) }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
-        currentDeviceName = state.currentDeviceName,
+        currentNickname = currentNickname,
     )
     val backdrop = rememberLayerBackdrop()
 
@@ -72,6 +67,10 @@ fun AndroidPikoApp() {
                     tab = selectedTab,
                     state = state,
                     onStateMutate = { transform -> state = transform(state) },
+                    onResetCurrentDeviceName = {
+                        currentNickname = nicknameRepository.regenerate()
+                        state = state.copy(currentDeviceName = currentNickname.fullName)
+                    },
                     sendPlatformActions = sendPlatformActions,
                     bottomContentPadding = 104.dp,
                     modifier = Modifier,
@@ -202,28 +201,3 @@ private fun PikoTab.iconPainter(): Painter =
             PikoTab.Settings -> R.drawable.ic_lucide_settings
         },
     )
-
-internal fun resolveAndroidDeviceName(
-    systemDeviceName: String?,
-    manufacturer: String,
-    model: String,
-): String {
-    val trimmedSystemName = systemDeviceName?.trim().orEmpty()
-    if (trimmedSystemName.isNotEmpty()) {
-        return trimmedSystemName
-    }
-
-    val trimmedManufacturer = manufacturer.trim()
-    val trimmedModel = model.trim()
-    val hardwareName = when {
-        trimmedManufacturer.isNotEmpty() &&
-            trimmedModel.isNotEmpty() &&
-            trimmedModel.startsWith(trimmedManufacturer, ignoreCase = true) -> trimmedModel
-        trimmedManufacturer.isNotEmpty() && trimmedModel.isNotEmpty() -> "$trimmedManufacturer $trimmedModel"
-        trimmedModel.isNotEmpty() -> trimmedModel
-        trimmedManufacturer.isNotEmpty() -> trimmedManufacturer
-        else -> ""
-    }
-
-    return hardwareName.ifBlank { "Android 设备" }
-}
