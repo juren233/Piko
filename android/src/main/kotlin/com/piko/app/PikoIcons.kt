@@ -126,6 +126,43 @@ internal val LucideXIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
+internal val LucidePauseIcon: ImageVector = ImageVector.Builder(
+    name = "LucidePause",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    lucidePath {
+        moveTo(6f, 4f)
+        horizontalLineToRelative(4f)
+        verticalLineToRelative(16f)
+        horizontalLineTo(6f)
+        close()
+    }
+    lucidePath {
+        moveTo(14f, 4f)
+        horizontalLineToRelative(4f)
+        verticalLineToRelative(16f)
+        horizontalLineToRelative(-4f)
+        close()
+    }
+}.build()
+
+internal val LucideChevronRightIcon: ImageVector = ImageVector.Builder(
+    name = "LucideChevronRight",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    lucidePath {
+        moveTo(9f, 18f)
+        lineToRelative(6f, -6f)
+        lineToRelative(-6f, -6f)
+    }
+}.build()
+
 internal val LucideFileIcon: ImageVector = ImageVector.Builder(
     name = "LucideFile",
     defaultWidth = 24.dp,
@@ -151,6 +188,32 @@ internal val LucideFileIcon: ImageVector = ImageVector.Builder(
         verticalLineToRelative(5f)
         arcToRelative(1f, 1f, 0f, false, false, 1f, 1f)
         horizontalLineToRelative(5f)
+    }
+}.build()
+
+internal val LucideDownloadIcon: ImageVector = ImageVector.Builder(
+    name = "LucideDownload",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    lucidePath {
+        moveTo(21f, 15f)
+        verticalLineToRelative(4f)
+        arcToRelative(2f, 2f, 0f, false, true, -2f, 2f)
+        horizontalLineTo(5f)
+        arcToRelative(2f, 2f, 0f, false, true, -2f, -2f)
+        verticalLineToRelative(-4f)
+    }
+    lucidePath {
+        moveTo(7f, 10f)
+        lineToRelative(5f, 5f)
+        lineToRelative(5f, -5f)
+    }
+    lucidePath {
+        moveTo(12f, 15f)
+        verticalLineTo(3f)
     }
 }.build()
 

@@ -2,12 +2,15 @@ import Foundation
 
 enum NativeTransferProtocol {
     private static let magic = Data([0x50, 0x49, 0x4B, 0x4F])
-    private static let version = 1
+    private static let version = 2
 
-    static func encodeHeader(items: [NativeTransferItem]) -> Data {
+    static func encodeHeader(items: [NativeTransferItem], senderName: String) -> Data {
         var data = Data()
         data.append(magic)
         data.appendInt32(version)
+        let senderNameBytes = Data(senderName.utf8)
+        data.appendInt32(senderNameBytes.count)
+        data.append(senderNameBytes)
         data.appendInt32(items.count)
         for item in items {
             let nameBytes = Data(item.displayName.utf8)
@@ -20,18 +23,38 @@ enum NativeTransferProtocol {
     }
 
     static func decodeTransfer(_ data: Data) -> NativeReceivedTransfer? {
+        guard let envelope = inspectTransfer(data), envelope.isComplete else {
+            return nil
+        }
+        return envelope.transfer
+    }
+
+    static func inspectTransfer(_ data: Data) -> NativeTransferEnvelope? {
         var offset = 0
         guard data.count >= 12, data.readData(count: magic.count, offset: &offset) == magic else {
             return nil
         }
-        guard data.readInt32(offset: &offset) == version else {
+        guard let decodedVersion = data.readInt32(offset: &offset), decodedVersion >= 1, decodedVersion <= version else {
             return nil
+        }
+        let senderName: String
+        if decodedVersion >= 2 {
+            guard let senderNameLength = data.readInt32(offset: &offset), senderNameLength >= 0 else {
+                return nil
+            }
+            guard let senderNameData = data.readData(count: senderNameLength, offset: &offset),
+                  let decodedSenderName = String(data: senderNameData, encoding: .utf8) else {
+                return nil
+            }
+            senderName = decodedSenderName
+        } else {
+            senderName = "局域网设备"
         }
         guard let count = data.readInt32(offset: &offset), count >= 0 else {
             return nil
         }
 
-        var metadata: [(String, NativeFileType, Int)] = []
+        var metadata: [NativeTransferFileMetadata] = []
         for _ in 0..<count {
             guard let nameLength = data.readInt32(offset: &offset), nameLength >= 0 else {
                 return nil
@@ -49,18 +72,55 @@ enum NativeTransferProtocol {
                 return nil
             }
             let fileType = NativeFileType(rawValue: rawFileType) ?? .other
-            metadata.append((name, fileType, size))
+            metadata.append(NativeTransferFileMetadata(displayName: name, fileType: fileType, sizeBytes: size))
+        }
+
+        let payloadOffset = offset
+        let totalBytes = metadata.reduce(0) { $0 + $1.sizeBytes }
+        let receivedBytes = min(max(data.count - payloadOffset, 0), totalBytes)
+        guard receivedBytes >= totalBytes else {
+            return NativeTransferEnvelope(
+                senderName: senderName,
+                files: metadata,
+                totalBytes: totalBytes,
+                receivedBytes: receivedBytes,
+                transfer: nil
+            )
         }
 
         var files: [NativeReceivedFile] = []
-        for (name, fileType, size) in metadata {
-            guard let bytes = data.readData(count: size, offset: &offset) else {
+        for file in metadata {
+            guard let bytes = data.readData(count: file.sizeBytes, offset: &offset) else {
                 return nil
             }
-            files.append(NativeReceivedFile(displayName: name, fileType: fileType, data: bytes))
+            files.append(NativeReceivedFile(displayName: file.displayName, fileType: file.fileType, data: bytes))
         }
 
-        return NativeReceivedTransfer(files: files)
+        return NativeTransferEnvelope(
+            senderName: senderName,
+            files: metadata,
+            totalBytes: totalBytes,
+            receivedBytes: receivedBytes,
+            transfer: NativeReceivedTransfer(senderName: senderName, files: files)
+        )
+    }
+}
+
+struct NativeTransferFileMetadata {
+    let displayName: String
+    let fileType: NativeFileType
+    let sizeBytes: Int
+}
+
+struct NativeTransferEnvelope {
+    let senderName: String
+    let files: [NativeTransferFileMetadata]
+    let totalBytes: Int
+    let receivedBytes: Int
+    let transfer: NativeReceivedTransfer?
+
+    var isComplete: Bool {
+        transfer != nil
     }
 }
 

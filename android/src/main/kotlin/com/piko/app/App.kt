@@ -56,7 +56,9 @@ fun PikoTabScreen(
     when (tab) {
         PikoTab.Receive -> PikoReceiveScreen(
             state = state,
+            onStateMutate = onStateMutate,
             onResetCurrentDeviceName = onResetCurrentDeviceName,
+            sendPlatformActions = sendPlatformActions,
             bottomContentPadding = bottomContentPadding,
             modifier = modifier,
         )
@@ -78,10 +80,11 @@ fun PikoTabScreen(
 
 fun startSendTransfer(
     sendPage: SendPageState,
+    senderName: String,
     onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
     sendPlatformActions: SendPlatformActions,
 ) {
-    val request = sendPage.buildTransferRequest() ?: return
+    val request = sendPage.buildTransferRequest(senderName = senderName.substringBefore("@")) ?: return
     sendPlatformActions.startTransfer(request) { event ->
         onStateMutate { state ->
             state.copy(sendPage = state.sendPage.applyTransferEvent(event))

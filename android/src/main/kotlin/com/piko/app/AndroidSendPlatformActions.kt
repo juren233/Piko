@@ -50,10 +50,13 @@ private const val PIKO_ATTR_CODE = "code"
 private const val PIKO_ATTR_FINGERPRINT = "fp"
 private const val RECENT_IMAGE_LIMIT = 24
 private val PIKO_MAGIC = byteArrayOf(0x50, 0x49, 0x4B, 0x4F)
-private const val PIKO_PROTOCOL_VERSION = 1
+private const val PIKO_PROTOCOL_VERSION = 2
 
 @Composable
-internal fun rememberAndroidSendPlatformActions(currentNickname: DeviceNickname): SendPlatformActions {
+internal fun rememberAndroidSendPlatformActions(
+    currentNickname: DeviceNickname,
+    onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
+): SendPlatformActions {
     val context = LocalContext.current
     val appContext = context.applicationContext
     var recentImagesCallback by remember {
@@ -69,6 +72,7 @@ internal fun rememberAndroidSendPlatformActions(currentNickname: DeviceNickname)
         AndroidLanDiscovery(
             context = appContext,
             currentNickname = currentNickname,
+            onReceiveTransferEvent = onReceiveTransferEvent,
         )
     }
     val transferClient = remember(appContext) {
@@ -130,6 +134,7 @@ internal fun rememberAndroidSendPlatformActions(currentNickname: DeviceNickname)
         startTransfer = transferClient::startTransfer,
         pauseTransfer = transferClient::pauseTransfer,
         cancelTransfer = transferClient::cancelTransfer,
+        cancelReceiveTransfer = lanDiscovery::cancelReceiveTransfer,
     )
 }
 
@@ -257,6 +262,7 @@ private fun resolveFileType(mimeType: String?, displayName: String): SendFileTyp
 private class AndroidLanDiscovery(
     private val context: Context,
     private val currentNickname: DeviceNickname,
+    private val onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
@@ -267,6 +273,8 @@ private class AndroidLanDiscovery(
     private var multicastLock: WifiManager.MulticastLock? = null
     private var serverSocket: ServerSocket? = null
     private var acceptThread: Thread? = null
+    private var activeReceiveId: String? = null
+    private var activeReceiveSocket: Socket? = null
     private var registeredServiceName: String? = null
     private var discoveryActive = false
 
@@ -440,10 +448,26 @@ private class AndroidLanDiscovery(
                     isDaemon = true,
                 ) {
                     client.use { incoming ->
-                        runCatching { receiveIncomingTransfer(context, incoming) }
+                        receiveIncomingTransfer(
+                            context = context,
+                            socket = incoming,
+                            onReceiveTransferEvent = { event ->
+                                mainHandler.post { onReceiveTransferEvent(event) }
+                            },
+                            onActiveReceiveChanged = { transferId, activeSocket ->
+                                activeReceiveId = transferId
+                                activeReceiveSocket = activeSocket
+                            },
+                        )
                     }
                 }
             }
+        }
+    }
+
+    fun cancelReceiveTransfer(transferId: String) {
+        if (transferId == activeReceiveId) {
+            runCatching { activeReceiveSocket?.close() }
         }
     }
 
@@ -515,7 +539,7 @@ private class AndroidTransferClient(
                         activeSocket = socket
                         socket.connect(InetSocketAddress(host, port), 5_000)
                         DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { output ->
-                            writeTransferHeader(output, request.items)
+                            writeTransferHeader(output, request)
                             request.items.forEach { item ->
                                 ensureNotStopped()
                                 context.contentResolver.openInputStream(Uri.parse(item.sourceUri)).use { input ->
@@ -609,12 +633,15 @@ private class AndroidTransferClient(
 
 private fun writeTransferHeader(
     output: DataOutputStream,
-    items: List<SendTransferItem>,
+    request: SendTransferRequest,
 ) {
     output.write(PIKO_MAGIC)
     output.writeInt(PIKO_PROTOCOL_VERSION)
-    output.writeInt(items.size)
-    items.forEach { item ->
+    val senderNameBytes = request.senderName.toByteArray(Charsets.UTF_8)
+    output.writeInt(senderNameBytes.size)
+    output.write(senderNameBytes)
+    output.writeInt(request.items.size)
+    request.items.forEach { item ->
         val nameBytes = item.displayName.toByteArray(Charsets.UTF_8)
         output.writeInt(nameBytes.size)
         output.write(nameBytes)
@@ -626,26 +653,96 @@ private fun writeTransferHeader(
 private fun receiveIncomingTransfer(
     context: Context,
     socket: Socket,
+    onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
+    onActiveReceiveChanged: (String?, Socket?) -> Unit,
 ) {
-    DataInputStream(BufferedInputStream(socket.getInputStream())).use { input ->
-        val files = readTransferHeader(input)
-        files.forEach { file ->
-            context.contentResolver.openOutputStreamForDownload(file).use { output ->
-                requireNotNull(output) { "无法创建接收文件 ${file.displayName}" }
-                copyFixedLength(input, output, file.sizeBytes)
+    val transferId = newTransferId()
+    onActiveReceiveChanged(transferId, socket)
+    try {
+        DataInputStream(BufferedInputStream(socket.getInputStream())).use { input ->
+            val header = readTransferHeader(input)
+            val totalBytes = header.files.sumOf { file -> file.sizeBytes }
+            val pendingFiles = header.files.map { file ->
+                ReceiveHistoryFile(
+                    displayName = file.displayName,
+                    fileType = file.fileType.toReceiveFileType(),
+                    sizeBytes = file.sizeBytes,
+                    thumbnailBytes = null,
+                )
             }
+            onReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = transferId,
+                    senderName = header.senderName,
+                    files = pendingFiles,
+                    totalBytes = totalBytes,
+                ),
+            )
+
+            var completedBytes = 0L
+            val receivedFiles = mutableListOf<ReceiveHistoryFile>()
+            header.files.forEach { file ->
+                val uri = context.contentResolver.createDownloadUri(file)
+                context.contentResolver.openOutputStream(uri).use { output ->
+                    requireNotNull(output) { "无法创建接收文件 ${file.displayName}" }
+                    completedBytes += copyFixedLength(
+                        input = input,
+                        output = output,
+                        sizeBytes = file.sizeBytes,
+                        totalCompletedBeforeFile = completedBytes,
+                        totalBytes = totalBytes,
+                        transferId = transferId,
+                        onReceiveTransferEvent = onReceiveTransferEvent,
+                    )
+                }
+                receivedFiles += ReceiveHistoryFile(
+                    displayName = file.displayName,
+                    fileType = file.fileType.toReceiveFileType(),
+                    sizeBytes = file.sizeBytes,
+                    thumbnailBytes = if (file.fileType == SendFileType.Image) {
+                        loadThumbnailBytes(context.contentResolver, uri)
+                    } else {
+                        null
+                    },
+                )
+            }
+            onReceiveTransferEvent(
+                ReceiveTransferEvent.Completed(
+                    transferId = transferId,
+                    senderName = header.senderName,
+                    files = receivedFiles,
+                    receivedAtEpochMillis = currentTimeMillis(),
+                    receivedAtLabel = "刚刚",
+                ),
+            )
         }
+    } catch (_: java.net.SocketException) {
+        onReceiveTransferEvent(ReceiveTransferEvent.Canceled(transferId))
+    } catch (error: Throwable) {
+        onReceiveTransferEvent(ReceiveTransferEvent.Failed(transferId, error.message ?: "接收失败"))
+    } finally {
+        onActiveReceiveChanged(null, null)
     }
 }
 
-private fun readTransferHeader(input: DataInputStream): List<SendTransferHeaderFile> {
+private fun readTransferHeader(input: DataInputStream): SendTransferHeader {
     val magic = ByteArray(PIKO_MAGIC.size)
     input.readFully(magic)
     require(magic.contentEquals(PIKO_MAGIC)) { "传输协议标识不匹配" }
-    require(input.readInt() == PIKO_PROTOCOL_VERSION) { "传输协议版本不支持" }
+    val version = input.readInt()
+    require(version in 1..PIKO_PROTOCOL_VERSION) { "传输协议版本不支持" }
+    val senderName = if (version >= 2) {
+        val senderNameSize = input.readInt()
+        require(senderNameSize >= 0) { "设备名称长度无效" }
+        val senderNameBytes = ByteArray(senderNameSize)
+        input.readFully(senderNameBytes)
+        senderNameBytes.toString(Charsets.UTF_8)
+    } else {
+        "局域网设备"
+    }
     val count = input.readInt()
     require(count >= 0) { "文件数量无效" }
-    return List(count) {
+    val files = List(count) {
         val nameSize = input.readInt()
         require(nameSize >= 0) { "文件名长度无效" }
         val nameBytes = ByteArray(nameSize)
@@ -659,33 +756,49 @@ private fun readTransferHeader(input: DataInputStream): List<SendTransferHeaderF
             sizeBytes = size,
         )
     }
+    return SendTransferHeader(senderName = senderName, files = files)
 }
 
-private fun ContentResolver.openOutputStreamForDownload(file: SendTransferHeaderFile): OutputStream? {
-    val uri = insert(
-        MediaStore.Downloads.EXTERNAL_CONTENT_URI,
-        ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, file.displayName)
-            put(MediaStore.MediaColumns.MIME_TYPE, file.fileType.mimeType)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Piko")
-        },
-    )
-    return uri?.let { openOutputStream(it) }
+private fun ContentResolver.createDownloadUri(file: SendTransferHeaderFile): Uri {
+    return requireNotNull(
+        insert(
+            MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+            ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, file.displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, file.fileType.mimeType)
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Download/Piko")
+            }
+        ),
+    ) { "无法创建接收文件 ${file.displayName}" }
 }
 
 private fun copyFixedLength(
     input: DataInputStream,
     output: OutputStream,
     sizeBytes: Long,
-) {
+    totalCompletedBeforeFile: Long,
+    totalBytes: Long,
+    transferId: String,
+    onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
+): Long {
     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
     var remaining = sizeBytes
+    var copied = 0L
     while (remaining > 0) {
         val read = input.read(buffer, 0, minOf(buffer.size.toLong(), remaining).toInt())
         require(read != -1) { "传输内容不完整" }
         output.write(buffer, 0, read)
+        copied += read
         remaining -= read
+        onReceiveTransferEvent(
+            ReceiveTransferEvent.Progress(
+                transferId = transferId,
+                completedBytes = (totalCompletedBeforeFile + copied).coerceAtMost(totalBytes),
+                totalBytes = totalBytes,
+            ),
+        )
     }
+    return copied
 }
 
 private val SendFileType.mimeType: String
@@ -697,6 +810,17 @@ private val SendFileType.mimeType: String
         SendFileType.Archive -> "application/zip"
         SendFileType.Other -> "application/octet-stream"
     }
+
+private fun SendFileType.toReceiveFileType(): ReceiveFileType {
+    return when (this) {
+        SendFileType.Image -> ReceiveFileType.Image
+        SendFileType.Document -> ReceiveFileType.Document
+        SendFileType.Spreadsheet -> ReceiveFileType.Spreadsheet
+        SendFileType.Video -> ReceiveFileType.Video
+        SendFileType.Archive -> ReceiveFileType.Archive
+        SendFileType.Other -> ReceiveFileType.Other
+    }
+}
 
 private class TransferPausedException : RuntimeException()
 private class TransferCanceledException : RuntimeException()

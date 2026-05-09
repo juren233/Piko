@@ -1,6 +1,7 @@
 package com.piko.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -8,13 +9,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -29,10 +30,19 @@ internal fun SendTransferStatusCard(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    PikoSectionPanel(
-        title = "传输",
-        modifier = modifier,
-        trailing = { PikoInfoPill(text = "${(transfer.progress * 100).toInt()}%", emphasized = true) },
+    val cardShape = RoundedCornerShape(20.dp)
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(cardShape)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.58f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                shape = cardShape,
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Column(
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -76,17 +86,33 @@ internal fun SendTransferStatusCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                TextButton(
+                IconButton(
                     onClick = onPause,
                     enabled = transfer.status == SendTransferStatus.Transferring,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)),
                 ) {
-                    Text(text = "暂停")
+                    Icon(
+                        imageVector = LucidePauseIcon,
+                        contentDescription = "暂停",
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
                 }
-                IconButton(onClick = onCancel) {
+                IconButton(
+                    onClick = onCancel,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.error.copy(alpha = 0.1f)),
+                ) {
                     Icon(
                         imageVector = LucideXIcon,
                         contentDescription = "取消",
-                        modifier = Modifier.size(20.dp),
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error,
                     )
                 }
             }

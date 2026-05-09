@@ -1,5 +1,7 @@
 package com.piko.app
 
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,14 +21,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -35,10 +43,14 @@ import androidx.compose.ui.unit.dp
 @Composable
 internal fun PikoReceiveScreen(
     state: PikoHomeState,
+    onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
     onResetCurrentDeviceName: () -> Unit = {},
+    sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
+    val activeReceive = state.activeReceive.takeIf { it.transferId != null }
+
     Box(
         modifier = modifier
             .fillMaxSize()
@@ -64,13 +76,28 @@ internal fun PikoReceiveScreen(
                     onReset = onResetCurrentDeviceName,
                 )
             }
-            if (state.receiveHistoryDescending.isEmpty()) {
+            if (state.receiveHistoryDescending.isEmpty() && activeReceive == null) {
                 item {
                     ReceiveHistoryEmptyState()
                 }
             } else {
                 item {
                     PikoInfoPill(text = "最近接收", emphasized = true)
+                }
+                if (activeReceive != null) {
+                    item(key = activeReceive.transferId) {
+                        ActiveReceiveCard(
+                            transfer = activeReceive,
+                            onCancel = {
+                                activeReceive.transferId?.let { transferId ->
+                                    sendPlatformActions.cancelReceiveTransfer(transferId)
+                                    onStateMutate { current ->
+                                        current.applyReceiveTransferEvent(ReceiveTransferEvent.Canceled(transferId))
+                                    }
+                                }
+                            },
+                        )
+                    }
                 }
                 items(
                     items = state.receiveHistoryDescending,
@@ -80,6 +107,91 @@ internal fun PikoReceiveScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ActiveReceiveCard(
+    transfer: ReceiveTransferState,
+    onCancel: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.56f))
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                shape = RoundedCornerShape(20.dp),
+            )
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ActiveReceiveProgressIcon(
+            progress = transfer.progress,
+            fileType = transfer.primaryFileType,
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = transfer.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = transfer.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onCancel) {
+            Icon(
+                imageVector = LucideXIcon,
+                contentDescription = "取消",
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.error,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActiveReceiveProgressIcon(
+    progress: Float,
+    fileType: ReceiveFileType,
+) {
+    Box(
+        modifier = Modifier.size(60.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(52.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = if (fileType == ReceiveFileType.Image) LucideImageIcon else LucideDownloadIcon,
+                contentDescription = null,
+                modifier = Modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
+        CircularProgressIndicator(
+            progress = { progress },
+            modifier = Modifier.size(60.dp),
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
+            trackColor = Color.Transparent,
+            strokeWidth = 3.dp,
+        )
     }
 }
 
@@ -188,10 +300,11 @@ private fun ReceiveHistoryCard(history: ReceiveHistoryItem) {
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = ">",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        Icon(
+            imageVector = LucideChevronRightIcon,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         )
     }
 }
@@ -209,6 +322,7 @@ private fun ReceiveHistoryPreview(history: ReceiveHistoryItem) {
 
         imagePreviewDescription != null -> ImageThumbnailPreview(
             description = imagePreviewDescription,
+            thumbnailBytes = history.primaryFile.thumbnailBytes,
             size = 60.dp,
         )
 
@@ -341,9 +455,27 @@ private fun FileTypePreviewBadge(
 @Composable
 private fun ImageThumbnailPreview(
     description: String,
+    thumbnailBytes: ByteArray?,
     size: Dp,
 ) {
     val shape = RoundedCornerShape(18.dp)
+    val bitmap = remember(thumbnailBytes) {
+        thumbnailBytes?.let { bytes ->
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+        }
+    }
+
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap,
+            contentDescription = description,
+            modifier = Modifier
+                .size(size)
+                .clip(shape),
+            contentScale = ContentScale.Crop,
+        )
+        return
+    }
 
     Box(
         modifier = Modifier

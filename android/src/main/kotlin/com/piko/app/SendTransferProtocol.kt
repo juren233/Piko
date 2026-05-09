@@ -1,13 +1,16 @@
 package com.piko.app
 
 private val PIKO_MAGIC = byteArrayOf(0x50, 0x49, 0x4B, 0x4F)
-private const val PIKO_PROTOCOL_VERSION = 1
+private const val PIKO_PROTOCOL_VERSION = 2
 
 object SendTransferProtocol {
-    fun encodeHeader(items: List<SendTransferItem>): ByteArray {
+    fun encodeHeader(items: List<SendTransferItem>, senderName: String): ByteArray {
         val writer = ByteWriter()
         writer.writeBytes(PIKO_MAGIC)
         writer.writeInt(PIKO_PROTOCOL_VERSION)
+        val senderNameBytes = senderName.encodeToByteArray()
+        writer.writeInt(senderNameBytes.size)
+        writer.writeBytes(senderNameBytes)
         writer.writeInt(items.size)
         items.forEach { item ->
             val nameBytes = item.displayName.encodeToByteArray()
@@ -24,7 +27,14 @@ object SendTransferProtocol {
         val magic = reader.readBytes(PIKO_MAGIC.size)
         require(magic.contentEquals(PIKO_MAGIC)) { "传输协议标识不匹配" }
         val version = reader.readInt()
-        require(version == PIKO_PROTOCOL_VERSION) { "传输协议版本不支持" }
+        require(version in 1..PIKO_PROTOCOL_VERSION) { "传输协议版本不支持" }
+        val senderName = if (version >= 2) {
+            val senderNameSize = reader.readInt()
+            require(senderNameSize >= 0) { "设备名称长度无效" }
+            reader.readBytes(senderNameSize).decodeToString()
+        } else {
+            "局域网设备"
+        }
         val count = reader.readInt()
         require(count >= 0) { "文件数量无效" }
         val files = List(count) {
@@ -40,11 +50,12 @@ object SendTransferProtocol {
                 sizeBytes = size,
             )
         }
-        return SendTransferHeader(files)
+        return SendTransferHeader(senderName = senderName, files = files)
     }
 }
 
 data class SendTransferHeader(
+    val senderName: String,
     val files: List<SendTransferHeaderFile>,
 )
 

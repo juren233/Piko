@@ -129,11 +129,12 @@ data class SendPageState(
         return copy(lanDiscoveryState = state)
     }
 
-    fun buildTransferRequest(): SendTransferRequest? {
+    fun buildTransferRequest(senderName: String = "当前设备"): SendTransferRequest? {
         if (!canSend) {
             return null
         }
         return SendTransferRequest(
+            senderName = senderName,
             targets = selectedDevices.filter { device -> device.isConnectable },
             items = selectedTransferItems,
         )
@@ -183,14 +184,8 @@ data class SendPageState(
             )
 
             is SendTransferEvent.Paused -> copy(activeTransfer = current.copy(status = SendTransferStatus.Paused))
-            is SendTransferEvent.Canceled -> copy(activeTransfer = current.copy(status = SendTransferStatus.Canceled))
-            is SendTransferEvent.Completed -> copy(
-                activeTransfer = current.copy(
-                    status = SendTransferStatus.Completed,
-                    completedBytes = current.totalBytes,
-                    errorMessage = null,
-                ),
-            )
+            is SendTransferEvent.Canceled -> copy(activeTransfer = SendTransferState.Idle)
+            is SendTransferEvent.Completed -> copy(activeTransfer = SendTransferState.Idle)
 
             is SendTransferEvent.Failed -> copy(
                 activeTransfer = current.copy(
@@ -305,6 +300,7 @@ data class SendTransferItem(
 )
 
 data class SendTransferRequest(
+    val senderName: String,
     val targets: List<SendDevice>,
     val items: List<SendTransferItem>,
 ) {

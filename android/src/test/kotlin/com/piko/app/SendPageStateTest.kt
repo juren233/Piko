@@ -187,7 +187,7 @@ class SendPageStateTest {
 
         val canceled = started.applyTransferEvent(SendTransferEvent.Canceled("transfer-1"))
 
-        assertEquals(SendTransferStatus.Canceled, canceled.activeTransfer.status)
+        assertEquals(SendTransferStatus.Idle, canceled.activeTransfer.status)
         assertFalse(canceled.activeTransfer.isBlockingSend)
     }
 

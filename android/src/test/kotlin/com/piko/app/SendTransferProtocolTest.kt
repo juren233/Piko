@@ -15,9 +15,10 @@ class SendTransferProtocolTest {
         )
 
         val decoded = SendTransferProtocol.decodeHeader(
-            SendTransferProtocol.encodeHeader(listOf(item)),
+            SendTransferProtocol.encodeHeader(listOf(item), senderName = "清亮竹影"),
         )
 
+        assertEquals("清亮竹影", decoded.senderName)
         assertEquals(1, decoded.files.size)
         assertEquals("photo.jpg", decoded.files.single().displayName)
         assertEquals(SendFileType.Image, decoded.files.single().fileType)
@@ -44,9 +45,10 @@ class SendTransferProtocolTest {
         )
 
         val decoded = SendTransferProtocol.decodeHeader(
-            SendTransferProtocol.encodeHeader(items),
+            SendTransferProtocol.encodeHeader(items, senderName = "MacBook Pro"),
         )
 
+        assertEquals("MacBook Pro", decoded.senderName)
         assertEquals(2, decoded.files.size)
         assertEquals("报告.pdf", decoded.files[0].displayName)
         assertEquals(SendFileType.Document, decoded.files[0].fileType)

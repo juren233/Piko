@@ -15,10 +15,14 @@ struct NativeReceiveView: View {
                     nickname: model.currentDeviceName,
                     onReset: model.resetDeviceNickname
                 )
-                if model.receiveHistory.isEmpty {
+                if model.receiveHistory.isEmpty && model.activeReceive == nil {
                     NativeReceiveEmptyState()
                 } else {
-                    NativeReceiveHistoryList(items: model.receiveHistory)
+                    NativeReceiveHistoryList(
+                        activeReceive: model.activeReceive,
+                        items: model.receiveHistory,
+                        onCancelReceive: model.cancelReceiveTransfer
+                    )
                 }
             }
             .padding(.horizontal, 24)
@@ -94,7 +98,9 @@ private struct NativeReceiveEmptyState: View {
 }
 
 private struct NativeReceiveHistoryList: View {
+    let activeReceive: NativeReceiveTransferState?
     let items: [NativeReceiveHistoryItem]
+    let onCancelReceive: () -> Void
 
     var body: some View {
         VStack(spacing: 14) {
@@ -103,11 +109,76 @@ private struct NativeReceiveHistoryList: View {
                 Spacer()
             }
             VStack(spacing: 12) {
+                if let activeReceive {
+                    NativeActiveReceiveCard(
+                        transfer: activeReceive,
+                        onCancel: onCancelReceive
+                    )
+                }
                 ForEach(items) { item in
                     NativeReceiveHistoryCard(item: item)
                 }
             }
         }
+    }
+}
+
+private struct NativeActiveReceiveCard: View {
+    let transfer: NativeReceiveTransferState
+    let onCancel: () -> Void
+
+    var body: some View {
+        HStack(spacing: 14) {
+            NativeActiveReceiveProgressIcon(transfer: transfer)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(transfer.title)
+                    .font(.title3.weight(.semibold))
+                    .lineLimit(1)
+                Text(transfer.subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button(action: onCancel) {
+                Image(uiImage: LucideTabIcon.x.image)
+                    .resizable()
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.red)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(PikoPalette.surface.opacity(0.56), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+        )
+    }
+}
+
+private struct NativeActiveReceiveProgressIcon: View {
+    let transfer: NativeReceiveTransferState
+
+    var body: some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(PikoPalette.accent.opacity(0.08))
+                .frame(width: 52, height: 52)
+                .overlay {
+                    Image(uiImage: transfer.primaryFileType == .image ? LucideTabIcon.image.image : LucideTabIcon.download.image)
+                        .resizable()
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(PikoPalette.accent)
+                }
+            Circle()
+                .trim(from: 0, to: transfer.progress)
+                .stroke(PikoPalette.accent.opacity(0.78), style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: 60, height: 60)
+        }
+        .frame(width: 60, height: 60)
     }
 }
 
@@ -127,8 +198,9 @@ private struct NativeReceiveHistoryCard: View {
                     .lineLimit(1)
             }
             Spacer()
-            Text(">")
-                .font(.title3.weight(.semibold))
+            Image(uiImage: LucideTabIcon.chevronRight.image)
+                .resizable()
+                .frame(width: 20, height: 20)
                 .foregroundStyle(.secondary.opacity(0.7))
         }
         .padding(.horizontal, 14)
@@ -147,8 +219,8 @@ private struct NativeReceiveHistoryPreview: View {
     var body: some View {
         if item.fileCount > 1 {
             NativeMultiFilePreview(fileType: item.primaryFileType, count: item.fileCount)
-        } else if item.imagePreviewDescription != nil {
-            NativeImagePreview()
+        } else if let imagePreviewData = item.imagePreviewData {
+            NativeImagePreview(data: imagePreviewData)
         } else {
             NativeFileTypePreview(fileType: item.primaryFileType)
         }
@@ -171,16 +243,26 @@ private struct NativeFileTypePreview: View {
 }
 
 private struct NativeImagePreview: View {
+    let data: Data
+
     var body: some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(PikoPalette.accent.opacity(0.12))
-            .frame(width: 60, height: 60)
-            .overlay {
-                Image(uiImage: LucideTabIcon.image.image)
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                    .foregroundStyle(PikoPalette.accent)
-            }
+        if let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 60, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        } else {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(PikoPalette.accent.opacity(0.12))
+                .frame(width: 60, height: 60)
+                .overlay {
+                    Image(uiImage: LucideTabIcon.image.image)
+                        .resizable()
+                        .frame(width: 24, height: 24)
+                        .foregroundStyle(PikoPalette.accent)
+                }
+        }
     }
 }
 

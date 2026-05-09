@@ -48,6 +48,9 @@ fun AndroidPikoApp() {
     var state by remember { mutableStateOf(PikoHomeState.initial(currentNickname.fullName)) }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
         currentNickname = currentNickname,
+        onReceiveTransferEvent = { event ->
+            state = state.applyReceiveTransferEvent(event)
+        },
     )
     val backdrop = rememberLayerBackdrop()
 
@@ -123,6 +126,7 @@ fun AndroidPikoApp() {
                     onClick = {
                         startSendTransfer(
                             sendPage = state.sendPage,
+                            senderName = state.currentDeviceName,
                             onStateMutate = { transform -> state = transform(state) },
                             sendPlatformActions = sendPlatformActions,
                         )

@@ -7,6 +7,7 @@ final class NativePikoModel: ObservableObject {
     @Published var items: [NativeTransferItem] = []
     @Published var selectedItemIds: Set<String> = []
     @Published var receiveHistory: [NativeReceiveHistoryItem] = []
+    @Published var activeReceive: NativeReceiveTransferState?
     @Published var transferLabel = "等待发送"
     @Published var transferProgress: Double?
     @Published var discoveryLabel = "正在搜索"
@@ -17,6 +18,8 @@ final class NativePikoModel: ObservableObject {
     private let queue = DispatchQueue(label: "piko.native.network")
     private var listener: NWListener?
     private var browser: NWBrowser?
+    private var activeSendConnection: NWConnection?
+    private var activeReceiveConnection: NWConnection?
 
     init() {
         self.nickname = NativeDeviceNicknameStore.loadOrCreate()
@@ -77,7 +80,19 @@ final class NativePikoModel: ObservableObject {
     }
 
     var transferIsVisible: Bool {
-        transferProgress != nil || transferLabel != "等待发送"
+        transferProgress != nil
+    }
+
+    var transferTitle: String {
+        selectedItems.transferTitle
+    }
+
+    var transferSubtitle: String {
+        ByteCountFormatter.string(fromByteCount: Int64(selectedItems.reduce(0) { $0 + $1.data.count }), countStyle: .file)
+    }
+
+    var transferPrimaryFileType: NativeFileType {
+        selectedItems.first?.fileType ?? .other
     }
 
     func startPresence() {
@@ -200,7 +215,7 @@ final class NativePikoModel: ObservableObject {
             return
         }
 
-        transferLabel = "正在发送"
+        transferLabel = transferTitle
         transferProgress = 0
 
         queue.async {
@@ -209,6 +224,9 @@ final class NativePikoModel: ObservableObject {
 
             for target in targets {
                 let connection = NWConnection(to: target.endpoint, using: .tcp)
+                DispatchQueue.main.async {
+                    self.activeSendConnection = connection
+                }
                 let ready = DispatchSemaphore(value: 0)
                 var failed = false
 
@@ -230,18 +248,20 @@ final class NativePikoModel: ObservableObject {
                 guard !failed else {
                     connection.cancel()
                     DispatchQueue.main.async {
-                        self.transferLabel = "发送失败"
+                        self.transferLabel = "等待发送"
                         self.transferProgress = nil
+                        self.activeSendConnection = nil
                     }
                     return
                 }
 
-                let header = NativeTransferProtocol.encodeHeader(items: payloadItems)
+                let header = NativeTransferProtocol.encodeHeader(items: payloadItems, senderName: self.nickname.title)
                 if !self.send(header, over: connection) {
                     connection.cancel()
                     DispatchQueue.main.async {
-                        self.transferLabel = "发送失败"
+                        self.transferLabel = "等待发送"
                         self.transferProgress = nil
+                        self.activeSendConnection = nil
                     }
                     return
                 }
@@ -250,8 +270,9 @@ final class NativePikoModel: ObservableObject {
                     guard self.send(item.data, over: connection) else {
                         connection.cancel()
                         DispatchQueue.main.async {
-                            self.transferLabel = "发送失败"
+                            self.transferLabel = "等待发送"
                             self.transferProgress = nil
+                            self.activeSendConnection = nil
                         }
                         return
                     }
@@ -264,10 +285,31 @@ final class NativePikoModel: ObservableObject {
             }
 
             DispatchQueue.main.async {
-                self.transferLabel = "发送完成"
+                self.transferLabel = "等待发送"
                 self.transferProgress = nil
+                self.activeSendConnection = nil
             }
         }
+    }
+
+    func pauseTransfer() {
+        activeSendConnection?.cancel()
+        transferLabel = "等待发送"
+        transferProgress = nil
+        activeSendConnection = nil
+    }
+
+    func cancelTransfer() {
+        activeSendConnection?.cancel()
+        transferLabel = "等待发送"
+        transferProgress = nil
+        activeSendConnection = nil
+    }
+
+    func cancelReceiveTransfer() {
+        activeReceiveConnection?.cancel()
+        activeReceiveConnection = nil
+        activeReceive = nil
     }
 
     private func send(_ data: Data, over connection: NWConnection) -> Bool {
@@ -282,31 +324,59 @@ final class NativePikoModel: ObservableObject {
     }
 
     private func receive(_ connection: NWConnection) {
+        let transferId = UUID().uuidString
         connection.stateUpdateHandler = { state in
             if case .ready = state {
-                self.receiveNextChunk(from: connection, buffer: Data())
+                DispatchQueue.main.async {
+                    self.activeReceiveConnection = connection
+                }
+                self.receiveNextChunk(from: connection, transferId: transferId, buffer: Data())
             }
         }
         connection.start(queue: queue)
     }
 
-    private func receiveNextChunk(from connection: NWConnection, buffer: Data) {
+    private func receiveNextChunk(from connection: NWConnection, transferId: String, buffer: Data) {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
             var nextBuffer = buffer
             if let data {
                 nextBuffer.append(data)
             }
 
-            if let transfer = NativeTransferProtocol.decodeTransfer(nextBuffer) {
-                self.saveReceivedTransfer(transfer)
-                connection.cancel()
-                return
+            if let envelope = NativeTransferProtocol.inspectTransfer(nextBuffer) {
+                DispatchQueue.main.async {
+                    self.activeReceive = NativeReceiveTransferState(
+                        id: transferId,
+                        senderName: envelope.senderName,
+                        files: envelope.files,
+                        totalBytes: envelope.totalBytes,
+                        receivedBytes: envelope.receivedBytes
+                    )
+                }
+                if let transfer = envelope.transfer {
+                    DispatchQueue.main.async {
+                        if self.activeReceiveConnection === connection {
+                            self.activeReceiveConnection = nil
+                        }
+                    }
+                    self.saveReceivedTransfer(transfer)
+                    connection.cancel()
+                    return
+                }
             }
 
             if isComplete {
+                DispatchQueue.main.async {
+                    if self.activeReceive?.id == transferId {
+                        self.activeReceive = nil
+                    }
+                    if self.activeReceiveConnection === connection {
+                        self.activeReceiveConnection = nil
+                    }
+                }
                 connection.cancel()
             } else {
-                self.receiveNextChunk(from: connection, buffer: nextBuffer)
+                self.receiveNextChunk(from: connection, transferId: transferId, buffer: nextBuffer)
             }
         }
     }
@@ -325,14 +395,18 @@ final class NativePikoModel: ObservableObject {
             let names = transfer.files.map(\.displayName)
             self.receiveHistory.insert(
                 NativeReceiveHistoryItem(
-                    title: names.count == 1 ? names[0] : "\(names[0])+\(names.count - 1)个文件",
-                    subtitle: "刚刚 - 来自局域网设备",
+                    title: names.count == 1 ? names[0] : "\(names[0]) + \(names.count - 1) 个文件",
+                    subtitle: ByteCountFormatter.string(
+                        fromByteCount: Int64(transfer.files.reduce(0) { $0 + $1.data.count }),
+                        countStyle: .file
+                    ),
                     fileCount: transfer.files.count,
                     primaryFileType: transfer.files.first?.fileType ?? .other,
-                    imagePreviewDescription: transfer.files.first?.fileType == .image ? "接收图片缩略图" : nil
+                    imagePreviewData: transfer.files.first?.fileType == .image ? transfer.files.first?.data : nil
                 ),
                 at: 0
             )
+            self.activeReceive = nil
         }
     }
 
@@ -481,7 +555,34 @@ struct NativeReceiveHistoryItem: Identifiable {
     let subtitle: String
     let fileCount: Int
     let primaryFileType: NativeFileType
-    let imagePreviewDescription: String?
+    let imagePreviewData: Data?
+}
+
+struct NativeReceiveTransferState: Identifiable {
+    let id: String
+    let senderName: String
+    let files: [NativeTransferFileMetadata]
+    let totalBytes: Int
+    let receivedBytes: Int
+
+    var title: String {
+        "正在从\(senderName.visibleDeviceName)接收\(files.count)个文件"
+    }
+
+    var subtitle: String {
+        "\(ByteCountFormatter.string(fromByteCount: Int64(receivedBytes), countStyle: .file))/\(ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))"
+    }
+
+    var progress: Double {
+        guard totalBytes > 0 else {
+            return 0
+        }
+        return min(max(Double(receivedBytes) / Double(totalBytes), 0), 1)
+    }
+
+    var primaryFileType: NativeFileType {
+        files.first?.fileType ?? .other
+    }
 }
 
 enum NativeFileType: Int {
@@ -517,6 +618,7 @@ struct NativeReceivedFile {
 }
 
 struct NativeReceivedTransfer {
+    let senderName: String
     let files: [NativeReceivedFile]
 }
 
@@ -534,5 +636,19 @@ extension String {
     var sanitizedFileName: String {
         let invalid = CharacterSet(charactersIn: "/\\?%*|\"<>:")
         return components(separatedBy: invalid).joined(separator: "_")
+    }
+
+    var visibleDeviceName: String {
+        let name = components(separatedBy: "@").first?.nilIfBlank ?? self
+        return name.nilIfBlank ?? "局域网设备"
+    }
+}
+
+private extension Array where Element == NativeTransferItem {
+    var transferTitle: String {
+        guard let first else {
+            return ""
+        }
+        return count == 1 ? first.displayName : "\(first.displayName) + \(count - 1) 个文件"
     }
 }

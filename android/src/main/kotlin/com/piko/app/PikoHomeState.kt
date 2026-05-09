@@ -5,10 +5,59 @@ data class PikoHomeState(
     val trustedDeviceCount: Int,
     val pendingReceiveCount: Int,
     val receiveHistory: List<ReceiveHistoryItem>,
+    val activeReceive: ReceiveTransferState,
     val sendPage: SendPageState,
 ) {
     val receiveHistoryDescending: List<ReceiveHistoryItem>
         get() = receiveHistory.sortedByDescending { it.receivedAtEpochMillis }
+
+    fun applyReceiveTransferEvent(event: ReceiveTransferEvent): PikoHomeState {
+        val current = activeReceive
+        if (current.transferId != null && event.transferId != current.transferId) {
+            return this
+        }
+        return when (event) {
+            is ReceiveTransferEvent.Started -> copy(
+                activeReceive = ReceiveTransferState(
+                    transferId = event.transferId,
+                    senderName = event.senderName,
+                    files = event.files,
+                    totalBytes = event.totalBytes,
+                    completedBytes = 0L,
+                ),
+            )
+
+            is ReceiveTransferEvent.Progress -> copy(
+                activeReceive = current.copy(
+                    completedBytes = event.completedBytes,
+                    totalBytes = event.totalBytes,
+                ),
+            )
+
+            is ReceiveTransferEvent.Canceled -> copy(activeReceive = ReceiveTransferState.Idle)
+            is ReceiveTransferEvent.Failed -> copy(activeReceive = ReceiveTransferState.Idle)
+            is ReceiveTransferEvent.Completed -> {
+                val files = event.files
+                if (files.isEmpty()) {
+                    copy(activeReceive = ReceiveTransferState.Idle)
+                } else {
+                    copy(
+                        activeReceive = ReceiveTransferState.Idle,
+                        receiveHistory = listOf(
+                            ReceiveHistoryItem(
+                                id = event.transferId,
+                                receivedAtEpochMillis = event.receivedAtEpochMillis,
+                                receivedAtLabel = event.receivedAtLabel,
+                                sourceDeviceName = event.senderName.visibleDeviceName,
+                                fileCount = files.size,
+                                files = files,
+                            ),
+                        ) + receiveHistory,
+                    )
+                }
+            }
+        }
+    }
 
     fun withSampleReceiveHistory(): PikoHomeState {
         return copy(
@@ -23,6 +72,7 @@ data class PikoHomeState(
                 trustedDeviceCount = 0,
                 pendingReceiveCount = 0,
                 receiveHistory = emptyList(),
+                activeReceive = ReceiveTransferState.Idle,
                 sendPage = SendPageState.initial(currentDeviceName = currentDeviceName),
             )
         }
@@ -38,20 +88,17 @@ data class PikoHomeState(
                     ReceiveHistoryFile(
                         displayName = "旅行计划.pdf",
                         fileType = ReceiveFileType.Document,
-                        isImage = false,
-                        thumbnailDescription = null,
+                        sizeBytes = 2_300_000,
                     ),
                     ReceiveHistoryFile(
                         displayName = "费用清单.xlsx",
                         fileType = ReceiveFileType.Spreadsheet,
-                        isImage = false,
-                        thumbnailDescription = null,
+                        sizeBytes = 680_000,
                     ),
                     ReceiveHistoryFile(
                         displayName = "封面图.png",
                         fileType = ReceiveFileType.Image,
-                        isImage = true,
-                        thumbnailDescription = "海边日落缩略图",
+                        sizeBytes = 1_800_000,
                     ),
                 ),
             ),
@@ -65,8 +112,7 @@ data class PikoHomeState(
                     ReceiveHistoryFile(
                         displayName = "IMG_20260507_183012.jpg",
                         fileType = ReceiveFileType.Image,
-                        isImage = true,
-                        thumbnailDescription = "晚霞照片缩略图",
+                        sizeBytes = 3_600_000,
                     ),
                 ),
             ),
@@ -80,8 +126,7 @@ data class PikoHomeState(
                     ReceiveHistoryFile(
                         displayName = "Piko-发布说明.docx",
                         fileType = ReceiveFileType.Document,
-                        isImage = false,
-                        thumbnailDescription = null,
+                        sizeBytes = 940_000,
                     ),
                 ),
             ),
@@ -106,28 +151,109 @@ data class ReceiveHistoryItem(
         get() = files.first()
 
     val hasImagePreview: Boolean
-        get() = files.any { it.isImage && !it.thumbnailDescription.isNullOrBlank() }
+        get() = files.any { it.isImage && it.thumbnailBytes?.isNotEmpty() == true }
 
     val imagePreviewDescription: String?
-        get() = primaryFile.thumbnailDescription?.takeIf { primaryFile.isImage && it.isNotBlank() }
+        get() = primaryFile.displayName.takeIf { primaryFile.isImage && primaryFile.thumbnailBytes?.isNotEmpty() == true }
 
     val title: String
         get() = if (fileCount == 1) {
             primaryFile.displayName
         } else {
-            "${primaryFile.displayName}+${fileCount - 1}个文件"
+            "${primaryFile.displayName} + ${fileCount - 1} 个文件"
         }
 
     val subtitle: String
-        get() = "$receivedAtLabel - 来自 $sourceDeviceName"
+        get() = files.sumOf { file -> file.sizeBytes }.sizeLabel
 }
 
 data class ReceiveHistoryFile(
     val displayName: String,
     val fileType: ReceiveFileType,
-    val isImage: Boolean,
-    val thumbnailDescription: String?,
-)
+    val sizeBytes: Long,
+    val thumbnailBytes: ByteArray? = null,
+) {
+    val isImage: Boolean
+        get() = fileType == ReceiveFileType.Image
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is ReceiveHistoryFile) return false
+        return displayName == other.displayName &&
+            fileType == other.fileType &&
+            sizeBytes == other.sizeBytes &&
+            thumbnailBytes.contentEquals(other.thumbnailBytes)
+    }
+
+    override fun hashCode(): Int {
+        var result = displayName.hashCode()
+        result = 31 * result + fileType.hashCode()
+        result = 31 * result + sizeBytes.hashCode()
+        result = 31 * result + (thumbnailBytes?.contentHashCode() ?: 0)
+        return result
+    }
+}
+
+data class ReceiveTransferState(
+    val transferId: String?,
+    val senderName: String,
+    val files: List<ReceiveHistoryFile>,
+    val totalBytes: Long,
+    val completedBytes: Long,
+) {
+    val progress: Float
+        get() = if (totalBytes <= 0L) 0f else (completedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
+
+    val title: String
+        get() = "正在从${senderName.visibleDeviceName}接收${files.size}个文件"
+
+    val subtitle: String
+        get() = "${completedBytes.sizeLabel}/${totalBytes.sizeLabel}"
+
+    val primaryFileType: ReceiveFileType
+        get() = files.firstOrNull()?.fileType ?: ReceiveFileType.Other
+
+    companion object {
+        val Idle = ReceiveTransferState(
+            transferId = null,
+            senderName = "",
+            files = emptyList(),
+            totalBytes = 0L,
+            completedBytes = 0L,
+        )
+    }
+}
+
+sealed class ReceiveTransferEvent {
+    abstract val transferId: String
+
+    data class Started(
+        override val transferId: String,
+        val senderName: String,
+        val files: List<ReceiveHistoryFile>,
+        val totalBytes: Long,
+    ) : ReceiveTransferEvent()
+
+    data class Progress(
+        override val transferId: String,
+        val completedBytes: Long,
+        val totalBytes: Long,
+    ) : ReceiveTransferEvent()
+
+    data class Completed(
+        override val transferId: String,
+        val senderName: String,
+        val files: List<ReceiveHistoryFile>,
+        val receivedAtEpochMillis: Long,
+        val receivedAtLabel: String,
+    ) : ReceiveTransferEvent()
+
+    data class Canceled(override val transferId: String) : ReceiveTransferEvent()
+    data class Failed(override val transferId: String, val message: String) : ReceiveTransferEvent()
+}
+
+private val String.visibleDeviceName: String
+    get() = substringBefore("@").trim().ifBlank { "局域网设备" }
 
 enum class ReceiveFileType(
     val label: String,

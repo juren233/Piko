@@ -144,6 +144,8 @@ enum LucideTabIcon {
     case image
     case plus
     case x
+    case pause
+    case chevronRight
     case check
     case smartphone
     case refreshCw
@@ -191,6 +193,15 @@ enum LucideTabIcon {
             return [
                 "M18,6L6,18",
                 "M6,6l12,12"
+            ]
+        case .pause:
+            return [
+                "M6,4h4v16H6z",
+                "M14,4h4v16h-4z"
+            ]
+        case .chevronRight:
+            return [
+                "M9,18l6,-6 -6,-6"
             ]
         case .check:
             return [

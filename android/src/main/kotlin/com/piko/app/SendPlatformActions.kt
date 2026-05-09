@@ -21,6 +21,7 @@ class SendPlatformActions(
     },
     val pauseTransfer: (String) -> Unit = {},
     val cancelTransfer: (String) -> Unit = {},
+    val cancelReceiveTransfer: (String) -> Unit = {},
 ) {
     companion object {
         val Empty = SendPlatformActions()
