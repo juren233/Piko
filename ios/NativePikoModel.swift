@@ -326,7 +326,7 @@ final class NativePikoModel: ObservableObject {
 struct NativeSendDevice: Identifiable {
     let id: String
     let name: String
-    let subtitle: String
+    let subtitle: String?
     let endpoint: NWEndpoint
 }
 

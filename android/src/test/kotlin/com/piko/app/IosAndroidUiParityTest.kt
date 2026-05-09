@@ -58,6 +58,17 @@ class IosAndroidUiParityTest {
         assertFalse("Image(systemName: \"checkmark" in iosContent)
     }
 
+    @Test
+    fun iosSendDeviceSubtitleKeepsAndroidOptionalContract() {
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
+        val iosModel = readIos("NativePikoModel.swift")
+        val iosDeviceSection = readIos("NativeSendDeviceSection.swift")
+
+        assertTrue("val subtitle: String? = null" in androidState)
+        assertTrue("let subtitle: String?" in iosModel)
+        assertTrue("if let subtitle = device.subtitle" in iosDeviceSection)
+    }
+
     private fun readIos(name: String): String =
         File(rootDir, "ios/$name").readText()
 
