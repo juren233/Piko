@@ -7,54 +7,111 @@ struct PikoIOSApp: App {
     init() {
         let tabBarAppearance = UITabBarAppearance()
         tabBarAppearance.configureWithTransparentBackground()
+        tabBarAppearance.backgroundEffect = nil
+        tabBarAppearance.backgroundImage = UIImage()
         tabBarAppearance.backgroundColor = .clear
         tabBarAppearance.shadowColor = .clear
+        tabBarAppearance.shadowImage = UIImage()
 
         UITabBar.appearance().standardAppearance = tabBarAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
         UITabBar.appearance().isTranslucent = true
+        UITabBar.appearance().backgroundImage = UIImage()
+        UITabBar.appearance().shadowImage = UIImage()
     }
 
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                PikoIOSPalette.surface
-                    .ignoresSafeArea()
-
-                TabView {
-                    ComposeView(tabName: "Receive")
-                        .ignoresSafeArea(.container, edges: .vertical)
-                        .tabItem {
-                            Label {
-                                Text("接收")
-                            } icon: {
-                                Image(uiImage: LucideTabIcon.download.image)
-                            }
-                        }
-
-                    SendTabView()
-                        .ignoresSafeArea(.container, edges: .vertical)
-                        .tabItem {
-                            Label {
-                                Text("发送")
-                            } icon: {
-                                Image(uiImage: LucideTabIcon.send.image)
-                            }
-                        }
-
-                    ComposeView(tabName: "Settings")
-                        .ignoresSafeArea(.container, edges: .vertical)
-                        .tabItem {
-                            Label {
-                                Text("设置")
-                            } icon: {
-                                Image(uiImage: LucideTabIcon.settings.image)
-                            }
-                        }
-                }
-                .tint(PikoIOSPalette.accent)
+            ImmersiveRootView {
+                PikoRootView()
             }
+            .ignoresSafeArea()
         }
+    }
+}
+
+private struct PikoRootView: View {
+    var body: some View {
+        ZStack {
+            PikoIOSPalette.surface
+                .ignoresSafeArea()
+
+            TabView {
+                ComposeView(tabName: "Receive")
+                    .ignoresSafeArea(.container, edges: .vertical)
+                    .tabItem {
+                        Label {
+                            Text("接收")
+                        } icon: {
+                            Image(uiImage: LucideTabIcon.download.image)
+                        }
+                    }
+
+                SendTabView()
+                    .ignoresSafeArea(.container, edges: .vertical)
+                    .tabItem {
+                        Label {
+                            Text("发送")
+                        } icon: {
+                            Image(uiImage: LucideTabIcon.send.image)
+                        }
+                    }
+
+                ComposeView(tabName: "Settings")
+                    .ignoresSafeArea(.container, edges: .vertical)
+                    .tabItem {
+                        Label {
+                            Text("设置")
+                        } icon: {
+                            Image(uiImage: LucideTabIcon.settings.image)
+                        }
+                    }
+            }
+            .tint(PikoIOSPalette.accent)
+        }
+    }
+}
+
+private struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeUIViewController(context: Context) -> ImmersiveHostingController<Content> {
+        let controller = ImmersiveHostingController(rootView: content)
+        controller.view.backgroundColor = .clear
+        controller.view.isOpaque = false
+        return controller
+    }
+
+    func updateUIViewController(_ controller: ImmersiveHostingController<Content>, context: Context) {
+        controller.rootView = content
+        controller.setNeedsStatusBarAppearanceUpdate()
+        controller.setNeedsUpdateOfHomeIndicatorAutoHidden()
+        controller.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
+    }
+}
+
+private final class ImmersiveHostingController<Content: View>: UIHostingController<Content> {
+    override var prefersStatusBarHidden: Bool {
+        true
+    }
+
+    override var prefersHomeIndicatorAutoHidden: Bool {
+        true
+    }
+
+    override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
+        .all
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        setNeedsStatusBarAppearanceUpdate()
+        setNeedsUpdateOfHomeIndicatorAutoHidden()
+        setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
     }
 }
 
