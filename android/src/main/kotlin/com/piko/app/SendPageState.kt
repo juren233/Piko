@@ -1,5 +1,7 @@
 package com.piko.app
 
+private const val CURRENT_DEVICE_ID = "current-device"
+
 data class SendPageState(
     val myDevices: List<SendDevice>,
     val lanDevices: List<SendDevice>,
@@ -111,9 +113,10 @@ data class SendPageState(
     }
 
     fun updateLanDevices(devices: List<SendDevice>): SendPageState {
-        val deviceIds = allDevices(devices).map { it.id }.toSet()
+        val nextLanDevices = devices.filterNot { device -> device.isCurrentDevicePlaceholder }
+        val deviceIds = allDevices(nextLanDevices).map { it.id }.toSet()
         return copy(
-            lanDevices = devices,
+            lanDevices = nextLanDevices,
             selectedDeviceIds = selectedDeviceIds.intersect(deviceIds),
         )
     }
@@ -205,13 +208,7 @@ data class SendPageState(
     companion object {
         fun initial(currentDeviceName: String): SendPageState {
             return SendPageState(
-                myDevices = listOf(
-                    SendDevice(
-                        id = "current-device",
-                        name = currentDeviceName,
-                        group = SendDeviceGroup.MyDevice,
-                    ),
-                ),
+                myDevices = emptyList(),
                 lanDevices = emptyList(),
                 friendDevices = listOf(
                     SendDevice(
@@ -253,6 +250,9 @@ data class SendDevice(
     val isConnectable: Boolean
         get() = !host.isNullOrBlank() && port != null && port > 0
 }
+
+private val SendDevice.isCurrentDevicePlaceholder: Boolean
+    get() = id == CURRENT_DEVICE_ID || group == SendDeviceGroup.MyDevice
 
 enum class SendDeviceGroup {
     MyDevice,

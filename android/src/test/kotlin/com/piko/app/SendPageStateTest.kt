@@ -7,6 +7,39 @@ import kotlin.test.assertTrue
 
 class SendPageStateTest {
     @Test
+    fun initialStateDoesNotExposeCurrentDeviceAsSelectableTarget() {
+        val state = SendPageState.initial(currentDeviceName = "Pixel")
+
+        assertEquals(emptyList(), state.myDevices)
+        assertFalse(state.selectedDeviceIds.contains("current-device"))
+    }
+
+    @Test
+    fun updateLanDevicesFiltersCurrentDevicePlaceholderAndClearsSelection() {
+        val currentDevice = SendDevice(
+            id = "current-device",
+            name = "Pixel",
+            group = SendDeviceGroup.MyDevice,
+            host = "192.168.1.2",
+            port = 42001,
+        )
+        val remoteDevice = SendDevice(
+            id = "remote-device",
+            name = "Cavan 的 iPhone",
+            group = SendDeviceGroup.Lan,
+            host = "192.168.1.3",
+            port = 42001,
+        )
+
+        val state = SendPageState.initial(currentDeviceName = "Pixel")
+            .copy(selectedDeviceIds = setOf(currentDevice.id, remoteDevice.id))
+            .updateLanDevices(listOf(currentDevice, remoteDevice))
+
+        assertEquals(listOf(remoteDevice), state.lanDevices)
+        assertEquals(setOf(remoteDevice.id), state.selectedDeviceIds)
+    }
+
+    @Test
     fun toggleDeviceSelectionAddsAndRemovesDeviceId() {
         val device = SendDevice(
             id = "device-mac",

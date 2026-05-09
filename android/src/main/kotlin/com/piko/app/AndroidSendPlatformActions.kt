@@ -288,7 +288,7 @@ private class AndroidLanDiscovery(
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                 if (serviceInfo.serviceType.normalizedServiceType() != PIKO_SERVICE_TYPE.normalizedServiceType() ||
-                    serviceInfo.serviceName == registeredServiceName
+                    isRegisteredLocalService(serviceInfo.serviceName)
                 ) {
                     return
                 }
@@ -298,6 +298,9 @@ private class AndroidLanDiscovery(
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
 
                         override fun onServiceResolved(resolvedService: NsdServiceInfo) {
+                            if (isRegisteredLocalService(resolvedService.serviceName)) {
+                                return
+                            }
                             val id = "${resolvedService.serviceName}-${resolvedService.host?.hostAddress}-${resolvedService.port}"
                             devices[id] = SendDevice(
                                 id = id,
@@ -443,6 +446,10 @@ private class AndroidLanDiscovery(
                 callback(state, devices.values.toList())
             }
         }
+    }
+
+    private fun isRegisteredLocalService(serviceName: String): Boolean {
+        return serviceName == registeredServiceName
     }
 }
 

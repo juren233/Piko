@@ -13,11 +13,23 @@ final class NativePikoModel: ObservableObject {
     @Published var discoveryLabel = "正在搜索"
     @Published var imageSectionExpanded = false
 
-    let currentDeviceName = UIDevice.current.name
+    let currentDeviceName: String
 
     private let queue = DispatchQueue(label: "piko.native.network")
     private var listener: NWListener?
     private var browser: NWBrowser?
+    private let currentServiceName: String
+
+    init() {
+        let device = UIDevice.current
+        let currentDeviceName = Self.normalizedCurrentDeviceName(
+            rawName: device.name,
+            userInterfaceIdiom: device.userInterfaceIdiom,
+            identifierForVendor: device.identifierForVendor
+        )
+        self.currentDeviceName = currentDeviceName
+        self.currentServiceName = "Piko-\(currentDeviceName)"
+    }
 
     var canSend: Bool {
         !selectedLanTargets.isEmpty && !selectedItems.isEmpty && transferProgress == nil
@@ -31,16 +43,7 @@ final class NativePikoModel: ObservableObject {
         lanDevices.filter { selectedDeviceIds.contains($0.id) }
     }
 
-    var myDevices: [NativeSendDevice] {
-        [
-            NativeSendDevice(
-                id: "current-device",
-                name: currentDeviceName,
-                subtitle: "本机",
-                endpoint: Self.placeholderEndpoint
-            )
-        ]
-    }
+    var myDevices: [NativeSendDevice] { [] }
 
     var friendDevices: [NativeSendDevice] {
         [
@@ -86,7 +89,7 @@ final class NativePikoModel: ObservableObject {
         do {
             let listener = try NWListener(using: .tcp)
             listener.service = NWListener.Service(
-                name: "Piko-\(currentDeviceName)",
+                name: currentServiceName,
                 type: "_piko-share._tcp"
             )
             listener.newConnectionHandler = { [weak self] connection in
@@ -115,12 +118,12 @@ final class NativePikoModel: ObservableObject {
                 guard case let .service(name, type, domain, _) = result.endpoint else {
                     return nil
                 }
-                guard name != "Piko-\(self.currentDeviceName)" else {
+                guard name != self.currentServiceName else {
                     return nil
                 }
                 return NativeSendDevice(
                     id: "\(name).\(type).\(domain)",
-                    name: name.replacingOccurrences(of: "Piko-", with: ""),
+                    name: Self.displayName(fromServiceName: name),
                     subtitle: domain.isEmpty ? type : domain,
                     endpoint: result.endpoint
                 )
@@ -321,6 +324,41 @@ final class NativePikoModel: ObservableObject {
     private static var placeholderEndpoint: NWEndpoint {
         .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: 9)!)
     }
+
+    private static func normalizedCurrentDeviceName(
+        rawName: String,
+        userInterfaceIdiom: UIUserInterfaceIdiom,
+        identifierForVendor: UUID?
+    ) -> String {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty && !genericDeviceNames.contains(trimmedName) {
+            return trimmedName
+        }
+
+        let modelName = userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+        let suffix = identifierForVendor?
+            .uuidString
+            .replacingOccurrences(of: "-", with: "")
+            .prefix(4)
+            .uppercased()
+
+        guard let suffix, !suffix.isEmpty else {
+            return "Piko \(modelName)"
+        }
+        return "\(modelName) \(suffix)"
+    }
+
+    private static func displayName(fromServiceName serviceName: String) -> String {
+        if serviceName.hasPrefix("Piko-") {
+            return String(serviceName.dropFirst("Piko-".count))
+        }
+        return serviceName
+    }
+
+    private static let genericDeviceNames: Set<String> = [
+        "iPhone",
+        "iPad"
+    ]
 }
 
 struct NativeSendDevice: Identifiable {
