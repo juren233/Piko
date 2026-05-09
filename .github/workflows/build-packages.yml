@@ -8,7 +8,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -151,7 +151,7 @@ jobs:
         with:
           path: |
             ~/.konan
-          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', 'gradle.properties', '**/*.gradle.kts') }}
+          key: konan-${{ runner.os }}-${{ hashFiles('gradle/libs.versions.toml', '**/*.gradle.kts') }}
           restore-keys: |
             konan-${{ runner.os }}-
 
@@ -196,7 +196,12 @@ jobs:
               exit 1
               ;;
           esac
-          xcodebuild -downloadPlatform iOS
+          sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
+          if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
+            echo "未找到 iPhoneOS SDK 路径：$sdk_path" >&2
+            exit 1
+          fi
+          echo "iPhoneOS SDK 路径：$sdk_path"
           xcodebuild \
             -project ios/PikoIOS/PikoIOS.xcodeproj \
             -scheme PikoIOS \
@@ -210,16 +215,34 @@ jobs:
           chmod +x ./gradlew ./scripts/ios/build-packages.sh
           ./scripts/ios/build-packages.sh
 
+      - name: Verify iOS unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          ipa_found=false
+          while IFS= read -r ipa; do
+            ipa_found=true
+            unzip -tq "$ipa"
+            unzip -l "$ipa" | grep -Eq 'Payload/[^/]+\.app/Info.plist'
+            echo "已验证 iOS unsigned IPA：$ipa"
+          done < <(find scripts/artifacts/ios -maxdepth 1 -type f -name "*.ipa" | sort)
+          if [[ "$ipa_found" != "true" ]]; then
+            echo "未找到 iOS unsigned IPA" >&2
+            exit 1
+          fi
+
       - name: Upload iOS artifacts
         uses: actions/upload-artifact@v7
         with:
           name: ios-unsigned-artifacts
           path: scripts/artifacts/ios
-          if-no-files-found: warn
+          if-no-files-found: error
 
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     needs:
       - prepare
       - android-signed
