@@ -4,35 +4,46 @@ import UIKit
 
 @main
 struct PikoIOSApp: App {
+    init() {
+        configureTabBarAppearance()
+    }
+
     var body: some Scene {
         WindowGroup {
-            TabView {
-                ComposeView(tabName: "Receive")
-                    .tabItem {
-                        Label {
-                            Text("接收")
-                        } icon: {
-                            Image(uiImage: LucideTabIcon.download.image)
-                        }
-                    }
+            ZStack {
+                PikoIOSPalette.surface
+                    .ignoresSafeArea()
 
-                SendTabView()
-                    .tabItem {
-                        Label {
-                            Text("发送")
-                        } icon: {
-                            Image(uiImage: LucideTabIcon.send.image)
+                TabView {
+                    ComposeView(tabName: "Receive")
+                        .tabItem {
+                            Label {
+                                Text("接收")
+                            } icon: {
+                                Image(uiImage: LucideTabIcon.download.image)
+                            }
                         }
-                    }
 
-                ComposeView(tabName: "Settings")
-                    .tabItem {
-                        Label {
-                            Text("设置")
-                        } icon: {
-                            Image(uiImage: LucideTabIcon.settings.image)
+                    SendTabView()
+                        .tabItem {
+                            Label {
+                                Text("发送")
+                            } icon: {
+                                Image(uiImage: LucideTabIcon.send.image)
+                            }
                         }
-                    }
+
+                    ComposeView(tabName: "Settings")
+                        .tabItem {
+                            Label {
+                                Text("设置")
+                            } icon: {
+                                Image(uiImage: LucideTabIcon.settings.image)
+                            }
+                        }
+                }
+                .tint(PikoIOSPalette.accent)
+                .background(PikoIOSPalette.surface.ignoresSafeArea())
             }
         }
     }
@@ -82,13 +93,42 @@ struct ComposeView: UIViewControllerRepresentable {
     var sendOverlayController: SendOverlayController? = nil
 
     func makeUIViewController(context: Context) -> UIViewController {
-        MainViewControllerKt.MainViewController(
+        let controller = MainViewControllerKt.MainViewController(
             tabName: tabName,
             sendOverlayController: sendOverlayController
         )
+        controller.view.backgroundColor = PikoIOSPalette.surfaceUIColor
+        controller.view.isOpaque = true
+        return controller
     }
 
     func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
+}
+
+private enum PikoIOSPalette {
+    static let surfaceUIColor = UIColor(red: 255 / 255, green: 251 / 255, blue: 254 / 255, alpha: 1)
+    static let tabBarUIColor = UIColor.white
+    static let accentUIColor = UIColor(red: 103 / 255, green: 80 / 255, blue: 164 / 255, alpha: 1)
+
+    static var surface: Color {
+        Color(uiColor: surfaceUIColor)
+    }
+
+    static var accent: Color {
+        Color(uiColor: accentUIColor)
+    }
+}
+
+private func configureTabBarAppearance() {
+    let appearance = UITabBarAppearance()
+    appearance.configureWithDefaultBackground()
+    appearance.backgroundColor = PikoIOSPalette.tabBarUIColor
+    appearance.shadowColor = UIColor.black.withAlphaComponent(0.08)
+
+    UITabBar.appearance().standardAppearance = appearance
+    UITabBar.appearance().scrollEdgeAppearance = appearance
+    UITabBar.appearance().tintColor = PikoIOSPalette.accentUIColor
+    UITabBar.appearance().unselectedItemTintColor = UIColor.label
 }
 
 private enum LucideTabIcon {

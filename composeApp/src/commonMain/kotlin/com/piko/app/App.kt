@@ -78,6 +78,7 @@ fun App(
     currentDeviceName: String = "当前设备",
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     sendOverlayController: SendOverlayController? = null,
+    bottomContentPadding: Dp = 0.dp,
 ) {
     var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
 
@@ -92,6 +93,7 @@ fun App(
                 },
                 sendPlatformActions = sendPlatformActions,
                 sendOverlayController = sendOverlayController,
+                bottomContentPadding = bottomContentPadding,
             )
         }
     }
