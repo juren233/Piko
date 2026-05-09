@@ -73,16 +73,20 @@ class IosAndroidUiParityTest {
     fun sendPagesDoNotExposeCurrentDeviceAndIosNormalizesGenericDeviceName() {
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
+        val iosProject = File(rootDir, "ios/Piko.xcodeproj/project.pbxproj").readText()
+        val iosEntitlements = File(rootDir, "ios/Piko.entitlements")
 
         assertTrue("myDevices = emptyList()" in androidState)
         assertTrue("var myDevices: [NativeSendDevice] { [] }" in iosModel)
-        assertTrue("normalizedCurrentDeviceName" in iosModel)
-        assertTrue("genericDeviceNames" in iosModel)
         assertTrue("private let currentServiceName: String" in iosModel)
         assertTrue("name: currentServiceName" in iosModel)
         assertTrue("guard name != self.currentServiceName" in iosModel)
         assertFalse("name: currentDeviceName" in iosModel)
-        assertFalse("name: UIDevice.current.name" in iosModel)
+        assertFalse("identifierForVendor" in iosModel)
+        assertFalse("iPhone A567" in iosModel)
+        assertTrue(iosEntitlements.isFile)
+        assertTrue("com.apple.developer.device-information.user-assigned-device-name" in iosEntitlements.readText())
+        assertTrue("CODE_SIGN_ENTITLEMENTS = Piko.entitlements;" in iosProject)
     }
 
     private fun readIos(name: String): String =

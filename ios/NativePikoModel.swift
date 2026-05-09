@@ -21,12 +21,7 @@ final class NativePikoModel: ObservableObject {
     private let currentServiceName: String
 
     init() {
-        let device = UIDevice.current
-        let currentDeviceName = Self.normalizedCurrentDeviceName(
-            rawName: device.name,
-            userInterfaceIdiom: device.userInterfaceIdiom,
-            identifierForVendor: device.identifierForVendor
-        )
+        let currentDeviceName = Self.currentUserAssignedDeviceName()
         self.currentDeviceName = currentDeviceName
         self.currentServiceName = "Piko-\(currentDeviceName)"
     }
@@ -325,27 +320,12 @@ final class NativePikoModel: ObservableObject {
         .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: 9)!)
     }
 
-    private static func normalizedCurrentDeviceName(
-        rawName: String,
-        userInterfaceIdiom: UIUserInterfaceIdiom,
-        identifierForVendor: UUID?
-    ) -> String {
-        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmedName.isEmpty && !genericDeviceNames.contains(trimmedName) {
+    private static func currentUserAssignedDeviceName() -> String {
+        let trimmedName = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedName.isEmpty {
             return trimmedName
         }
-
-        let modelName = userInterfaceIdiom == .pad ? "iPad" : "iPhone"
-        let suffix = identifierForVendor?
-            .uuidString
-            .replacingOccurrences(of: "-", with: "")
-            .prefix(4)
-            .uppercased()
-
-        guard let suffix, !suffix.isEmpty else {
-            return "Piko \(modelName)"
-        }
-        return "\(modelName) \(suffix)"
+        return UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
     }
 
     private static func displayName(fromServiceName serviceName: String) -> String {
@@ -355,10 +335,6 @@ final class NativePikoModel: ObservableObject {
         return serviceName
     }
 
-    private static let genericDeviceNames: Set<String> = [
-        "iPhone",
-        "iPad"
-    ]
 }
 
 struct NativeSendDevice: Identifiable {

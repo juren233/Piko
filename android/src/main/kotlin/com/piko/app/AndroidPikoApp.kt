@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import android.os.Build
+import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,8 +41,13 @@ import com.piko.app.glass.LiquidSendFloatingButton
 
 @Composable
 fun AndroidPikoApp() {
-    val currentDeviceName = remember {
-        Build.MODEL.takeIf { it.isNotBlank() } ?: "Android 设备"
+    val appContext = LocalContext.current.applicationContext
+    val currentDeviceName = remember(appContext) {
+        resolveAndroidDeviceName(
+            systemDeviceName = Settings.Global.getString(appContext.contentResolver, Settings.Global.DEVICE_NAME),
+            manufacturer = Build.MANUFACTURER,
+            model = Build.MODEL,
+        )
     }
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
     var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
@@ -195,3 +202,28 @@ private fun PikoTab.iconPainter(): Painter =
             PikoTab.Settings -> R.drawable.ic_lucide_settings
         },
     )
+
+internal fun resolveAndroidDeviceName(
+    systemDeviceName: String?,
+    manufacturer: String,
+    model: String,
+): String {
+    val trimmedSystemName = systemDeviceName?.trim().orEmpty()
+    if (trimmedSystemName.isNotEmpty()) {
+        return trimmedSystemName
+    }
+
+    val trimmedManufacturer = manufacturer.trim()
+    val trimmedModel = model.trim()
+    val hardwareName = when {
+        trimmedManufacturer.isNotEmpty() &&
+            trimmedModel.isNotEmpty() &&
+            trimmedModel.startsWith(trimmedManufacturer, ignoreCase = true) -> trimmedModel
+        trimmedManufacturer.isNotEmpty() && trimmedModel.isNotEmpty() -> "$trimmedManufacturer $trimmedModel"
+        trimmedModel.isNotEmpty() -> trimmedModel
+        trimmedManufacturer.isNotEmpty() -> trimmedManufacturer
+        else -> ""
+    }
+
+    return hardwareName.ifBlank { "Android 设备" }
+}
