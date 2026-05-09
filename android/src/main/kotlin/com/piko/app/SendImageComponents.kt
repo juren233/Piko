@@ -23,7 +23,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
 @Composable
@@ -110,16 +109,16 @@ private fun SendImageTile(
     Box(
         modifier = modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(if (selected) 28.dp else 18.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clip(RoundedCornerShape(if (selected) 20.dp else 16.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f))
             .border(
-                width = if (selected) 3.dp else 1.dp,
+                width = if (selected) 2.dp else 1.dp,
                 color = if (selected) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.62f)
                 } else {
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f)
                 },
-                shape = RoundedCornerShape(if (selected) 28.dp else 18.dp),
+                shape = RoundedCornerShape(if (selected) 20.dp else 16.dp),
             )
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,

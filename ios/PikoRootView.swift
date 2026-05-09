@@ -6,7 +6,7 @@ struct PikoRootView: View {
 
     var body: some View {
         ZStack {
-            PikoPalette.pageGradient
+            PikoPalette.pageBackground
                 .ignoresSafeArea()
 
             TabView {
@@ -41,7 +41,7 @@ struct PikoRootView: View {
                     }
             }
             .tint(PikoPalette.accent)
-            .background(PikoPalette.pageGradient.ignoresSafeArea())
+            .background(PikoPalette.pageBackground.ignoresSafeArea())
         }
         .onAppear {
             model.startPresence()

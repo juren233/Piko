@@ -45,8 +45,8 @@ internal fun SendTransferStatusCard(
                 Box(
                     modifier = Modifier
                         .size(48.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.78f)),
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)),
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
@@ -57,7 +57,7 @@ internal fun SendTransferStatusCard(
                         },
                         contentDescription = null,
                         modifier = Modifier.size(24.dp),
-                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
                 Column(

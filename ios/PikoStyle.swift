@@ -2,10 +2,9 @@ import SwiftUI
 import UIKit
 
 enum PikoPalette {
-    static let surfaceUIColor = UIColor(red: 246 / 255, green: 247 / 255, blue: 241 / 255, alpha: 1)
-    static let accentUIColor = UIColor(red: 31 / 255, green: 97 / 255, blue: 141 / 255, alpha: 1)
-    static let warmUIColor = UIColor(red: 210 / 255, green: 111 / 255, blue: 58 / 255, alpha: 1)
-    static let leafUIColor = UIColor(red: 73 / 255, green: 130 / 255, blue: 96 / 255, alpha: 1)
+    static let surfaceUIColor = UIColor.systemBackground
+    static let surfaceVariantUIColor = UIColor.secondarySystemBackground
+    static let accentUIColor = UIColor.systemBlue
 
     static var surface: Color {
         Color(uiColor: surfaceUIColor)
@@ -15,24 +14,12 @@ enum PikoPalette {
         Color(uiColor: accentUIColor)
     }
 
-    static var warm: Color {
-        Color(uiColor: warmUIColor)
+    static var surfaceVariant: Color {
+        Color(uiColor: surfaceVariantUIColor)
     }
 
-    static var leaf: Color {
-        Color(uiColor: leafUIColor)
-    }
-
-    static var pageGradient: LinearGradient {
-        LinearGradient(
-            colors: [
-                accent.opacity(0.18),
-                surface,
-                warm.opacity(0.14)
-            ],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
+    static var pageBackground: Color {
+        surface
     }
 }
 
@@ -55,35 +42,24 @@ struct PikoHeroPanel<Action: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(title)
                     .font(.largeTitle.weight(.black))
+                    .foregroundStyle(.primary)
                 Text(subtitle)
                     .font(.subheadline)
                     .lineLimit(2)
-                    .opacity(0.82)
+                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 10) {
-                Text(metric)
-                    .font(.footnote.weight(.bold))
-                    .padding(.horizontal, 13)
-                    .padding(.vertical, 8)
-                    .background(.white.opacity(0.18), in: Capsule())
+            VStack(alignment: .trailing, spacing: 8) {
+                PikoPill(text: metric, emphasized: true)
                 action
             }
         }
-        .foregroundStyle(.white)
-        .padding(20)
-        .background(
-            LinearGradient(
-                colors: [PikoPalette.accent, PikoPalette.leaf, PikoPalette.warm],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 30, style: .continuous)
-        )
+        .padding(.top, 10)
+        .padding(.bottom, 12)
     }
 }
 
@@ -112,12 +88,9 @@ struct PikoSectionPanel<Content: View, Trailing: View>: View {
             }
             content
         }
-        .padding(16)
-        .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
-                .stroke(.white.opacity(0.66), lineWidth: 1)
-        )
+        .padding(.horizontal, 18)
+        .padding(.vertical, 18)
+        .background(PikoPalette.surface.opacity(0.62), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 
@@ -151,8 +124,6 @@ struct PikoEmptyPlane<Icon: View>: View {
     var body: some View {
         VStack(spacing: 14) {
             icon
-                .padding(18)
-                .background(.white.opacity(0.52), in: Circle())
             Text(text)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -168,6 +139,12 @@ enum LucideTabIcon {
     case download
     case send
     case settings
+    case inbox
+    case file
+    case image
+    case plus
+    case x
+    case check
 
     private var pathData: [String] {
         switch self {
@@ -186,6 +163,36 @@ enum LucideTabIcon {
             return [
                 "M12.22,2h-0.44a2,2 0,0 0,-2 2v0.18a2,2 0,0 1,-1 1.73l-0.43,0.25a2,2 0,0 1,-2 0l-0.15,-0.08a2,2 0,0 0,-2.73 0.73l-0.22,0.38a2,2 0,0 0,0.73 2.73l0.15,0.1a2,2 0,0 1,1 1.72v0.51a2,2 0,0 1,-1 1.74l-0.15,0.09a2,2 0,0 0,-0.73 2.73l0.22,0.38a2,2 0,0 0,2.73 0.73l0.15,-0.08a2,2 0,0 1,2 0l0.43,0.25a2,2 0,0 1,1 1.73V20a2,2 0,0 0,2 2h0.44a2,2 0,0 0,2 -2v-0.18a2,2 0,0 1,1 -1.73l0.43,-0.25a2,2 0,0 1,2 0l0.15,0.08a2,2 0,0 0,2.73 -0.73l0.22,-0.39a2,2 0,0 0,-0.73 -2.73l-0.15,-0.08a2,2 0,0 1,-1 -1.74v-0.5a2,2 0,0 1,1 -1.74l0.15,-0.09a2,2 0,0 0,0.73 -2.73l-0.22,-0.38a2,2 0,0 0,-2.73 -0.73l-0.15,0.08a2,2 0,0 1,-2 0l-0.43,-0.25a2,2 0,0 1,-1 -1.73V4a2,2 0,0 0,-2 -2z",
                 "M12,12m-3,0a3,3 0,1 0,6 0a3,3 0,1 0,-6 0"
+            ]
+        case .inbox:
+            return [
+                "M22,12H16l-2,3H10l-2,-3H2",
+                "M5.45,5.11L2,12v6a2,2 0,0 0,2 2h16a2,2 0,0 0,2 -2v-6l-3.45,-6.89A2,2 0,0 0,16.76 4H7.24a2,2 0,0 0,-1.79 1.11z"
+            ]
+        case .file:
+            return [
+                "M6,22a2,2 0,0 1,-2 -2V4a2,2 0,0 1,2 -2h8a2.4,2.4 0,0 1,1.704 0.706l3.588,3.588A2.4,2.4 0,0 1,20 8v12a2,2 0,0 1,-2 2z",
+                "M14,2v5a1,1 0,0 0,1 1h5"
+            ]
+        case .image:
+            return [
+                "M5,3h14a2,2 0,0 1,2 2v14a2,2 0,0 1,-2 2H5a2,2 0,0 1,-2 -2V5a2,2 0,0 1,2 -2z",
+                "M9,9m-2,0a2,2 0,1 0,4 0a2,2 0,1 0,-4 0",
+                "M21,15l-3.086,-3.086a2,2 0,0 0,-2.828 0L6,21"
+            ]
+        case .plus:
+            return [
+                "M5,12h14",
+                "M12,5v14"
+            ]
+        case .x:
+            return [
+                "M18,6L6,18",
+                "M6,6l12,12"
+            ]
+        case .check:
+            return [
+                "M20,6L9,17l-5,-5"
             ]
         }
     }

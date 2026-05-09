@@ -1,82 +1,186 @@
 import SwiftUI
 
-struct NativeItemSection: View {
+struct NativeImageSection: View {
     @ObservedObject var model: NativePikoModel
     @Binding var showingPhotoPicker: Bool
+
+    var body: some View {
+        PikoSectionPanel(
+            title: "图片",
+            trailing: {
+                PikoPill(text: model.imageSectionExpanded ? "收起" : "展开", emphasized: true)
+            }
+        ) {
+            if model.imageItems.isEmpty {
+                PikoEmptyPlane(text: "还没有读取到最近图片") {
+                    Button("选择图片") {
+                        showingPhotoPicker = true
+                    }
+                    .buttonStyle(.borderless)
+                }
+            } else if model.imageSectionExpanded {
+                VStack(spacing: 10) {
+                    ForEach(Array(model.imageItems.chunked(into: 3).enumerated()), id: \.offset) { _, rowItems in
+                        HStack(spacing: 10) {
+                            ForEach(rowItems) { item in
+                                NativeImageTile(
+                                    item: item,
+                                    selected: model.selectedItemIds.contains(item.id),
+                                    onTap: { model.toggleItem(item.id) }
+                                )
+                            }
+                            ForEach(0..<(3 - rowItems.count), id: \.self) { _ in
+                                Color.clear.aspectRatio(1, contentMode: .fit)
+                            }
+                        }
+                    }
+                }
+            } else {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(model.imageItems) { item in
+                            NativeImageTile(
+                                item: item,
+                                selected: model.selectedItemIds.contains(item.id),
+                                onTap: { model.toggleItem(item.id) }
+                            )
+                            .frame(width: 92)
+                        }
+                    }
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            model.toggleImageSectionExpanded()
+        }
+    }
+}
+
+struct NativeFileSection: View {
+    @ObservedObject var model: NativePikoModel
     @Binding var showingDocumentPicker: Bool
 
     var body: some View {
         PikoSectionPanel(
-            title: "待发送",
+            title: "文件",
             trailing: {
-                HStack(spacing: 8) {
-                    Button("图片") {
-                        showingPhotoPicker = true
-                    }
-                    Button("文件") {
-                        showingDocumentPicker = true
+                Button {
+                    showingDocumentPicker = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(uiImage: LucideTabIcon.plus.image)
+                            .resizable()
+                            .frame(width: 16, height: 16)
+                        Text("添加")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .buttonStyle(.borderless)
             }
         ) {
-            if model.items.isEmpty {
-                PikoEmptyPlane(text: "请选择图片或文件") {
-                    Image(systemName: "tray.and.arrow.up")
-                        .font(.title2)
+            if model.fileItems.isEmpty {
+                PikoEmptyPlane(text: "点击选择需要传输的文件") {
+                    Image(uiImage: LucideTabIcon.file.image)
+                        .resizable()
+                        .frame(width: 36, height: 36)
                         .foregroundStyle(.secondary)
                 }
             } else {
-                VStack(spacing: 10) {
-                    ForEach(model.items) { item in
-                        NativeTransferItemRow(
+                VStack(spacing: 8) {
+                    ForEach(model.fileItems) { item in
+                        NativeFileRow(
                             item: item,
-                            selected: model.selectedItemIds.contains(item.id),
-                            onTap: { model.toggleItem(item.id) }
+                            onRemove: { model.removeItem(item.id) }
                         )
                     }
                 }
             }
         }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if model.fileItems.isEmpty {
+                showingDocumentPicker = true
+            }
+        }
     }
 }
 
-private struct NativeTransferItemRow: View {
+private struct NativeImageTile: View {
     let item: NativeTransferItem
     let selected: Bool
     let onTap: () -> Void
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-                Image(systemName: item.systemImage)
-                    .frame(width: 30)
-                    .foregroundStyle(PikoPalette.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.displayName)
-                        .font(.body.weight(.medium))
-                        .lineLimit(1)
-                    Text(item.sizeLabel)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
+            ZStack(alignment: .topTrailing) {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(PikoPalette.accent.opacity(0.12))
+                    .aspectRatio(1, contentMode: .fit)
+                    .overlay {
+                        Image(uiImage: LucideTabIcon.image.image)
+                            .resizable()
+                            .frame(width: 28, height: 28)
+                            .foregroundStyle(PikoPalette.accent)
+                    }
                 if selected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(PikoPalette.accent)
+                    Image(uiImage: LucideTabIcon.check.image)
+                        .resizable()
+                        .foregroundStyle(.white)
+                        .frame(width: 10, height: 10)
+                        .padding(5)
+                        .background(PikoPalette.accent, in: Circle())
+                        .padding(6)
                 }
             }
-            .padding(14)
-            .background(
-                selected ? PikoPalette.accent.opacity(0.12) : Color.secondary.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
-            )
             .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(selected ? PikoPalette.accent : Color.secondary.opacity(0.16), lineWidth: selected ? 2 : 1)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(selected ? PikoPalette.accent : Color.clear, lineWidth: 2)
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct NativeFileRow: View {
+    let item: NativeTransferItem
+    let onRemove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(PikoPalette.surfaceVariant.opacity(0.28))
+                .frame(width: 44, height: 44)
+                .overlay {
+                    Text(item.fileType.previewLabel)
+                        .font(.caption.weight(.bold))
+                }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.displayName)
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+                Text(item.sizeLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button(action: onRemove) {
+                Image(uiImage: LucideTabIcon.x.image)
+                    .resizable()
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("移除")
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(PikoPalette.surfaceVariant.opacity(0.24), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private extension Array {
+    func chunked(into size: Int) -> [[Element]] {
+        stride(from: 0, to: count, by: size).map {
+            Array(self[$0..<Swift.min($0 + size, count)])
+        }
     }
 }

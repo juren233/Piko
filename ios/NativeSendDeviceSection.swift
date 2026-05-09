@@ -1,15 +1,23 @@
 import SwiftUI
 
 struct NativeDeviceSection: View {
-    @ObservedObject var model: NativePikoModel
+    let title: String
+    let devices: [NativeSendDevice]
+    let selectedDeviceIds: Set<String>
+    let onDeviceClick: (String) -> Void
+    var emptyText: String?
 
     var body: some View {
         PikoSectionPanel(
-            title: "局域网设备",
-            trailing: { PikoPill(text: model.discoveryLabel) }
+            title: title,
+            trailing: {
+                if let emptyText = emptyText {
+                    PikoPill(text: emptyText)
+                }
+            }
         ) {
-            if model.lanDevices.isEmpty {
-                PikoEmptyPlane(text: "暂无局域网设备") {
+            if devices.isEmpty {
+                PikoEmptyPlane(text: emptyText ?? "暂无设备") {
                     Text("· · ·")
                         .font(.title2.weight(.bold))
                         .foregroundStyle(.secondary)
@@ -17,11 +25,11 @@ struct NativeDeviceSection: View {
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 12) {
-                        ForEach(model.lanDevices) { device in
+                        ForEach(devices) { device in
                             NativeDeviceRow(
                                 device: device,
-                                selected: model.selectedDeviceIds.contains(device.id),
-                                onTap: { model.toggleDevice(device.id) }
+                                selected: selectedDeviceIds.contains(device.id),
+                                onTap: { onDeviceClick(device.id) }
                             )
                         }
                     }
@@ -38,36 +46,49 @@ private struct NativeDeviceRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(spacing: 12) {
-                Text(String(device.name.prefix(1)))
-                    .font(.headline.weight(.bold))
-                    .frame(width: 44, height: 44)
-                    .background(
-                        selected ? PikoPalette.accent.opacity(0.18) : Color.secondary.opacity(0.14),
-                        in: RoundedRectangle(cornerRadius: selected ? 16 : 22, style: .continuous)
-                    )
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(device.name)
-                        .font(.body.weight(.semibold))
-                    Text(device.subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            VStack(spacing: 8) {
+                ZStack(alignment: .topTrailing) {
+                    Circle()
+                        .fill(selected ? PikoPalette.accent.opacity(0.12) : PikoPalette.surface)
+                        .frame(width: 56, height: 56)
+                        .overlay(
+                            Circle()
+                                .stroke(selected ? PikoPalette.accent.opacity(0.38) : Color.secondary.opacity(0.24), lineWidth: 1)
+                        )
+                    Text(String(device.name.prefix(1)))
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(selected ? PikoPalette.accent : .secondary)
+                    if selected {
+                        Image(uiImage: LucideTabIcon.check.image)
+                            .resizable()
+                            .foregroundStyle(.white)
+                            .frame(width: 10, height: 10)
+                            .padding(4)
+                            .background(PikoPalette.accent, in: Circle())
+                            .offset(x: 2, y: -2)
+                    }
                 }
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(PikoPalette.accent)
+                .frame(width: 56, height: 56)
+                Text(device.name)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                if let subtitle = device.subtitle {
+                    Text(subtitle)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
-            .frame(width: 220)
-            .padding(14)
+            .frame(width: 88)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 12)
             .background(
-                selected ? PikoPalette.accent.opacity(0.12) : Color.secondary.opacity(0.08),
-                in: RoundedRectangle(cornerRadius: 24, style: .continuous)
+                selected ? PikoPalette.accent.opacity(0.08) : PikoPalette.surfaceVariant.opacity(0.24),
+                in: RoundedRectangle(cornerRadius: 20, style: .continuous)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(selected ? PikoPalette.accent : Color.secondary.opacity(0.16), lineWidth: selected ? 2 : 1)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .stroke(selected ? PikoPalette.accent.opacity(0.52) : Color.secondary.opacity(0.2), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

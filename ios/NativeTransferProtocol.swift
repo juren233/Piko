@@ -31,7 +31,7 @@ enum NativeTransferProtocol {
             return nil
         }
 
-        var metadata: [(String, Int)] = []
+        var metadata: [(String, NativeFileType, Int)] = []
         for _ in 0..<count {
             guard let nameLength = data.readInt32(offset: &offset), nameLength >= 0 else {
                 return nil
@@ -42,21 +42,22 @@ enum NativeTransferProtocol {
             guard let name = String(data: nameData, encoding: .utf8) else {
                 return nil
             }
-            guard data.readInt32(offset: &offset) != nil else {
+            guard let rawFileType = data.readInt32(offset: &offset) else {
                 return nil
             }
             guard let size = data.readInt64(offset: &offset), size >= 0 else {
                 return nil
             }
-            metadata.append((name, size))
+            let fileType = NativeFileType(rawValue: rawFileType) ?? .other
+            metadata.append((name, fileType, size))
         }
 
         var files: [NativeReceivedFile] = []
-        for (name, size) in metadata {
+        for (name, fileType, size) in metadata {
             guard let bytes = data.readData(count: size, offset: &offset) else {
                 return nil
             }
-            files.append(NativeReceivedFile(displayName: name, data: bytes))
+            files.append(NativeReceivedFile(displayName: name, fileType: fileType, data: bytes))
         }
 
         return NativeReceivedTransfer(files: files)

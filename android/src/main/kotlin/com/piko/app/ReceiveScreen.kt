@@ -26,8 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -38,34 +36,39 @@ internal fun PikoReceiveScreen(
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .background(pikoPageBrush())
-            .padding(horizontal = 18.dp),
-        contentPadding = PaddingValues(top = 18.dp, bottom = bottomContentPadding + 24.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+            .background(pikoPageBrush()),
     ) {
-        item {
-            PikoHeroPanel(
-                title = "Piko",
-                subtitle = "接收记录和本机收件箱",
-                metric = "${state.receiveHistoryDescending.size} 次",
-            )
-        }
-        if (state.receiveHistoryDescending.isEmpty()) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 24.dp),
+            contentPadding = PaddingValues(top = 32.dp, bottom = bottomContentPadding + 32.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
+        ) {
             item {
-                ReceiveHistoryEmptyState()
+                PikoHeroPanel(
+                    title = "Piko",
+                    subtitle = "接收记录和本机收件箱",
+                    metric = "${state.receiveHistoryDescending.size} 次",
+                )
             }
-        } else {
-            item {
-                PikoInfoPill(text = "最近接收", emphasized = true)
-            }
-            items(
-                items = state.receiveHistoryDescending,
-                key = { history -> history.id },
-            ) { history ->
-                ReceiveHistoryCard(history = history)
+            if (state.receiveHistoryDescending.isEmpty()) {
+                item {
+                    ReceiveHistoryEmptyState()
+                }
+            } else {
+                item {
+                    PikoInfoPill(text = "最近接收", emphasized = true)
+                }
+                items(
+                    items = state.receiveHistoryDescending,
+                    key = { history -> history.id },
+                ) { history ->
+                    ReceiveHistoryCard(history = history)
+                }
             }
         }
     }
@@ -76,47 +79,41 @@ private fun ReceiveHistoryCard(history: ReceiveHistoryItem) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(28.dp))
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.56f))
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.54f),
-                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.22f),
+                shape = RoundedCornerShape(20.dp),
             )
-            .padding(horizontal = 14.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            modifier = Modifier
-                .size(width = 4.dp, height = 72.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(MaterialTheme.colorScheme.primary),
-        )
-            ReceiveHistoryPreview(history = history)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(
-                    text = history.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = history.subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+        ReceiveHistoryPreview(history = history)
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
             Text(
-                text = ">",
+                text = history.title,
                 style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
+            Text(
+                text = history.subtitle,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Text(
+            text = ">",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+        )
     }
 }
 
@@ -158,38 +155,35 @@ private fun MultiFilePreviewBadge(
         LayeredPreviewCard(
             modifier = Modifier
                 .size(size * 0.7f)
-                .offset(x = 8.dp, y = (-6).dp)
-                .graphicsLayer { rotationZ = 8f },
+                .offset(x = 8.dp, y = (-6).dp),
             shape = corner,
             backgroundBrush = Brush.linearGradient(
                 colors = listOf(
-                    MaterialTheme.colorScheme.surfaceVariant,
                     MaterialTheme.colorScheme.surface,
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                 ),
             ),
         )
         LayeredPreviewCard(
             modifier = Modifier
                 .size(size * 0.74f)
-                .offset(x = (-8).dp, y = 8.dp)
-                .graphicsLayer { rotationZ = -10f },
+                .offset(x = (-8).dp, y = 8.dp),
             shape = corner,
             backgroundBrush = Brush.linearGradient(
                 colors = listOf(
-                    MaterialTheme.colorScheme.secondaryContainer,
-                    MaterialTheme.colorScheme.tertiaryContainer,
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.58f),
+                    MaterialTheme.colorScheme.surface,
                 ),
             ),
         )
         LayeredPreviewCard(
             modifier = Modifier
-                .size(size * 0.78f)
-                .graphicsLayer { rotationZ = -2f },
+                .size(size * 0.78f),
             shape = corner,
             backgroundBrush = Brush.linearGradient(
                 colors = listOf(
-                    MaterialTheme.colorScheme.primaryContainer,
-                    MaterialTheme.colorScheme.tertiaryContainer,
+                    MaterialTheme.colorScheme.surface,
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
                 ),
             ),
         ) {
@@ -226,14 +220,14 @@ private fun FileTypePreviewBadge(
             .background(
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.secondaryContainer,
                         MaterialTheme.colorScheme.surface,
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.52f),
                     ),
                 ),
             )
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.8f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.28f),
                 shape = shape,
             ),
         contentAlignment = Alignment.Center,
@@ -242,10 +236,10 @@ private fun FileTypePreviewBadge(
             modifier = Modifier
                 .size(size * 0.56f)
                 .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f))
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.82f))
                 .border(
                     width = 1.dp,
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f),
                     shape = RoundedCornerShape(14.dp),
                 ),
         ) {
@@ -255,7 +249,7 @@ private fun FileTypePreviewBadge(
                     .padding(5.dp)
                     .size(10.dp)
                     .clip(RoundedCornerShape(topEnd = 8.dp, bottomStart = 6.dp))
-                    .background(MaterialTheme.colorScheme.primaryContainer),
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)),
             )
             FileTypeGlyph(
                 label = fileType.previewLabel,
@@ -279,8 +273,8 @@ private fun ImageThumbnailPreview(
             .background(
                 brush = Brush.linearGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.primaryContainer,
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        MaterialTheme.colorScheme.surface,
                     ),
                 ),
             ),
@@ -291,7 +285,7 @@ private fun ImageThumbnailPreview(
                 .padding(top = 10.dp, end = 10.dp)
                 .size(11.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)),
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)),
         )
         Box(
             modifier = Modifier
@@ -299,9 +293,8 @@ private fun ImageThumbnailPreview(
                 .fillMaxWidth()
                 .height(size * 0.34f)
                 .offset(y = 8.dp)
-                .graphicsLayer { rotationZ = -7f }
                 .clip(RoundedCornerShape(topStart = 18.dp, topEnd = 26.dp))
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)),
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
         )
         Box(
             modifier = Modifier
@@ -335,7 +328,7 @@ private fun LayeredPreviewCard(
             .background(backgroundBrush)
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.26f),
                 shape = shape,
             ),
         content = content,
@@ -371,23 +364,16 @@ private fun ReceiveHistoryEmptyState(
 private fun EmptyReceiveHistoryIcon() {
     Box(
         modifier = Modifier
-            .size(108.dp)
-            .clip(RoundedCornerShape(34.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        MaterialTheme.colorScheme.primaryContainer,
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                    ),
-                ),
-            ),
+            .size(76.dp)
+            .clip(RoundedCornerShape(24.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.34f)),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = LucideInboxIcon,
             contentDescription = null,
-            modifier = Modifier.size(58.dp),
-            tint = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.72f),
+            modifier = Modifier.size(38.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.78f),
         )
     }
 }

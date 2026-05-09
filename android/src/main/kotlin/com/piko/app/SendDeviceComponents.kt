@@ -53,7 +53,7 @@ internal fun SendDeviceSection(
                 )
             }
         } else {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(devices, key = { device -> device.id }) { device ->
                     SendDeviceAvatar(
                         device = device,
@@ -73,26 +73,26 @@ private fun SendDeviceAvatar(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val avatarShape = if (selected) RoundedCornerShape(24.dp) else CircleShape
+    val avatarShape = CircleShape
     Column(
         modifier = modifier
-            .width(96.dp)
-            .clip(RoundedCornerShape(28.dp))
+            .width(88.dp)
+            .clip(RoundedCornerShape(20.dp))
             .background(
                 if (selected) {
-                    MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
                 } else {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.44f)
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.24f)
                 },
             )
             .border(
-                width = if (selected) 2.dp else 1.dp,
+                width = 1.dp,
                 color = if (selected) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.52f)
                 } else {
-                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.58f)
+                    MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.2f)
                 },
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(20.dp),
             )
             .clickable(onClick = onClick)
             .padding(vertical = 12.dp, horizontal = 8.dp),
@@ -101,21 +101,21 @@ private fun SendDeviceAvatar(
     ) {
         Box(
             modifier = Modifier
-                .size(62.dp)
+                .size(56.dp)
                 .clip(avatarShape)
                 .background(
                     if (selected) {
-                        MaterialTheme.colorScheme.primaryContainer
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
                     } else {
-                        MaterialTheme.colorScheme.surfaceVariant
+                        MaterialTheme.colorScheme.surface
                     },
                 )
                 .border(
-                    width = if (selected) 2.dp else 1.dp,
+                    width = 1.dp,
                     color = if (selected) {
-                        MaterialTheme.colorScheme.primary
+                        MaterialTheme.colorScheme.primary.copy(alpha = 0.38f)
                     } else {
-                        MaterialTheme.colorScheme.outlineVariant
+                        MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.24f)
                     },
                     shape = avatarShape,
                 ),
@@ -126,7 +126,7 @@ private fun SendDeviceAvatar(
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = if (selected) {
-                    MaterialTheme.colorScheme.onPrimaryContainer
+                    MaterialTheme.colorScheme.primary
                 } else {
                     MaterialTheme.colorScheme.onSurfaceVariant
                 },

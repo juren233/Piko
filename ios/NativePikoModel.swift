@@ -11,6 +11,7 @@ final class NativePikoModel: ObservableObject {
     @Published var transferLabel = "等待发送"
     @Published var transferProgress: Double?
     @Published var discoveryLabel = "正在搜索"
+    @Published var imageSectionExpanded = false
 
     let currentDeviceName = UIDevice.current.name
 
@@ -19,11 +20,62 @@ final class NativePikoModel: ObservableObject {
     private var browser: NWBrowser?
 
     var canSend: Bool {
-        !selectedDeviceIds.isEmpty && !selectedItems.isEmpty && transferProgress == nil
+        !selectedLanTargets.isEmpty && !selectedItems.isEmpty && transferProgress == nil
     }
 
     private var selectedItems: [NativeTransferItem] {
         items.filter { selectedItemIds.contains($0.id) }
+    }
+
+    private var selectedLanTargets: [NativeSendDevice] {
+        lanDevices.filter { selectedDeviceIds.contains($0.id) }
+    }
+
+    var myDevices: [NativeSendDevice] {
+        [
+            NativeSendDevice(
+                id: "current-device",
+                name: currentDeviceName,
+                subtitle: "本机",
+                endpoint: Self.placeholderEndpoint
+            )
+        ]
+    }
+
+    var friendDevices: [NativeSendDevice] {
+        [
+            NativeSendDevice(
+                id: "friend-laptop",
+                name: "Cavan 的 MacBook",
+                subtitle: "最近同步",
+                endpoint: Self.placeholderEndpoint
+            ),
+            NativeSendDevice(
+                id: "friend-tablet",
+                name: "客厅 iPad",
+                subtitle: "可信设备",
+                endpoint: Self.placeholderEndpoint
+            )
+        ]
+    }
+
+    var imageItems: [NativeTransferItem] {
+        items.filter { $0.fileType == .image }
+    }
+
+    var fileItems: [NativeTransferItem] {
+        items.filter { $0.fileType != .image }
+    }
+
+    var transferProgressLabel: String {
+        guard let transferProgress else {
+            return "待命"
+        }
+        return "\(Int(transferProgress * 100))%"
+    }
+
+    var transferIsVisible: Bool {
+        transferProgress != nil || transferLabel != "等待发送"
     }
 
     func startPresence() {
@@ -114,8 +166,17 @@ final class NativePikoModel: ObservableObject {
         }
     }
 
+    func removeItem(_ id: String) {
+        items.removeAll { $0.id == id }
+        selectedItemIds.remove(id)
+    }
+
+    func toggleImageSectionExpanded() {
+        imageSectionExpanded.toggle()
+    }
+
     func sendSelectedItems() {
-        let targets = lanDevices.filter { selectedDeviceIds.contains($0.id) }
+        let targets = selectedLanTargets
         let payloadItems = selectedItems
         guard !targets.isEmpty, !payloadItems.isEmpty else {
             return
@@ -247,11 +308,18 @@ final class NativePikoModel: ObservableObject {
             self.receiveHistory.insert(
                 NativeReceiveHistoryItem(
                     title: names.count == 1 ? names[0] : "\(names[0])+\(names.count - 1)个文件",
-                    subtitle: "刚刚 - 来自局域网设备"
+                    subtitle: "刚刚 - 来自局域网设备",
+                    fileCount: transfer.files.count,
+                    primaryFileType: transfer.files.first?.fileType ?? .other,
+                    imagePreviewDescription: transfer.files.first?.fileType == .image ? "接收图片缩略图" : nil
                 ),
                 at: 0
             )
         }
+    }
+
+    private static var placeholderEndpoint: NWEndpoint {
+        .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: 9)!)
     }
 }
 
@@ -281,6 +349,9 @@ struct NativeReceiveHistoryItem: Identifiable {
     let id = UUID()
     let title: String
     let subtitle: String
+    let fileCount: Int
+    let primaryFileType: NativeFileType
+    let imagePreviewDescription: String?
 }
 
 enum NativeFileType: Int {
@@ -290,10 +361,28 @@ enum NativeFileType: Int {
     case video = 3
     case archive = 4
     case other = 5
+
+    var previewLabel: String {
+        switch self {
+        case .document:
+            return "DOC"
+        case .spreadsheet:
+            return "XLS"
+        case .image:
+            return "IMG"
+        case .video:
+            return "VID"
+        case .archive:
+            return "ZIP"
+        case .other:
+            return "FILE"
+        }
+    }
 }
 
 struct NativeReceivedFile {
     let displayName: String
+    let fileType: NativeFileType
     let data: Data
 }
 

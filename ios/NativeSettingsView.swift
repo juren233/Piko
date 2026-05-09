@@ -4,32 +4,27 @@ struct NativeSettingsView: View {
     @ObservedObject var model: NativePikoModel
 
     var body: some View {
-        NavigationView {
-            ScrollView {
-                VStack(spacing: 18) {
-                    PikoHeroPanel(
-                        title: "设置",
-                        subtitle: "设备、发现和接收状态",
-                        metric: "本机"
-                    )
-                    PikoSectionPanel(title: "设备") {
-                        NativeSettingsRow(title: "当前设备", value: model.currentDeviceName)
-                        NativeSettingsRow(title: "局域网设备", value: "\(model.lanDevices.count)")
-                    }
-                    PikoSectionPanel(title: "数据") {
-                        NativeSettingsRow(title: "接收记录", value: "\(model.receiveHistory.count)")
-                    }
+        ScrollView {
+            VStack(spacing: 24) {
+                PikoHeroPanel(
+                    title: "设置",
+                    subtitle: "设备、账号和传输偏好",
+                    metric: "本机"
+                )
+                PikoSectionPanel(title: "传输") {
+                    NativeSettingsRow(title: "自动接收", value: "可信设备")
+                    NativeSettingsRow(title: "传输策略", value: "局域网优先")
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 120)
+                PikoSectionPanel(title: "账号") {
+                    NativeSettingsRow(title: "登录方式", value: "邮箱账号")
+                }
             }
-            .background(PikoPalette.pageGradient)
-            .systemBarBackgrounds()
-            .navigationTitle("设置")
-            .navigationBarTitleDisplayMode(.inline)
+            .padding(.horizontal, 24)
+            .padding(.top, 32)
+            .padding(.bottom, 136)
         }
-        .navigationViewStyle(.stack)
+        .background(PikoPalette.pageBackground)
+        .systemBarBackgrounds()
     }
 }
 
