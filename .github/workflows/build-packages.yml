@@ -166,7 +166,6 @@ jobs:
           )"
 
           selected_xcode=""
-          selected_build_settings=""
           while IFS= read -r candidate; do
             if [[ -z "$candidate" || ! -d "$candidate" ]]; then
               continue
@@ -190,19 +189,7 @@ jobs:
               echo "跳过：未找到 iPhoneOS SDK 路径：$sdk_path"
               continue
             fi
-            build_settings="$(xcodebuild \
-              -project ios/Piko.xcodeproj \
-              -scheme Piko \
-              -sdk iphoneos \
-              -destination "generic/platform=iOS" \
-              -showBuildSettings 2>&1 || true)"
-            if grep -q "xcodebuild: error:" <<< "$build_settings"; then
-              echo "跳过：该 Xcode 无法读取 iPhoneOS 真机构建设置。"
-              printf '%s\n' "$build_settings"
-              continue
-            fi
             selected_xcode="$candidate"
-            selected_build_settings="$build_settings"
             break
           done <<< "$xcode_candidates"
 
@@ -218,7 +205,6 @@ jobs:
           sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
           echo "使用 iOS SDK $sdk_version 构建。"
           echo "iPhoneOS SDK 路径：$sdk_path"
-          printf '%s\n' "$selected_build_settings" | grep -E 'SDKROOT|SUPPORTED_PLATFORMS|ARCHS|IPHONEOS_DEPLOYMENT_TARGET' || true
 
       - name: Build iOS unsigned artifacts
         shell: bash

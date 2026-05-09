@@ -106,24 +106,23 @@ class IosAndroidUiParityTest {
         assertFalse("xcodebuild -downloadPlatform iOS" in workflow)
         assertFalse("iphonesimulator" in workflow)
         assertFalse("iphonesimulator" in iosScript)
-        assertTrue("generic/platform=iOS" in xcodeCandidateLoop)
-        assertTrue("generic/platform=iOS" in iosScript)
+        assertFalse("-destination" in workflow)
+        assertFalse("-destination" in iosScript)
         assertTrue("26.5*)" in xcodeCandidateLoop)
         assertTrue("26.5*)" in iosScript)
-        assertTrue("-showBuildSettings" in xcodeCandidateLoop)
+        assertTrue("sdk=\"iphoneos26.5\"" in iosScript)
         assertInOrder(
             xcodeCandidateLoop,
             "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
             "26.5*)",
-            "build_settings=\"\$(xcodebuild \\",
-            "-destination \"generic/platform=iOS\"",
-            "-showBuildSettings",
+            "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
+            "selected_xcode=\"\$candidate\"",
         )
         assertInOrder(
             iosScript,
             "-sdk \"\$sdk\"",
-            "-destination \"\$destination\"",
             "ARCHS=\"\$arch\"",
+            "SUPPORTED_PLATFORMS=iphoneos",
             "CONFIGURATION_BUILD_DIR=\"\$output_dir\"",
         )
     }
