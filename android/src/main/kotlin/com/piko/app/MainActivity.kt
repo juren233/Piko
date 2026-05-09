@@ -14,6 +14,7 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
         )
         super.onCreate(savedInstanceState)
+        window.isNavigationBarContrastEnforced = false
         setContent {
             AndroidPikoApp()
         }

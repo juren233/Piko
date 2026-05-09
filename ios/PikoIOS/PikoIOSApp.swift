@@ -4,15 +4,26 @@ import UIKit
 
 @main
 struct PikoIOSApp: App {
+    init() {
+        let tabBarAppearance = UITabBarAppearance()
+        tabBarAppearance.configureWithTransparentBackground()
+        tabBarAppearance.backgroundColor = .clear
+        tabBarAppearance.shadowColor = .clear
+
+        UITabBar.appearance().standardAppearance = tabBarAppearance
+        UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
+        UITabBar.appearance().isTranslucent = true
+    }
+
     var body: some Scene {
         WindowGroup {
             ZStack {
                 PikoIOSPalette.surface
-                    .ignoresSafeArea(edges: .top)
+                    .ignoresSafeArea()
 
                 TabView {
                     ComposeView(tabName: "Receive")
-                        .ignoresSafeArea(.container, edges: .bottom)
+                        .ignoresSafeArea(.container, edges: .vertical)
                         .tabItem {
                             Label {
                                 Text("接收")
@@ -22,7 +33,7 @@ struct PikoIOSApp: App {
                         }
 
                     SendTabView()
-                        .ignoresSafeArea(.container, edges: .bottom)
+                        .ignoresSafeArea(.container, edges: .vertical)
                         .tabItem {
                             Label {
                                 Text("发送")
@@ -32,7 +43,7 @@ struct PikoIOSApp: App {
                         }
 
                     ComposeView(tabName: "Settings")
-                        .ignoresSafeArea(.container, edges: .bottom)
+                        .ignoresSafeArea(.container, edges: .vertical)
                         .tabItem {
                             Label {
                                 Text("设置")

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -236,6 +237,7 @@ private fun PikoSendScreen(
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
+            .statusBarsPadding()
             .padding(horizontal = 18.dp, vertical = 16.dp),
         contentPadding = PaddingValues(bottom = bottomContentPadding + 20.dp),
         verticalArrangement = Arrangement.spacedBy(22.dp),
@@ -835,6 +837,7 @@ private fun PikoSettingsScreen(
     Column(
         modifier = modifier
             .fillMaxSize()
+            .statusBarsPadding()
             .padding(start = 20.dp, top = 20.dp, end = 20.dp, bottom = bottomContentPadding + 20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
