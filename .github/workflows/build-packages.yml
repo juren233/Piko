@@ -159,55 +159,106 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          latest_xcode="$(python3 - <<'PY'
+          xcode_candidates="$(python3 - <<'PY'
           from pathlib import Path
           import re
 
-          candidates = []
+          candidates = {}
+          default = Path("/Applications/Xcode.app")
+          if default.exists():
+              candidates[str(default.resolve())] = (999, 999, 999, 0)
+
           for path in Path("/Applications").glob("Xcode_26*.app"):
               match = re.match(r"Xcode_(\d+(?:\.\d+){0,2})", path.name)
               if match:
-                  version = tuple(int(part) for part in match.group(1).split("."))
-                  candidates.append((version, path.resolve()))
+                  parts = tuple(int(part) for part in match.group(1).split("."))
+                  version = parts + (0,) * (3 - len(parts))
+                  candidates[str(path.resolve())] = (*version, 1)
 
           if not candidates:
               raise SystemExit(1)
 
-          print(max(candidates, key=lambda item: item[0])[1])
+          for path, sort_key in sorted(candidates.items(), key=lambda item: item[1], reverse=True):
+              print(path)
           PY
           )"
-          if [[ -z "$latest_xcode" || ! -d "$latest_xcode" ]]; then
-            echo "未找到 Xcode 26：" >&2
+
+          selected_xcode=""
+          selected_destinations=""
+          while IFS= read -r candidate; do
+            if [[ -z "$candidate" || ! -d "$candidate" ]]; then
+              continue
+            fi
+            echo "检查 Xcode：$candidate"
+            export DEVELOPER_DIR="$candidate/Contents/Developer"
+            xcodebuild -version
+            xcodebuild -showsdks
+            sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
+            case "$sdk_version" in
+              26.*)
+                echo "候选 iOS SDK：$sdk_version"
+                ;;
+              *)
+                echo "跳过：当前 iOS SDK 不是 26.x：$sdk_version"
+                continue
+                ;;
+            esac
+            sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
+            if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
+              echo "跳过：未找到 iPhoneOS SDK 路径：$sdk_path"
+              continue
+            fi
+            destinations="$(xcodebuild \
+              -project ios/PikoIOS/PikoIOS.xcodeproj \
+              -scheme PikoIOS \
+              -sdk iphoneos \
+              -destination "generic/platform=iOS" \
+              -showdestinations 2>&1 || true)"
+            if grep -q "xcodebuild: error:" <<< "$destinations"; then
+              echo "跳过：该 Xcode 无法解析 iOS 构建目标。"
+              printf '%s\n' "$destinations"
+              continue
+            fi
+            if grep -q "iOS .* is not installed" <<< "$destinations"; then
+              echo "跳过：该 Xcode 的 iOS platform 未安装完整。"
+              continue
+            fi
+            selected_xcode="$candidate"
+            selected_destinations="$destinations"
+            break
+          done <<< "$xcode_candidates"
+
+          if [[ -z "$selected_xcode" ]]; then
+            echo "未找到可直接构建 iPhoneOS 的 Xcode 26，尝试为首个候选安装 iOS platform。" >&2
+            selected_xcode="$(printf '%s\n' "$xcode_candidates" | head -n 1)"
+            if [[ -z "$selected_xcode" || ! -d "$selected_xcode" ]]; then
+              echo "未找到 Xcode 26：" >&2
+              find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
+              exit 1
+            fi
+            export DEVELOPER_DIR="$selected_xcode/Contents/Developer"
+            xcodebuild -downloadPlatform iOS
+            selected_destinations="$(xcodebuild \
+              -project ios/PikoIOS/PikoIOS.xcodeproj \
+              -scheme PikoIOS \
+              -sdk iphoneos \
+              -destination "generic/platform=iOS" \
+              -showdestinations)"
+          fi
+
+          if [[ -z "$selected_xcode" || ! -d "$selected_xcode" ]]; then
+            echo "未找到可用 Xcode 26：" >&2
             find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
             exit 1
           fi
-          echo "选择 Xcode：$latest_xcode"
-          export DEVELOPER_DIR="$latest_xcode/Contents/Developer"
+          echo "选择 Xcode：$selected_xcode"
+          export DEVELOPER_DIR="$selected_xcode/Contents/Developer"
           echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
-          xcodebuild -version
-          xcodebuild -showsdks
           sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-          case "$sdk_version" in
-            26.*)
-              echo "使用 iOS SDK $sdk_version 构建。"
-              ;;
-            *)
-              echo "当前 iOS SDK 不是 26.x：$sdk_version" >&2
-              exit 1
-              ;;
-          esac
           sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
-          if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
-            echo "未找到 iPhoneOS SDK 路径：$sdk_path" >&2
-            exit 1
-          fi
+          echo "使用 iOS SDK $sdk_version 构建。"
           echo "iPhoneOS SDK 路径：$sdk_path"
-          xcodebuild \
-            -project ios/PikoIOS/PikoIOS.xcodeproj \
-            -scheme PikoIOS \
-            -sdk iphoneos \
-            -destination "generic/platform=iOS" \
-            -showdestinations
+          printf '%s\n' "$selected_destinations"
 
       - name: Build iOS unsigned artifacts
         shell: bash

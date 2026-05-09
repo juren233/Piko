@@ -5,6 +5,7 @@
 - [x] Keep Android packaging behavior unchanged and make iOS IPA presence/structure fail fast.
 - [x] Validate workflow syntax and inspect the final diff.
 - [x] Record verification output and residual risk.
+- [x] RCA the first optimized CI run failure and adjust Xcode selection.
 
 Review:
 - Change: Kept Android packaging unchanged, removed the iOS simulator platform download, validated the existing iPhoneOS SDK path instead, and added a fast IPA zip/Payload structure check before artifact upload.
@@ -12,6 +13,7 @@ Review:
 - Security: Changed default workflow token permission to `contents: read` and scoped `contents: write` to the GitHub Release job.
 - Verification: `ruby -e 'require "yaml"; YAML.load_file(".github/workflows/build-packages.yml")'` passed; inline bash steps passed `bash -n`; `bash -n scripts/ios/build-packages.sh` passed; `git diff --check` passed; local `xcrun --sdk iphoneos --show-sdk-version` and `--show-sdk-path` returned an iPhoneOS SDK.
 - Residual risk: The actual speed improvement must be measured by a fresh GitHub Actions run after these workflow changes are pushed.
+- Follow-up: Run 25594601083 proved the beta Xcode can expose an iPhoneOS SDK while still lacking an installed iOS platform for `generic/platform=iOS`; the workflow now probes Xcode candidates and selects one whose destination is usable before falling back to `xcodebuild -downloadPlatform iOS`.
 
 ## 2026-05-09 - GitHub Actions iOS IPA Speed Review
 
