@@ -13,6 +13,24 @@ struct NativeSettingsView: View {
                 )
                 PikoSectionPanel(title: "传输") {
                     NativeSettingsRow(title: "自动接收", value: "可信设备")
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("图片视频保存位置")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Picker(
+                            "图片视频保存位置",
+                            selection: Binding(
+                                get: { model.mediaSaveLocation },
+                                set: { model.updateMediaSaveLocation($0) }
+                            )
+                        ) {
+                            ForEach(NativeMediaSaveLocation.allCases) { location in
+                                Text(location.label).tag(location)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                    .padding(.vertical, 6)
                     NativeSettingsRow(title: "传输策略", value: "局域网优先")
                 }
                 PikoSectionPanel(title: "账号") {

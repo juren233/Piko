@@ -175,15 +175,11 @@ jobs:
             xcodebuild -version
             xcodebuild -showsdks
             sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-            case "$sdk_version" in
-              26.5*)
-                echo "候选 iOS SDK：$sdk_version"
-                ;;
-              *)
-                echo "跳过：当前 iOS SDK 不是 26.5：$sdk_version"
-                continue
-                ;;
-            esac
+            if [[ -z "$sdk_version" ]]; then
+              echo "跳过：未找到 iPhoneOS SDK 版本。"
+              continue
+            fi
+            echo "候选 iOS SDK：$sdk_version"
             sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
             if [[ -z "$sdk_path" || ! -d "$sdk_path" ]]; then
               echo "跳过：未找到 iPhoneOS SDK 路径：$sdk_path"
@@ -194,7 +190,7 @@ jobs:
           done <<< "$xcode_candidates"
 
           if [[ -z "$selected_xcode" ]]; then
-            echo "未找到可直接构建 iPhoneOS 的 Xcode 26.5。" >&2
+            echo "未找到可直接构建 iPhoneOS 的 Xcode。" >&2
             find /Applications -maxdepth 1 -type d -name 'Xcode*.app' -print >&2
             exit 1
           fi

@@ -12,6 +12,7 @@ import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -55,6 +56,7 @@ private const val PIKO_PROTOCOL_VERSION = 2
 @Composable
 internal fun rememberAndroidSendPlatformActions(
     currentNickname: DeviceNickname,
+    mediaSaveLocation: ReceiveMediaSaveLocation,
     onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
 ): SendPlatformActions {
     val context = LocalContext.current
@@ -68,15 +70,16 @@ internal fun rememberAndroidSendPlatformActions(
     var pickedFilesCallback by remember {
         mutableStateOf<((List<SendFileItem>) -> Unit)?>(null)
     }
-    val lanDiscovery = remember(appContext, currentNickname) {
+    val lanDiscovery = remember(appContext, currentNickname, mediaSaveLocation) {
         AndroidLanDiscovery(
             context = appContext,
             currentNickname = currentNickname,
+            mediaSaveLocation = mediaSaveLocation,
             onReceiveTransferEvent = onReceiveTransferEvent,
         )
     }
-    val transferClient = remember(appContext) {
-        AndroidTransferClient(appContext)
+    val transferClient = remember(appContext, currentNickname) {
+        AndroidTransferClient(appContext, currentNickname)
     }
 
     val imagePermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
@@ -262,6 +265,7 @@ private fun resolveFileType(mimeType: String?, displayName: String): SendFileTyp
 private class AndroidLanDiscovery(
     private val context: Context,
     private val currentNickname: DeviceNickname,
+    private val mediaSaveLocation: ReceiveMediaSaveLocation,
     private val onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -271,11 +275,12 @@ private class AndroidLanDiscovery(
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
-    private var serverSocket: ServerSocket? = null
-    private var acceptThread: Thread? = null
+    private var localSendServer: LocalSendHttpServer? = null
+    private var localSendMulticast: AndroidLocalSendMulticast? = null
     private var activeReceiveId: String? = null
     private var activeReceiveSocket: Socket? = null
     private var registeredServiceName: String? = null
+    private var discoveryCallback: ((SendLanDiscoveryState, List<SendDevice>) -> Unit)? = null
     private var discoveryActive = false
 
     fun startPresence() {
@@ -287,6 +292,7 @@ private class AndroidLanDiscovery(
     fun start(callback: (SendLanDiscoveryState, List<SendDevice>) -> Unit) {
         stopDiscovery()
         discoveryActive = true
+        discoveryCallback = callback
         devices.clear()
         post(callback, SendLanDiscoveryState.Searching)
         runCatching {
@@ -351,6 +357,7 @@ private class AndroidLanDiscovery(
         }.onFailure {
             post(callback, SendLanDiscoveryState.Failed)
         }
+        localSendMulticast?.announce()
         mainHandler.postDelayed({
             if (discoveryActive && devices.isEmpty()) {
                 post(callback, SendLanDiscoveryState.Empty)
@@ -364,6 +371,7 @@ private class AndroidLanDiscovery(
             runCatching { nsdManager.stopServiceDiscovery(listener) }
         }
         discoveryListener = null
+        discoveryCallback = null
         devices.clear()
     }
 
@@ -372,27 +380,62 @@ private class AndroidLanDiscovery(
         registrationListener?.let { listener ->
             runCatching { nsdManager.unregisterService(listener) }
         }
-        runCatching { serverSocket?.close() }
-        acceptThread?.interrupt()
+        localSendServer?.stop()
+        localSendMulticast?.stop()
         registrationListener = null
         releaseMulticastLock()
-        serverSocket = null
-        acceptThread = null
+        localSendServer = null
+        localSendMulticast = null
         registeredServiceName = null
     }
 
     private fun registerLocalService() {
-        if (serverSocket != null && registrationListener != null) {
+        if (localSendServer != null && registrationListener != null) {
             return
         }
         acquireMulticastLock()
-        val socket = ServerSocket(0)
-        serverSocket = socket
-        startAcceptLoop(socket)
+        val server = localSendServer ?: LocalSendHttpServer(
+            context = context,
+            deviceInfo = { port -> localSendDeviceInfo(currentNickname, port) },
+            mediaSaveLocation = { mediaSaveLocation },
+            onReceiveTransferEvent = { event ->
+                mainHandler.post { onReceiveTransferEvent(event) }
+            },
+            onActiveReceiveChanged = { transferId, activeSocket ->
+                activeReceiveId = transferId
+                activeReceiveSocket = activeSocket
+            },
+        ).also { localServer ->
+            localServer.start()
+            localSendServer = localServer
+        }
+        if (localSendMulticast == null) {
+            localSendMulticast = AndroidLocalSendMulticast(
+                localInfo = { localSendDeviceInfo(currentNickname, server.port) },
+                onDevice = { address, info ->
+                    if (info.fingerprint == currentNickname.fingerprint || info.port <= 0) {
+                        return@AndroidLocalSendMulticast
+                    }
+                    val id = "localsend-${info.fingerprint}-${address.hostAddress}-${info.port}"
+                    devices[id] = SendDevice(
+                        id = id,
+                        name = info.alias,
+                        group = SendDeviceGroup.Lan,
+                        subtitle = "LocalSend",
+                        host = address.hostAddress,
+                        port = info.port,
+                        platformHint = info.deviceType,
+                    )
+                    discoveryCallback?.let { callback ->
+                        post(callback, SendLanDiscoveryState.Found)
+                    }
+                },
+            ).also { it.start() }
+        }
         val serviceInfo = NsdServiceInfo().apply {
             serviceName = "$PIKO_SERVICE_PREFIX${currentNickname.fullName}"
             serviceType = PIKO_SERVICE_TYPE
-            port = socket.localPort
+            port = server.port
             setAttribute(PIKO_ATTR_TITLE, currentNickname.title)
             setAttribute(PIKO_ATTR_CODE, currentNickname.code)
             setAttribute(PIKO_ATTR_FINGERPRINT, currentNickname.fingerprint)
@@ -411,8 +454,8 @@ private class AndroidLanDiscovery(
             nsdManager.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
             registrationListener = listener
         } catch (error: RuntimeException) {
-            runCatching { socket.close() }
-            serverSocket = null
+            server.stop()
+            localSendServer = null
             throw error
         }
     }
@@ -434,35 +477,6 @@ private class AndroidLanDiscovery(
             }
         }
         multicastLock = null
-    }
-
-    private fun startAcceptLoop(socket: ServerSocket) {
-        acceptThread = thread(
-            name = "PikoAndroidReceiveServer",
-            isDaemon = true,
-        ) {
-            while (!socket.isClosed) {
-                val client = runCatching { socket.accept() }.getOrNull() ?: break
-                thread(
-                    name = "PikoAndroidReceiveConnection",
-                    isDaemon = true,
-                ) {
-                    client.use { incoming ->
-                        receiveIncomingTransfer(
-                            context = context,
-                            socket = incoming,
-                            onReceiveTransferEvent = { event ->
-                                mainHandler.post { onReceiveTransferEvent(event) }
-                            },
-                            onActiveReceiveChanged = { transferId, activeSocket ->
-                                activeReceiveId = transferId
-                                activeReceiveSocket = activeSocket
-                            },
-                        )
-                    }
-                }
-            }
-        }
     }
 
     fun cancelReceiveTransfer(transferId: String) {
@@ -505,9 +519,30 @@ private fun NsdServiceInfo.deviceNickname(): DeviceNickname {
     )
 }
 
+private fun localSendDeviceInfo(
+    currentNickname: DeviceNickname,
+    port: Int,
+): LocalSendDeviceInfo {
+    return LocalSendDeviceInfo(
+        alias = currentNickname.title,
+        version = "2.0",
+        deviceModel = Build.MODEL ?: "Android",
+        deviceType = "mobile",
+        fingerprint = currentNickname.fingerprint,
+        port = port,
+        protocol = "http",
+        download = false,
+    )
+}
+
 private class AndroidTransferClient(
     private val context: Context,
+    currentNickname: DeviceNickname,
 ) {
+    private val localSendClient = LocalSendHttpUploadClient(context) {
+        localSendDeviceInfo(currentNickname, port = 0)
+    }
+
     @Volatile
     private var activeTransferId: String? = null
 
@@ -533,31 +568,29 @@ private class AndroidTransferClient(
             try {
                 request.targets.forEach { target ->
                     ensureNotStopped()
-                    val host = requireNotNull(target.host) { "目标设备缺少地址" }
-                    val port = requireNotNull(target.port) { "目标设备缺少端口" }
-                    Socket().use { socket ->
-                        activeSocket = socket
-                        socket.connect(InetSocketAddress(host, port), 5_000)
-                        DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { output ->
-                            writeTransferHeader(output, request)
-                            request.items.forEach { item ->
-                                ensureNotStopped()
-                                context.contentResolver.openInputStream(Uri.parse(item.sourceUri)).use { input ->
-                                    requireNotNull(input) { "无法读取 ${item.displayName}" }
-                                    completedBytes += copyWithProgress(
-                                        input = input,
-                                        output = output,
-                                        totalCompletedBeforeFile = completedBytes,
-                                        totalBytes = request.totalBytes,
-                                        transferId = transferId,
-                                        callback = callback,
-                                    )
-                                }
-                            }
-                            output.flush()
+                    completedBytes += runCatching {
+                        localSendClient.upload(
+                            target = target,
+                            items = request.items,
+                            totalCompletedBeforeTarget = completedBytes,
+                            totalBytes = request.totalBytes,
+                            transferId = transferId,
+                            callback = callback,
+                            ensureActive = ::ensureNotStopped,
+                        )
+                    }.getOrElse { error ->
+                        if (error is TransferPausedException || error is TransferCanceledException) {
+                            throw error
                         }
+                        sendLegacyTransfer(
+                            target = target,
+                            request = request,
+                            totalCompletedBeforeTarget = completedBytes,
+                            totalBytes = request.totalBytes,
+                            transferId = transferId,
+                            callback = callback,
+                        )
                     }
-                    activeSocket = null
                 }
                 callback(SendTransferEvent.Completed(transferId))
             } catch (_: TransferPausedException) {
@@ -572,6 +605,44 @@ private class AndroidTransferClient(
                 requestedStop = null
             }
         }
+    }
+
+    private fun sendLegacyTransfer(
+        target: SendDevice,
+        request: SendTransferRequest,
+        totalCompletedBeforeTarget: Long,
+        totalBytes: Long,
+        transferId: String,
+        callback: (SendTransferEvent) -> Unit,
+    ): Long {
+        val host = requireNotNull(target.host) { "目标设备缺少地址" }
+        val port = requireNotNull(target.port) { "目标设备缺少端口" }
+        var targetCompletedBytes = 0L
+        Socket().use { socket ->
+            activeSocket = socket
+            socket.connect(InetSocketAddress(host, port), 5_000)
+            DataOutputStream(BufferedOutputStream(socket.getOutputStream())).use { output ->
+                writeTransferHeader(output, request)
+                request.items.forEach { item ->
+                    ensureNotStopped()
+                    context.contentResolver.openInputStream(Uri.parse(item.sourceUri)).use { input ->
+                        requireNotNull(input) { "无法读取 ${item.displayName}" }
+                        val copied = copyWithProgress(
+                            input = input,
+                            output = output,
+                            totalCompletedBeforeFile = totalCompletedBeforeTarget + targetCompletedBytes,
+                            totalBytes = totalBytes,
+                            transferId = transferId,
+                            callback = callback,
+                        )
+                        targetCompletedBytes += copied
+                    }
+                }
+                output.flush()
+            }
+        }
+        activeSocket = null
+        return targetCompletedBytes
     }
 
     fun pauseTransfer(transferId: String) {

@@ -83,5 +83,6 @@ dependencies {
     implementation(libs.compose.runtime)
     implementation(libs.compose.ui)
     implementation(libs.kyant.shapes)
+    testImplementation("org.json:json:20250517")
     testImplementation(kotlin("test-junit"))
 }

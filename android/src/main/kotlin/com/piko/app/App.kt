@@ -28,6 +28,7 @@ fun App(
     bottomContentPadding: Dp = 0.dp,
 ) {
     var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
+    var mediaSaveLocation by remember { mutableStateOf(ReceiveMediaSaveLocation.Folder) }
 
     PikoTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
@@ -36,6 +37,8 @@ fun App(
                 state = state,
                 onStateMutate = { transform -> state = transform(state) },
                 onResetCurrentDeviceName = onResetCurrentDeviceName,
+                mediaSaveLocation = mediaSaveLocation,
+                onMediaSaveLocationChange = { mediaSaveLocation = it },
                 sendPlatformActions = sendPlatformActions,
                 bottomContentPadding = bottomContentPadding,
             )
@@ -49,6 +52,8 @@ fun PikoTabScreen(
     state: PikoHomeState,
     onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
     onResetCurrentDeviceName: () -> Unit = {},
+    mediaSaveLocation: ReceiveMediaSaveLocation = ReceiveMediaSaveLocation.Folder,
+    onMediaSaveLocationChange: (ReceiveMediaSaveLocation) -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
@@ -72,6 +77,8 @@ fun PikoTabScreen(
         )
 
         PikoTab.Settings -> PikoSettingsScreen(
+            mediaSaveLocation = mediaSaveLocation,
+            onMediaSaveLocationChange = onMediaSaveLocationChange,
             bottomContentPadding = bottomContentPadding,
             modifier = modifier,
         )

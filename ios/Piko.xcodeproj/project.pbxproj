@@ -19,6 +19,10 @@
 		8F2E59D82C00000100A10001 /* NativeSendDeviceSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */; };
 		8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */; };
 		8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */; };
+		8F2E59DB2C00000100A10001 /* NativeLocalSendProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */; };
+		8F2E59DC2C00000100A10001 /* NativeHttpMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */; };
+		8F2E59DD2C00000100A10001 /* NativeLocalSendMulticast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */; };
+		8F2E59DE2C00000100A10001 /* NativeLocalSendListenerFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +40,10 @@
 		8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendDeviceSection.swift; sourceTree = "<group>"; };
 		8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendItemSection.swift; sourceTree = "<group>"; };
 		8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendTransferSection.swift; sourceTree = "<group>"; };
+		8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendProtocol.swift; sourceTree = "<group>"; };
+		8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHttpMessage.swift; sourceTree = "<group>"; };
+		8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendMulticast.swift; sourceTree = "<group>"; };
+		8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendListenerFactory.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -78,6 +86,10 @@
 				8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */,
 				8F2E59C32C00000100A10001 /* NativeSettingsView.swift */,
 				8F2E59C42C00000100A10001 /* NativePikoModel.swift */,
+				8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */,
+				8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */,
+				8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */,
+				8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */,
 				8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */,
 				8F2E59C62C00000100A10001 /* NativePickers.swift */,
 				8F2E59C72C00000100A10001 /* PikoStyle.swift */,
@@ -162,6 +174,10 @@
 				8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */,
 				8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */,
 				8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */,
+				8F2E59DB2C00000100A10001 /* NativeLocalSendProtocol.swift in Sources */,
+				8F2E59DC2C00000100A10001 /* NativeHttpMessage.swift in Sources */,
+				8F2E59DD2C00000100A10001 /* NativeLocalSendMulticast.swift in Sources */,
+				8F2E59DE2C00000100A10001 /* NativeLocalSendListenerFactory.swift in Sources */,
 				8F2E59D52C00000100A10001 /* NativeTransferProtocol.swift in Sources */,
 				8F2E59D62C00000100A10001 /* NativePickers.swift in Sources */,
 				8F2E59D72C00000100A10001 /* PikoStyle.swift in Sources */,

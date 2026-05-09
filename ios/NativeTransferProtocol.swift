@@ -1,7 +1,7 @@
 import Foundation
 
 enum NativeTransferProtocol {
-    private static let magic = Data([0x50, 0x49, 0x4B, 0x4F])
+    static let magic = Data([0x50, 0x49, 0x4B, 0x4F])
     private static let version = 2
 
     static func encodeHeader(items: [NativeTransferItem], senderName: String) -> Data {
@@ -125,6 +125,10 @@ struct NativeTransferEnvelope {
 }
 
 extension Data {
+    mutating func append(_ string: String) {
+        append(Data(string.utf8))
+    }
+
     mutating func appendInt32(_ value: Int) {
         append(contentsOf: [
             UInt8((value >> 24) & 0xFF),

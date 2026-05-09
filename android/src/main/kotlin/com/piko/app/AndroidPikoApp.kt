@@ -43,11 +43,18 @@ fun AndroidPikoApp() {
     val nicknameRepository = remember(appContext) {
         DeviceNicknameRepository(AndroidDeviceNicknameStorage(appContext))
     }
+    val receivePreferences = remember(appContext) {
+        AndroidReceivePreferences(appContext)
+    }
     var currentNickname by remember(nicknameRepository) { mutableStateOf(nicknameRepository.loadOrCreate()) }
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
     var state by remember { mutableStateOf(PikoHomeState.initial(currentNickname.fullName)) }
+    var mediaSaveLocation by remember {
+        mutableStateOf(receivePreferences.loadMediaSaveLocation())
+    }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
         currentNickname = currentNickname,
+        mediaSaveLocation = mediaSaveLocation,
         onReceiveTransferEvent = { event ->
             state = state.applyReceiveTransferEvent(event)
         },
@@ -73,6 +80,11 @@ fun AndroidPikoApp() {
                     onResetCurrentDeviceName = {
                         currentNickname = nicknameRepository.regenerate()
                         state = state.copy(currentDeviceName = currentNickname.fullName)
+                    },
+                    mediaSaveLocation = mediaSaveLocation,
+                    onMediaSaveLocationChange = { location ->
+                        mediaSaveLocation = location
+                        receivePreferences.saveMediaSaveLocation(location)
                     },
                     sendPlatformActions = sendPlatformActions,
                     bottomContentPadding = 104.dp,

@@ -6,6 +6,8 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>用于在发送页显示最近图片并选择需要传输的图片。</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>用于将接收到的图片和视频保存到相册。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>用于发现同一局域网内可接收文件的 Piko 设备。</string>
 	<key>NSBonjourServices</key>

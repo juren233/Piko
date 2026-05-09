@@ -97,14 +97,10 @@ mkdir -p "$ARTIFACT_ROOT"
 cd "$REPO_ROOT"
 
 sdk_version="$(xcrun --sdk iphoneos --show-sdk-version)"
-case "$sdk_version" in
-  26.5*)
-    ;;
-  *)
-    echo "iOS unsigned artifacts 必须使用 iOS 26.5 SDK，当前为：$sdk_version。" >&2
-    exit 1
-    ;;
-esac
+if [[ -z "$sdk_version" ]]; then
+  echo "未找到可用的 iPhoneOS SDK。" >&2
+  exit 1
+fi
 
 echo "::group::iOS 构建配置"
 echo "variants=$variants"
