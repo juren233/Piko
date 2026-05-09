@@ -36,20 +36,36 @@ private struct NativeDeviceNicknameBanner: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(uiImage: LucideTabIcon.inbox.image)
+            Image(uiImage: LucideTabIcon.smartphone.image)
                 .resizable()
                 .frame(width: 22, height: 22)
                 .foregroundStyle(PikoPalette.accent)
-            Text("本设备名称：\(nickname)")
-                .font(.subheadline)
-                .lineLimit(1)
-            Spacer()
-            Button("换个昵称", action: onReset)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(nickname)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(2)
+                Text("本设备名称")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+            Button(action: onReset) {
+                HStack(spacing: 6) {
+                    Image(uiImage: LucideTabIcon.refreshCw.image)
+                        .resizable()
+                        .frame(width: 15, height: 15)
+                    Text("换个昵称")
+                        .lineLimit(1)
+                }
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(PikoPalette.accent)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
                 .background(PikoPalette.accent.opacity(0.1), in: Capsule())
+            }
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)

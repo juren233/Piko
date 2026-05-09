@@ -51,7 +51,7 @@ fun AndroidPikoApp() {
     )
     val backdrop = rememberLayerBackdrop()
 
-    MaterialTheme {
+    PikoTheme {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -158,9 +158,9 @@ fun AndroidPikoApp() {
 @Composable
 private fun SystemNavigationBackdrop(modifier: Modifier = Modifier) {
     val baseColor = if (isSystemInDarkTheme()) {
-        Color(0xFF121212)
+        IOS_SYSTEM_BACKGROUND_DARK
     } else {
-        Color(0xFFFAFAFA)
+        IOS_SYSTEM_BACKGROUND_LIGHT
     }
 
     Box(

@@ -1,7 +1,6 @@
 package com.piko.app
 
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -30,7 +29,7 @@ fun App(
 ) {
     var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
 
-    MaterialTheme {
+    PikoTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             PikoTabScreen(
                 tab = tab,

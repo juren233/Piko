@@ -39,6 +39,62 @@ internal val LucideInboxIcon: ImageVector = ImageVector.Builder(
     }
 }.build()
 
+internal val LucideSmartphoneIcon: ImageVector = ImageVector.Builder(
+    name = "LucideSmartphone",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    lucidePath {
+        moveTo(7f, 2f)
+        horizontalLineToRelative(10f)
+        arcToRelative(2f, 2f, 0f, false, true, 2f, 2f)
+        verticalLineToRelative(16f)
+        arcToRelative(2f, 2f, 0f, false, true, -2f, 2f)
+        horizontalLineTo(7f)
+        arcToRelative(2f, 2f, 0f, false, true, -2f, -2f)
+        verticalLineTo(4f)
+        arcToRelative(2f, 2f, 0f, false, true, 2f, -2f)
+        close()
+    }
+    lucidePath {
+        moveTo(12f, 18f)
+        horizontalLineToRelative(0.01f)
+    }
+}.build()
+
+internal val LucideRefreshCwIcon: ImageVector = ImageVector.Builder(
+    name = "LucideRefreshCw",
+    defaultWidth = 24.dp,
+    defaultHeight = 24.dp,
+    viewportWidth = 24f,
+    viewportHeight = 24f,
+).apply {
+    lucidePath {
+        moveTo(3f, 12f)
+        arcToRelative(9f, 9f, 0f, false, true, 9f, -9f)
+        arcToRelative(9.75f, 9.75f, 0f, false, true, 6.74f, 2.74f)
+        lineTo(21f, 8f)
+    }
+    lucidePath {
+        moveTo(21f, 3f)
+        verticalLineToRelative(5f)
+        horizontalLineToRelative(-5f)
+    }
+    lucidePath {
+        moveTo(21f, 12f)
+        arcToRelative(9f, 9f, 0f, false, true, -9f, 9f)
+        arcToRelative(9.75f, 9.75f, 0f, false, true, -6.74f, -2.74f)
+        lineTo(3f, 16f)
+    }
+    lucidePath {
+        moveTo(8f, 16f)
+        horizontalLineTo(3f)
+        verticalLineToRelative(5f)
+    }
+}.build()
+
 internal val LucideCheckIcon: ImageVector = ImageVector.Builder(
     name = "LucideCheck",
     defaultWidth = 24.dp,

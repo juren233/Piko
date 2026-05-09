@@ -103,31 +103,53 @@ private fun CurrentDeviceNicknameBanner(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            imageVector = LucideInboxIcon,
+            imageVector = LucideSmartphoneIcon,
             contentDescription = null,
             modifier = Modifier.size(22.dp),
             tint = MaterialTheme.colorScheme.primary,
         )
-        Text(
-            text = "本设备名称：$nickname",
+        Column(
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            text = "换个昵称",
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = nickname,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "本设备名称",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        Row(
             modifier = Modifier
                 .clip(CircleShape)
                 .clickable(onClick = onReset)
                 .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f))
                 .padding(horizontal = 12.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-        )
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = LucideRefreshCwIcon,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+            Text(
+                text = "换个昵称",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
+        }
     }
 }
 

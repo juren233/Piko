@@ -31,6 +31,30 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun androidUsesFixedIosPaletteInsteadOfDynamicSystemColors() {
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoTheme.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
+        val sharedApp = File(rootDir, "android/src/main/kotlin/com/piko/app/App.kt").readText()
+        val bottomTabs = File(rootDir, "android/src/main/kotlin/com/piko/app/glass/LiquidBottomTabs.kt").readText()
+        val iosStyle = readIos("PikoStyle.swift")
+
+        assertTrue("UIColor.systemBackground" in iosStyle)
+        assertTrue("UIColor.secondarySystemBackground" in iosStyle)
+        assertTrue("UIColor.systemBlue" in iosStyle)
+        assertTrue("IOS_SYSTEM_BLUE_LIGHT = Color(0xFF007AFF)" in androidTheme)
+        assertTrue("IOS_SYSTEM_BLUE_DARK = Color(0xFF0A84FF)" in androidTheme)
+        assertTrue("IOS_SECONDARY_SYSTEM_BACKGROUND_LIGHT = Color(0xFFF2F2F7)" in androidTheme)
+        assertTrue("IOS_SECONDARY_SYSTEM_BACKGROUND_DARK = Color(0xFF1C1C1E)" in androidTheme)
+        assertTrue("PikoTheme {" in androidApp)
+        assertTrue("PikoTheme {" in sharedApp)
+        assertTrue("PikoColors.accent" in bottomTabs)
+        assertFalse("dynamicLightColorScheme" in androidTheme + androidApp + sharedApp)
+        assertFalse("dynamicDarkColorScheme" in androidTheme + androidApp + sharedApp)
+        assertFalse("Color(0xFF0088FF)" in bottomTabs)
+        assertFalse("Color(0xFF0091FF)" in bottomTabs)
+    }
+
+    @Test
     fun iosContentIconsStayLucideSourcedLikeAndroid() {
         val style = readIos("PikoStyle.swift")
         val receiveView = readIos("NativeReceiveView.swift")
@@ -45,9 +69,13 @@ class IosAndroidUiParityTest {
         assertTrue("case plus" in style)
         assertTrue("case x" in style)
         assertTrue("case check" in style)
+        assertTrue("case smartphone" in style)
+        assertTrue("case refreshCw" in style)
+        assertTrue("M7,2h10a2,2 0,0 1,2 2v16a2,2 0,0 1,-2 2H7a2,2 0,0 1,-2 -2V4a2,2 0,0 1,2 -2z" in style)
+        assertTrue("M3,12a9,9 0,0 1,9 -9 9.75,9.75 0,0 1,6.74 2.74L21,8" in style)
 
         val iosContent = receiveView + sendItemSection + sendDeviceSection + transferSection
-        listOf("inbox", "file", "image", "plus", "x", "check").forEach { name ->
+        listOf("inbox", "file", "image", "plus", "x", "check", "smartphone", "refreshCw").forEach { name ->
             assertTrue("LucideTabIcon.$name.image" in iosContent)
         }
         assertFalse("Image(systemName: \"tray" in iosContent)
@@ -94,9 +122,17 @@ class IosAndroidUiParityTest {
         assertFalse("CODE_SIGN_ENTITLEMENTS = Piko.entitlements;" in iosProject)
         assertFalse("Settings.Global.DEVICE_NAME" in androidApp)
         assertFalse("Build.MODEL" in androidApp)
-        assertTrue("本设备名称：" in androidReceive)
+        assertTrue("LucideSmartphoneIcon" in androidReceive)
+        assertTrue("LucideRefreshCwIcon" in androidReceive)
+        assertTrue("text = nickname" in androidReceive)
+        assertTrue("text = \"本设备名称\"" in androidReceive)
         assertTrue("换个昵称" in androidReceive)
-        assertTrue("本设备名称：" in iosReceive)
+        assertTrue("LucideTabIcon.smartphone.image" in iosReceive)
+        assertTrue("LucideTabIcon.refreshCw.image" in iosReceive)
+        assertTrue("Text(nickname)" in iosReceive)
+        assertTrue("Text(\"本设备名称\")" in iosReceive)
+        assertFalse("Image(uiImage: LucideTabIcon.inbox.image)" in iosReceive.substringBefore("private struct NativeReceiveEmptyState"))
+        assertFalse("Image(systemName:" in iosReceive)
         assertTrue("换个昵称" in iosReceive)
         assertTrue("subtitle = nickname.code" in androidDiscovery)
         assertFalse("subtitle = resolvedService.host?.hostAddress" in androidDiscovery)

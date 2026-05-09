@@ -48,6 +48,7 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
+import com.piko.app.PikoColors
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
@@ -64,12 +65,8 @@ fun LiquidBottomTabs(
     content: @Composable RowScope.() -> Unit,
 ) {
     val isLightTheme = !isSystemInDarkTheme()
-    val accentColor =
-        if (isLightTheme) Color(0xFF0088FF)
-        else Color(0xFF0091FF)
-    val containerColor =
-        if (isLightTheme) Color(0xFFFAFAFA).copy(0.4f)
-        else Color(0xFF121212).copy(0.4f)
+    val accentColor = PikoColors.accent(!isLightTheme)
+    val containerColor = PikoColors.background(!isLightTheme).copy(0.4f)
 
     val tabsBackdrop = rememberLayerBackdrop()
 
