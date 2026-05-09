@@ -12,6 +12,7 @@ struct PikoIOSApp: App {
 
                 TabView {
                     ComposeView(tabName: "Receive")
+                        .ignoresSafeArea(.container, edges: .bottom)
                         .tabItem {
                             Label {
                                 Text("接收")
@@ -21,6 +22,7 @@ struct PikoIOSApp: App {
                         }
 
                     SendTabView()
+                        .ignoresSafeArea(.container, edges: .bottom)
                         .tabItem {
                             Label {
                                 Text("发送")
@@ -30,6 +32,7 @@ struct PikoIOSApp: App {
                         }
 
                     ComposeView(tabName: "Settings")
+                        .ignoresSafeArea(.container, edges: .bottom)
                         .tabItem {
                             Label {
                                 Text("设置")
@@ -94,6 +97,8 @@ struct ComposeView: UIViewControllerRepresentable {
         )
         controller.view.backgroundColor = .clear
         controller.view.isOpaque = false
+        controller.edgesForExtendedLayout = .all
+        controller.extendedLayoutIncludesOpaqueBars = true
         return controller
     }
 
