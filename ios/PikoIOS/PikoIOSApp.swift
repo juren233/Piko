@@ -4,15 +4,11 @@ import UIKit
 
 @main
 struct PikoIOSApp: App {
-    init() {
-        configureTabBarAppearance()
-    }
-
     var body: some Scene {
         WindowGroup {
             ZStack {
                 PikoIOSPalette.surface
-                    .ignoresSafeArea()
+                    .ignoresSafeArea(edges: .top)
 
                 TabView {
                     ComposeView(tabName: "Receive")
@@ -43,7 +39,6 @@ struct PikoIOSApp: App {
                         }
                 }
                 .tint(PikoIOSPalette.accent)
-                .background(PikoIOSPalette.surface.ignoresSafeArea())
             }
         }
     }
@@ -97,8 +92,8 @@ struct ComposeView: UIViewControllerRepresentable {
             tabName: tabName,
             sendOverlayController: sendOverlayController
         )
-        controller.view.backgroundColor = PikoIOSPalette.surfaceUIColor
-        controller.view.isOpaque = true
+        controller.view.backgroundColor = .clear
+        controller.view.isOpaque = false
         return controller
     }
 
@@ -107,7 +102,6 @@ struct ComposeView: UIViewControllerRepresentable {
 
 private enum PikoIOSPalette {
     static let surfaceUIColor = UIColor(red: 255 / 255, green: 251 / 255, blue: 254 / 255, alpha: 1)
-    static let tabBarUIColor = UIColor.white
     static let accentUIColor = UIColor(red: 103 / 255, green: 80 / 255, blue: 164 / 255, alpha: 1)
 
     static var surface: Color {
@@ -117,18 +111,6 @@ private enum PikoIOSPalette {
     static var accent: Color {
         Color(uiColor: accentUIColor)
     }
-}
-
-private func configureTabBarAppearance() {
-    let appearance = UITabBarAppearance()
-    appearance.configureWithDefaultBackground()
-    appearance.backgroundColor = PikoIOSPalette.tabBarUIColor
-    appearance.shadowColor = UIColor.black.withAlphaComponent(0.08)
-
-    UITabBar.appearance().standardAppearance = appearance
-    UITabBar.appearance().scrollEdgeAppearance = appearance
-    UITabBar.appearance().tintColor = PikoIOSPalette.accentUIColor
-    UITabBar.appearance().unselectedItemTintColor = UIColor.label
 }
 
 private enum LucideTabIcon {
