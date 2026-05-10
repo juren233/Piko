@@ -4,7 +4,6 @@ import android.graphics.BitmapFactory
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,6 +16,7 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,11 +28,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,6 +57,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
 
 @Composable
@@ -343,13 +344,15 @@ private fun SwipeToDeleteReceiveHistoryCard(
     onDeleteClick: () -> Unit,
 ) {
     val deleteWidth = 96.dp
-    val deleteWidthPx = with(LocalDensity.current) { deleteWidth.toPx() }
+    val density = LocalDensity.current
+    val deleteWidthPx = with(density) { deleteWidth.toPx() }
     var dragOffset by remember { mutableFloatStateOf(0f) }
-    var targetOffset by remember { mutableFloatStateOf(0f) }
     var isDragging by remember { mutableStateOf(false) }
-    val animatedOffset by animateFloatAsState(targetValue = targetOffset, label = "receive-history-delete-offset")
-    val currentOffset = if (isDragging) dragOffset else animatedOffset
+    val currentOffset = dragOffset
     val revealFraction = (-currentOffset / deleteWidthPx).coerceIn(0f, 1f)
+    val revealedWidth = with(density) {
+        (-currentOffset).coerceIn(0f, deleteWidthPx).toDp()
+    }
 
     Box(
         modifier = Modifier
@@ -358,33 +361,37 @@ private fun SwipeToDeleteReceiveHistoryCard(
     ) {
         Box(
             modifier = Modifier
-                .matchParentSize()
-                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.28f + 0.64f * revealFraction)),
+                .matchParentSize(),
             contentAlignment = Alignment.CenterEnd,
         ) {
             Box(
                 modifier = Modifier
-                    .width(deleteWidth)
-                    .fillMaxSize()
-                    .clickable(enabled = revealFraction > 0.4f, onClick = onDeleteClick),
+                    .width(revealedWidth)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.error.copy(alpha = 0.92f))
+                    .clickable(enabled = revealFraction >= 0.96f, onClick = onDeleteClick),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = "删除",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onError,
-                    fontWeight = FontWeight.SemiBold,
-                )
+                if (revealFraction >= 0.62f) {
+                    Text(
+                        text = "删除",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onError,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
         Box(
             modifier = Modifier
                 .offset { IntOffset(currentOffset.roundToInt(), 0) }
+                .clickable(enabled = dragOffset < 0f && !isDragging) {
+                    dragOffset = 0f
+                }
                 .pointerInput(deleteWidthPx) {
                     detectHorizontalDragGestures(
                         onDragStart = {
                             isDragging = true
-                            dragOffset = targetOffset
                         },
                         onHorizontalDrag = { change, dragAmount ->
                             change.consume()
@@ -392,7 +399,7 @@ private fun SwipeToDeleteReceiveHistoryCard(
                         },
                         onDragEnd = {
                             isDragging = false
-                            targetOffset = if (dragOffset <= -deleteWidthPx * 0.42f) {
+                            dragOffset = if (dragOffset <= -deleteWidthPx * 0.42f) {
                                 -deleteWidthPx
                             } else {
                                 0f
@@ -400,7 +407,7 @@ private fun SwipeToDeleteReceiveHistoryCard(
                         },
                         onDragCancel = {
                             isDragging = false
-                            targetOffset = 0f
+                            dragOffset = 0f
                         },
                     )
                 },
@@ -418,44 +425,58 @@ private fun DeleteReceiveHistoryDialog(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(text = history.deleteConfirmationTitle)
-        },
-        text = {
-            Text(text = history.deleteConfirmationBody)
-        },
-        confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 6.dp,
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
+                Text(
+                    text = history.deleteConfirmationTitle,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = history.deleteConfirmationBody,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Row(
-                    modifier = Modifier.clickable { onDeleteReceivedFilesChange(!deleteReceivedFiles) },
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Checkbox(
-                        checked = deleteReceivedFiles,
-                        onCheckedChange = onDeleteReceivedFilesChange,
-                    )
-                    Text(
-                        text = "同时删除文件",
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                }
-                Row {
-                    TextButton(onClick = onDismiss) {
-                        Text(text = "算了")
+                    Row(
+                        modifier = Modifier.clickable { onDeleteReceivedFilesChange(!deleteReceivedFiles) },
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Checkbox(
+                            checked = deleteReceivedFiles,
+                            onCheckedChange = onDeleteReceivedFilesChange,
+                        )
+                        Text(
+                            text = "同时删除文件",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
-                    TextButton(onClick = onConfirm) {
-                        Text(text = "删除", color = MaterialTheme.colorScheme.error)
+                    Row {
+                        TextButton(onClick = onDismiss) {
+                            Text(text = "算了")
+                        }
+                        TextButton(onClick = onConfirm) {
+                            Text(text = "删除", color = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
-        },
-    )
+        }
+    }
 }
 
 @Composable

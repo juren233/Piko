@@ -149,15 +149,75 @@ private struct NativeReceiveHistoryList: View {
                     )
                 }
                 ForEach(items) { item in
-                    NativeReceiveHistoryCard(item: item)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button(role: .destructive) {
-                                onDeleteHistory(item)
-                            } label: {
-                                Text("删除")
-                            }
-                        }
+                    NativeSwipeToDeleteReceiveHistoryCard(
+                        item: item,
+                        onDelete: { onDeleteHistory(item) }
+                    )
                 }
+            }
+        }
+    }
+}
+
+private struct NativeSwipeToDeleteReceiveHistoryCard: View {
+    let item: NativeReceiveHistoryItem
+    let onDelete: () -> Void
+
+    @State private var offset: CGFloat = 0
+    @GestureState private var dragTranslation: CGFloat = 0
+
+    private let deleteWidth: CGFloat = 96
+
+    var body: some View {
+        let currentOffset = min(max(offset + dragTranslation, -deleteWidth), 0)
+        let revealFraction = min(max(-currentOffset / deleteWidth, 0), 1)
+        let revealedWidth = max(-currentOffset, 0)
+
+        ZStack(alignment: .trailing) {
+            NativeReceiveHistoryCard(item: item)
+                .hidden()
+                .overlay(alignment: .trailing) {
+                    deleteAction(revealedWidth: revealedWidth, revealFraction: revealFraction)
+                }
+
+            NativeReceiveHistoryCard(item: item)
+                .offset(x: currentOffset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if offset < 0 {
+                        offset = 0
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 10)
+                        .updating($dragTranslation) { value, state, _ in
+                            state = value.translation.width
+                        }
+                        .onEnded { value in
+                            let finalOffset = min(max(offset + value.translation.width, -deleteWidth), 0)
+                            offset = finalOffset <= -deleteWidth * 0.42 ? -deleteWidth : 0
+                        }
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private func deleteAction(revealedWidth: CGFloat, revealFraction: CGFloat) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color.red.opacity(0.92))
+            if revealFraction >= 0.62 {
+                Text("删除")
+                    .font(PikoFont.button)
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: revealedWidth)
+        .frame(maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if revealFraction >= 0.96 {
+                onDelete()
             }
         }
     }
@@ -230,7 +290,6 @@ private struct NativeDeleteReceiveHistoryDialog: View {
         }
     }
 }
-
 private struct NativeActiveReceiveCard: View {
     let transfer: NativeReceiveTransferState
     let onCancel: () -> Void
