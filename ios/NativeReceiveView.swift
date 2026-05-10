@@ -7,35 +7,50 @@ struct NativeReceiveView: View {
     @State private var deleteFailureMessage: String?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 24) {
-                PikoHeroPanel(
-                    title: "Piko",
-                    subtitle: "接收记录和本机收件箱",
-                    metric: "\(model.receiveHistory.count) 次"
-                )
-                NativeDeviceNicknameBanner(
-                    nickname: model.currentDeviceName,
-                    onReset: model.resetDeviceNickname
-                )
-                if model.receiveHistory.isEmpty && model.activeReceive == nil {
-                    NativeReceiveEmptyState()
-                } else {
-                    NativeReceiveHistoryList(
-                        activeReceive: model.activeReceive,
-                        items: model.receiveHistory,
-                        onCancelReceive: model.cancelReceiveTransfer,
-                        onDeleteHistory: { item in
-                            deleteReceivedFiles = false
-                            pendingDeleteItem = item
-                        }
+        List {
+            PikoHeroPanel(
+                title: "Piko",
+                subtitle: "接收记录和本机收件箱",
+                metric: "\(model.receiveHistory.count) 次"
+            )
+            .nativeReceiveListRow(top: 32, bottom: 24)
+
+            NativeDeviceNicknameBanner(
+                nickname: model.currentDeviceName,
+                onReset: model.resetDeviceNickname
+            )
+            .nativeReceiveListRow(bottom: 24)
+
+            if model.receiveHistory.isEmpty && model.activeReceive == nil {
+                NativeReceiveEmptyState()
+                    .nativeReceiveListRow(bottom: 136)
+            } else {
+                if let activeReceive = model.activeReceive {
+                    NativeActiveReceiveCard(
+                        transfer: activeReceive,
+                        onCancel: model.cancelReceiveTransfer
                     )
+                    .nativeReceiveListRow(bottom: 12)
                 }
+                ForEach(model.receiveHistory) { item in
+                    NativeReceiveHistoryCard(item: item)
+                        .nativeReceiveListRow(bottom: 12)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                deleteReceivedFiles = false
+                                pendingDeleteItem = item
+                            } label: {
+                                Text("删除")
+                            }
+                        }
+                }
+                Color.clear
+                    .frame(height: 112)
+                    .nativeReceiveListRow()
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 32)
-            .padding(.bottom, 136)
         }
+        .listStyle(.plain)
+        .pikoListBackgroundHidden()
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
         .overlay {
@@ -61,6 +76,24 @@ struct NativeReceiveView: View {
             set: { if !$0 { deleteFailureMessage = nil } }
         )) {
             Button("好", role: .cancel) { deleteFailureMessage = nil }
+        }
+    }
+}
+
+private extension View {
+    func nativeReceiveListRow(top: CGFloat = 0, bottom: CGFloat = 0) -> some View {
+        self
+            .listRowInsets(EdgeInsets(top: top, leading: 24, bottom: bottom, trailing: 24))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+
+    @ViewBuilder
+    func pikoListBackgroundHidden() -> some View {
+        if #available(iOS 16.0, *) {
+            self.scrollContentBackground(.hidden)
+        } else {
+            self
         }
     }
 }
@@ -129,96 +162,6 @@ private struct NativeReceiveEmptyState: View {
                         .frame(width: 38, height: 38)
                         .foregroundStyle(.secondary.opacity(0.78))
                 }
-        }
-    }
-}
-
-private struct NativeReceiveHistoryList: View {
-    let activeReceive: NativeReceiveTransferState?
-    let items: [NativeReceiveHistoryItem]
-    let onCancelReceive: () -> Void
-    let onDeleteHistory: (NativeReceiveHistoryItem) -> Void
-
-    var body: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 12) {
-                if let activeReceive {
-                    NativeActiveReceiveCard(
-                        transfer: activeReceive,
-                        onCancel: onCancelReceive
-                    )
-                }
-                ForEach(items) { item in
-                    NativeSwipeToDeleteReceiveHistoryCard(
-                        item: item,
-                        onDelete: { onDeleteHistory(item) }
-                    )
-                }
-            }
-        }
-    }
-}
-
-private struct NativeSwipeToDeleteReceiveHistoryCard: View {
-    let item: NativeReceiveHistoryItem
-    let onDelete: () -> Void
-
-    @State private var offset: CGFloat = 0
-    @GestureState private var dragTranslation: CGFloat = 0
-
-    private let deleteWidth: CGFloat = 96
-
-    var body: some View {
-        let currentOffset = min(max(offset + dragTranslation, -deleteWidth), 0)
-        let revealFraction = min(max(-currentOffset / deleteWidth, 0), 1)
-        let revealedWidth = max(-currentOffset, 0)
-
-        ZStack(alignment: .trailing) {
-            NativeReceiveHistoryCard(item: item)
-                .hidden()
-                .overlay(alignment: .trailing) {
-                    deleteAction(revealedWidth: revealedWidth, revealFraction: revealFraction)
-                }
-
-            NativeReceiveHistoryCard(item: item)
-                .offset(x: currentOffset)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if offset < 0 {
-                        offset = 0
-                    }
-                }
-                .gesture(
-                    DragGesture(minimumDistance: 10)
-                        .updating($dragTranslation) { value, state, _ in
-                            state = value.translation.width
-                        }
-                        .onEnded { value in
-                            let finalOffset = min(max(offset + value.translation.width, -deleteWidth), 0)
-                            offset = finalOffset <= -deleteWidth * 0.42 ? -deleteWidth : 0
-                        }
-                )
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private func deleteAction(revealedWidth: CGFloat, revealFraction: CGFloat) -> some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.red.opacity(0.92))
-            if revealFraction >= 0.62 {
-                Text("删除")
-                    .font(PikoFont.button)
-                    .foregroundStyle(.white)
-            }
-        }
-        .frame(width: revealedWidth)
-        .frame(maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            if revealFraction >= 0.96 {
-                onDelete()
-            }
         }
     }
 }

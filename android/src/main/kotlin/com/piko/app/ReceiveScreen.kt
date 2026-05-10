@@ -350,8 +350,8 @@ private fun SwipeToDeleteReceiveHistoryCard(
     var isDragging by remember { mutableStateOf(false) }
     val currentOffset = dragOffset
     val revealFraction = (-currentOffset / deleteWidthPx).coerceIn(0f, 1f)
-    val revealedWidth = with(density) {
-        (-currentOffset).coerceIn(0f, deleteWidthPx).toDp()
+    val deleteButtonOffset = with(density) {
+        (deleteWidthPx + currentOffset).coerceIn(0f, deleteWidthPx).toDp()
     }
 
     Box(
@@ -366,20 +366,20 @@ private fun SwipeToDeleteReceiveHistoryCard(
         ) {
             Box(
                 modifier = Modifier
-                    .width(revealedWidth)
+                    .offset(x = deleteButtonOffset)
+                    .width(deleteWidth)
                     .fillMaxHeight()
+                    .clip(RoundedCornerShape(20.dp))
                     .background(MaterialTheme.colorScheme.error.copy(alpha = 0.92f))
                     .clickable(enabled = revealFraction >= 0.96f, onClick = onDeleteClick),
                 contentAlignment = Alignment.Center,
             ) {
-                if (revealFraction >= 0.62f) {
-                    Text(
-                        text = "删除",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onError,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                }
+                Text(
+                    text = "删除",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onError.copy(alpha = revealFraction),
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
         }
         Box(
