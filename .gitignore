@@ -1,6 +1,6 @@
 docs/
 .trae/
-task/
+tasks/
 
 # Android
 .gradle/
