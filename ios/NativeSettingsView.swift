@@ -15,8 +15,10 @@ struct NativeSettingsView: View {
                     NativeSettingsRow(title: "自动接收", value: "可信设备")
                     VStack(alignment: .leading, spacing: 10) {
                         Text("图片视频保存位置")
-                            .font(.subheadline)
+                            .font(PikoFont.rowSubtitle)
                             .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
                         Picker(
                             "图片视频保存位置",
                             selection: Binding(
@@ -53,12 +55,16 @@ private struct NativeSettingsRow: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.subheadline)
+                .font(PikoFont.rowSubtitle)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
             Spacer()
             Text(value)
-                .font(.title3.weight(.semibold))
+                .font(PikoFont.settingsValue)
                 .lineLimit(1)
+                .minimumScaleFactor(0.88)
+                .truncationMode(.tail)
         }
         .padding(.vertical, 6)
     }

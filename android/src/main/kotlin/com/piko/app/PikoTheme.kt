@@ -3,10 +3,14 @@ package com.piko.app
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.TextUnit
 
 internal val IOS_SYSTEM_BLUE_LIGHT = Color(0xFF007AFF)
 internal val IOS_SYSTEM_BLUE_DARK = Color(0xFF0A84FF)
@@ -29,6 +33,25 @@ internal object PikoColors {
         if (isDarkTheme) IOS_SYSTEM_BLUE_DARK else IOS_SYSTEM_BLUE_LIGHT
 }
 
+internal object PikoTypography {
+    @Composable
+    fun current(base: Typography = MaterialTheme.typography): Typography {
+        val widthDp = LocalConfiguration.current.screenWidthDp
+        val textScale = when {
+            widthDp <= 375 -> PikoScreenTextScale.Compact
+            widthDp >= 430 -> PikoScreenTextScale.Expanded
+            else -> PikoScreenTextScale.Regular
+        }
+        return base.scaled(textScale.factor)
+    }
+}
+
+private enum class PikoScreenTextScale(val factor: Float) {
+    Compact(0.92f),
+    Regular(1f),
+    Expanded(1.06f),
+}
+
 @Composable
 internal fun PikoTheme(
     isDarkTheme: Boolean = isSystemInDarkTheme(),
@@ -36,9 +59,47 @@ internal fun PikoTheme(
 ) {
     MaterialTheme(
         colorScheme = pikoColorScheme(isDarkTheme),
-        typography = MaterialTheme.typography,
+        typography = PikoTypography.current(),
         content = content,
     )
+}
+
+private fun Typography.scaled(factor: Float): Typography {
+    if (factor == 1f) {
+        return this
+    }
+    return copy(
+        displayLarge = displayLarge.scaled(factor),
+        displayMedium = displayMedium.scaled(factor),
+        displaySmall = displaySmall.scaled(factor),
+        headlineLarge = headlineLarge.scaled(factor),
+        headlineMedium = headlineMedium.scaled(factor),
+        headlineSmall = headlineSmall.scaled(factor),
+        titleLarge = titleLarge.scaled(factor),
+        titleMedium = titleMedium.scaled(factor),
+        titleSmall = titleSmall.scaled(factor),
+        bodyLarge = bodyLarge.scaled(factor),
+        bodyMedium = bodyMedium.scaled(factor),
+        bodySmall = bodySmall.scaled(factor),
+        labelLarge = labelLarge.scaled(factor),
+        labelMedium = labelMedium.scaled(factor),
+        labelSmall = labelSmall.scaled(factor),
+    )
+}
+
+private fun TextStyle.scaled(factor: Float): TextStyle {
+    return copy(
+        fontSize = fontSize.scaled(factor),
+        lineHeight = lineHeight.scaled(factor),
+    )
+}
+
+private fun TextUnit.scaled(factor: Float): TextUnit {
+    return if (this == TextUnit.Unspecified) {
+        this
+    } else {
+        this * factor
+    }
 }
 
 private fun pikoColorScheme(isDarkTheme: Boolean): ColorScheme {

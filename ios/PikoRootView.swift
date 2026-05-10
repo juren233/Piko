@@ -15,6 +15,10 @@ struct PikoRootView: View {
                     .tabItem {
                         Label {
                             Text("接收")
+                                .font(PikoFont.tabLabel)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.88)
+                                .truncationMode(.tail)
                         } icon: {
                             Image(uiImage: LucideTabIcon.download.image)
                         }
@@ -25,6 +29,10 @@ struct PikoRootView: View {
                     .tabItem {
                         Label {
                             Text("发送")
+                                .font(PikoFont.tabLabel)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.88)
+                                .truncationMode(.tail)
                         } icon: {
                             Image(uiImage: LucideTabIcon.send.image)
                         }
@@ -35,6 +43,10 @@ struct PikoRootView: View {
                     .tabItem {
                         Label {
                             Text("设置")
+                                .font(PikoFont.tabLabel)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.88)
+                                .truncationMode(.tail)
                         } icon: {
                             Image(uiImage: LucideTabIcon.settings.image)
                         }

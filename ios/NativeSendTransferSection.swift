@@ -17,11 +17,15 @@ struct NativeTransferSection: View {
                     }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(model.transferTitle)
-                        .font(.title3.weight(.semibold))
+                        .font(PikoFont.rowTitle)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+                        .truncationMode(.tail)
                     Text(model.transferSubtitle)
-                        .font(.caption)
+                        .font(PikoFont.compactSubtitle)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Spacer()
                 Button(action: model.pauseTransfer) {
@@ -68,7 +72,10 @@ struct NativeFloatingSendButton: View {
                     .resizable()
                     .frame(width: 21, height: 21)
                 Text("发送")
-                    .font(.title3.weight(.semibold))
+                    .font(PikoFont.floatingAction)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
             }
                 .padding(.horizontal, 26)
                 .frame(height: 58)

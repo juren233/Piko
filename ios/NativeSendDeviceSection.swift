@@ -19,7 +19,7 @@ struct NativeDeviceSection: View {
             if devices.isEmpty {
                 PikoEmptyPlane(text: emptyText ?? "暂无设备") {
                     Text("· · ·")
-                        .font(.title2.weight(.bold))
+                        .font(PikoFont.emptyDots)
                         .foregroundStyle(.secondary)
                 }
             } else {
@@ -56,7 +56,7 @@ private struct NativeDeviceRow: View {
                                 .stroke(selected ? PikoPalette.accent.opacity(0.38) : Color.secondary.opacity(0.24), lineWidth: 1)
                         )
                     Text(String(device.name.prefix(1)))
-                        .font(.headline.weight(.semibold))
+                        .font(PikoFont.deviceInitial)
                         .foregroundStyle(selected ? PikoPalette.accent : .secondary)
                     if selected {
                         Image(uiImage: LucideTabIcon.check.image)
@@ -70,13 +70,16 @@ private struct NativeDeviceRow: View {
                 }
                 .frame(width: 56, height: 56)
                 Text(device.name)
-                    .font(.caption.weight(.medium))
+                    .font(PikoFont.compactSubtitle)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 if let subtitle = device.subtitle {
                     Text(subtitle)
-                        .font(.caption2)
+                        .font(PikoFont.badge)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                        .truncationMode(.tail)
                 }
             }
             .frame(width: 88)

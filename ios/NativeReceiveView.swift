@@ -46,12 +46,15 @@ private struct NativeDeviceNicknameBanner: View {
                 .foregroundStyle(PikoPalette.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(nickname)
-                    .font(.subheadline.weight(.semibold))
+                    .font(PikoFont.compactTitle)
                     .lineLimit(2)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 Text("本设备名称")
-                    .font(.caption.weight(.medium))
+                    .font(PikoFont.compactSubtitle)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .layoutPriority(1)
@@ -62,8 +65,10 @@ private struct NativeDeviceNicknameBanner: View {
                         .frame(width: 15, height: 15)
                     Text("换个昵称")
                         .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+                        .truncationMode(.tail)
                 }
-                .font(.caption.weight(.semibold))
+                .font(PikoFont.button)
                 .foregroundStyle(PikoPalette.accent)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 6)
@@ -128,12 +133,15 @@ private struct NativeActiveReceiveCard: View {
             NativeActiveReceiveProgressIcon(transfer: transfer)
             VStack(alignment: .leading, spacing: 4) {
                 Text(transfer.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(PikoFont.compactTitle)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 Text(transfer.subtitle)
-                    .font(.subheadline)
+                    .font(PikoFont.rowSubtitle)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer()
             Button(action: onCancel) {
@@ -187,12 +195,15 @@ private struct NativeReceiveHistoryCard: View {
             NativeReceiveHistoryPreview(item: item)
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.title)
-                    .font(.title3.weight(.semibold))
+                    .font(PikoFont.rowTitle)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 Text(item.subtitle)
-                    .font(.subheadline)
+                    .font(PikoFont.rowSubtitle)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer()
             Image(uiImage: LucideTabIcon.chevronRight.image)
@@ -233,7 +244,7 @@ private struct NativeFileTypePreview: View {
             .frame(width: 60, height: 60)
             .overlay {
                 Text(fileType.previewLabel)
-                    .font(.caption.weight(.bold))
+                    .font(PikoFont.previewLabel)
                     .foregroundStyle(.primary)
             }
     }
@@ -278,7 +289,7 @@ private struct NativeMultiFilePreview: View {
             NativeLayeredPreviewCard(label: fileType.previewLabel)
             .frame(width: 47, height: 47)
             Text("+\(count - 1)")
-                .font(.caption2.weight(.semibold))
+                .font(PikoFont.badge)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
                 .background(PikoPalette.surface.opacity(0.92), in: Capsule())
@@ -297,7 +308,7 @@ private struct NativeLayeredPreviewCard: View {
             .overlay {
                 if let label = label {
                     Text(label)
-                        .font(.caption.weight(.bold))
+                        .font(PikoFont.previewLabel)
                 }
             }
     }

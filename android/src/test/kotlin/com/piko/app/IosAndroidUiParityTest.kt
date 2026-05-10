@@ -192,7 +192,7 @@ class IosAndroidUiParityTest {
         assertTrue("RoundedRectProgressIndicator" in androidReceive)
         assertTrue("RoundedRectangle(cornerRadius: 18, style: .continuous)\n                .trim" in iosReceive)
         assertTrue("style = MaterialTheme.typography.bodyLarge" in androidReceive)
-        assertTrue(".font(.subheadline.weight(.semibold))" in iosReceive)
+        assertTrue(".font(PikoFont.compactTitle)" in iosReceive)
         assertTrue(".offset(x = (-8).dp)" in androidReceive)
         assertTrue(".offset(x: -8)" in iosReceive)
         assertTrue("mediaPreviewDescription" in androidState)
@@ -221,6 +221,52 @@ class IosAndroidUiParityTest {
         assertTrue("NativeReceiveHistoryStore.save(receiveHistory)" in iosModel)
         assertTrue("FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]" in iosModel)
         assertFalse(".appendingPathComponent(\"Piko\", isDirectory: true)" in iosModel)
+    }
+
+    @Test
+    fun appTextUsesAdaptiveTypographyForSmallAndLargeScreens() {
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoTheme.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
+        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/SettingsScreen.kt").readText()
+        val iosStyle = readIos("PikoStyle.swift")
+        val iosRoot = readIos("PikoRootView.swift")
+        val iosReceive = readIos("NativeReceiveView.swift")
+        val iosSendTransfer = readIos("NativeSendTransferSection.swift")
+        val iosSendDevice = readIos("NativeSendDeviceSection.swift")
+        val iosSendItem = readIos("NativeSendItemSection.swift")
+        val iosSettings = readIos("NativeSettingsView.swift")
+        val iosAppText = iosRoot + iosReceive + iosSendTransfer + iosSendDevice + iosSendItem + iosSettings
+
+        assertTrue("internal object PikoTypography" in androidTheme)
+        assertTrue("LocalConfiguration.current.screenWidthDp" in androidTheme)
+        assertTrue("widthDp <= 375 -> PikoScreenTextScale.Compact" in androidTheme)
+        assertTrue("widthDp >= 430 -> PikoScreenTextScale.Expanded" in androidTheme)
+        assertTrue("Compact(0.92f)" in androidTheme)
+        assertTrue("Expanded(1.06f)" in androidTheme)
+        assertTrue("typography = PikoTypography.current()" in androidTheme)
+        assertFalse("typography = MaterialTheme.typography" in androidTheme)
+        assertTrue("maxLines = 1" in androidApp)
+        assertTrue("overflow = TextOverflow.Ellipsis" in androidApp)
+        assertTrue("maxLines = 1" in androidSettings)
+        assertTrue("overflow = TextOverflow.Ellipsis" in androidSettings)
+
+        assertTrue("enum PikoFont" in iosStyle)
+        assertTrue("UIScreen.main.bounds" in iosStyle)
+        assertTrue("case compact" in iosStyle)
+        assertTrue("case regular" in iosStyle)
+        assertTrue("case expanded" in iosStyle)
+        assertTrue("compact: return 0.92" in iosStyle)
+        assertTrue("expanded: return 1.06" in iosStyle)
+        assertTrue("static var pageTitle" in iosStyle)
+        assertTrue("static var rowTitle" in iosStyle)
+        assertTrue("static var pill" in iosStyle)
+        assertTrue("static var tabLabel" in iosStyle)
+        assertFalse(".font(.largeTitle" in iosStyle)
+        assertFalse(".font(.title3" in iosAppText)
+        assertTrue(".font(PikoFont.tabLabel)" in iosRoot)
+        assertTrue(".font(PikoFont.rowTitle)" in iosReceive)
+        assertTrue(".minimumScaleFactor(0.88)" in iosAppText)
+        assertTrue(".truncationMode(.tail)" in iosAppText)
     }
 
     private fun readIos(name: String): String =

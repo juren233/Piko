@@ -23,6 +23,63 @@ enum PikoPalette {
     }
 }
 
+enum PikoFont {
+    private enum ScreenTextScale {
+        case compact
+        case regular
+        case expanded
+
+        var factor: CGFloat {
+            switch self {
+            case .compact: return 0.92
+            case .regular: return 1
+            case .expanded: return 1.06
+            }
+        }
+    }
+
+    static var pageTitle: Font { scaled(34, textStyle: .largeTitle, weight: .black) }
+    static var pageSubtitle: Font { scaled(15, textStyle: .subheadline) }
+    static var sectionTitle: Font { scaled(17, textStyle: .headline, weight: .bold) }
+    static var rowTitle: Font { scaled(16, textStyle: .body, weight: .semibold) }
+    static var rowSubtitle: Font { scaled(15, textStyle: .subheadline) }
+    static var compactTitle: Font { scaled(15, textStyle: .subheadline, weight: .semibold) }
+    static var compactSubtitle: Font { scaled(13, textStyle: .caption, weight: .medium) }
+    static var pill: Font { scaled(13, textStyle: .footnote, weight: .medium) }
+    static var emphasizedPill: Font { scaled(13, textStyle: .footnote, weight: .bold) }
+    static var tabLabel: Font { scaled(11, textStyle: .caption2, weight: .semibold) }
+    static var button: Font { scaled(13, textStyle: .caption, weight: .semibold) }
+    static var previewLabel: Font { scaled(12, textStyle: .caption, weight: .bold) }
+    static var badge: Font { scaled(11, textStyle: .caption2, weight: .semibold) }
+    static var emptyState: Font { scaled(15, textStyle: .subheadline, weight: .semibold) }
+    static var floatingAction: Font { scaled(20, textStyle: .title3, weight: .semibold) }
+    static var deviceInitial: Font { scaled(17, textStyle: .headline, weight: .semibold) }
+    static var emptyDots: Font { scaled(22, textStyle: .title2, weight: .bold) }
+    static var settingsValue: Font { scaled(20, textStyle: .title3, weight: .semibold) }
+    static var fileRowTitle: Font { scaled(17, textStyle: .body, weight: .medium) }
+
+    private static var screenTextScale: ScreenTextScale {
+        let size = UIScreen.main.bounds.size
+        let compactWidth = min(size.width, size.height)
+        if compactWidth <= 375 {
+            return .compact
+        }
+        if compactWidth >= 430 {
+            return .expanded
+        }
+        return .regular
+    }
+
+    private static func scaled(
+        _ baseSize: CGFloat,
+        textStyle: UIFont.TextStyle,
+        weight: Font.Weight = .regular
+    ) -> Font {
+        let scaledSize = UIFontMetrics(forTextStyle: textStyle).scaledValue(for: baseSize * screenTextScale.factor)
+        return .system(size: scaledSize, weight: weight)
+    }
+}
+
 struct PikoHeroPanel<Action: View>: View {
     let title: String
     let subtitle: String
@@ -45,11 +102,15 @@ struct PikoHeroPanel<Action: View>: View {
         HStack(alignment: .bottom, spacing: 18) {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
-                    .font(.largeTitle.weight(.black))
+                    .font(PikoFont.pageTitle)
                     .foregroundStyle(.primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 Text(subtitle)
-                    .font(.subheadline)
+                    .font(PikoFont.pageSubtitle)
                     .lineLimit(2)
+                    .truncationMode(.tail)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
@@ -82,7 +143,9 @@ struct PikoSectionPanel<Content: View, Trailing: View>: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Text(title)
-                    .font(.headline.weight(.bold))
+                    .font(PikoFont.sectionTitle)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 Spacer()
                 trailing
             }
@@ -100,9 +163,11 @@ struct PikoPill: View {
 
     var body: some View {
         Text(text)
-            .font(.footnote.weight(emphasized ? .bold : .medium))
+            .font(emphasized ? PikoFont.emphasizedPill : PikoFont.pill)
             .foregroundStyle(emphasized ? PikoPalette.accent : .secondary)
             .lineLimit(1)
+            .minimumScaleFactor(0.88)
+            .truncationMode(.tail)
             .padding(.horizontal, 12)
             .padding(.vertical, 7)
             .background(
@@ -125,8 +190,11 @@ struct PikoEmptyPlane<Icon: View>: View {
         VStack(spacing: 14) {
             icon
             Text(text)
-                .font(.subheadline.weight(.semibold))
+                .font(PikoFont.emptyState)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .truncationMode(.tail)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 28)

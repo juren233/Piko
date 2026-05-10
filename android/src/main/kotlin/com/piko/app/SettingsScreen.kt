@@ -18,6 +18,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
@@ -82,15 +83,25 @@ private fun MediaSaveLocationRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         ReceiveMediaSaveLocation.entries.forEach { location ->
             if (location == selected) {
                 Button(onClick = { onSelected(location) }) {
-                    Text(location.label)
+                    Text(
+                        text = location.label,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             } else {
                 OutlinedButton(onClick = { onSelected(location) }) {
-                    Text(location.label)
+                    Text(
+                        text = location.label,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -113,6 +124,8 @@ private fun MetricRow(
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
         Text(
             text = value,
@@ -120,6 +133,8 @@ private fun MetricRow(
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

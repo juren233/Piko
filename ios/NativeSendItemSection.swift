@@ -73,6 +73,10 @@ struct NativeFileSection: View {
                             .resizable()
                             .frame(width: 16, height: 16)
                         Text("添加")
+                            .font(PikoFont.button)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.88)
+                            .truncationMode(.tail)
                     }
                 }
                 .buttonStyle(.borderless)
@@ -152,15 +156,19 @@ private struct NativeFileRow: View {
                 .frame(width: 44, height: 44)
                 .overlay {
                     Text(item.fileType.previewLabel)
-                        .font(.caption.weight(.bold))
+                        .font(PikoFont.previewLabel)
                 }
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.displayName)
-                    .font(.body.weight(.medium))
+                    .font(PikoFont.fileRowTitle)
                     .lineLimit(1)
+                    .minimumScaleFactor(0.88)
+                    .truncationMode(.tail)
                 Text(item.sizeLabel)
-                    .font(.caption)
+                    .font(PikoFont.compactSubtitle)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
             Spacer()
             Button(action: onRemove) {
