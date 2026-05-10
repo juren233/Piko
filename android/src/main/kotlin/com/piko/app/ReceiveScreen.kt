@@ -443,7 +443,7 @@ private fun DeleteReceiveHistoryDialog(
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(horizontalAlignment = Alignment.End) {
                 TextButton(onClick = onDeleteRecord) {
                     Text(text = "仅删除记录")
                 }
