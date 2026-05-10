@@ -44,12 +44,12 @@ enum PikoFont {
     static var rowTitle: Font { scaled(16, textStyle: .body, weight: .semibold) }
     static var rowSubtitle: Font { scaled(15, textStyle: .subheadline) }
     static var compactTitle: Font { scaled(15, textStyle: .subheadline, weight: .semibold) }
-    static var compactSubtitle: Font { scaled(13, textStyle: .caption, weight: .medium) }
+    static var compactSubtitle: Font { scaled(13, textStyle: .caption1, weight: .medium) }
     static var pill: Font { scaled(13, textStyle: .footnote, weight: .medium) }
     static var emphasizedPill: Font { scaled(13, textStyle: .footnote, weight: .bold) }
     static var tabLabel: Font { scaled(11, textStyle: .caption2, weight: .semibold) }
-    static var button: Font { scaled(13, textStyle: .caption, weight: .semibold) }
-    static var previewLabel: Font { scaled(12, textStyle: .caption, weight: .bold) }
+    static var button: Font { scaled(13, textStyle: .caption1, weight: .semibold) }
+    static var previewLabel: Font { scaled(12, textStyle: .caption1, weight: .bold) }
     static var badge: Font { scaled(11, textStyle: .caption2, weight: .semibold) }
     static var emptyState: Font { scaled(15, textStyle: .subheadline, weight: .semibold) }
     static var floatingAction: Font { scaled(20, textStyle: .title3, weight: .semibold) }

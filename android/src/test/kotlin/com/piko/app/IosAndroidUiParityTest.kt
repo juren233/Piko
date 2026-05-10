@@ -261,6 +261,8 @@ class IosAndroidUiParityTest {
         assertTrue("static var rowTitle" in iosStyle)
         assertTrue("static var pill" in iosStyle)
         assertTrue("static var tabLabel" in iosStyle)
+        assertFalse("textStyle: .caption," in iosStyle)
+        assertTrue("textStyle: .caption1" in iosStyle)
         assertFalse(".font(.largeTitle" in iosStyle)
         assertFalse(".font(.title3" in iosAppText)
         assertTrue(".font(PikoFont.tabLabel)" in iosRoot)
