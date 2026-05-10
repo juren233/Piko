@@ -26,7 +26,7 @@ class IosAndroidUiParityTest {
 
         assertInOrder(sendView, "我的设备", "局域网设备", "我的好友", "NativeImageSection", "NativeFileSection")
         assertInOrder(settingsView, "传输", "自动接收", "传输策略", "账号", "登录方式")
-        assertTrue("PikoPill(text: \"最近接收\", emphasized: true)" in receiveView)
+        assertFalse("最近接收" in receiveView)
         assertTrue("NativeReceiveHistoryCard" in receiveView)
     }
 
@@ -98,7 +98,7 @@ class IosAndroidUiParityTest {
     }
 
     @Test
-    fun iosWorkflowBuildsWithLatestPhoneSdkWithoutInstallingSimulator() {
+    fun iosWorkflowBuildsWithAvailablePhoneSdkWithoutInstallingSimulator() {
         val workflow = File(rootDir, ".github/workflows/build-packages.yml").readText()
         val iosScript = File(rootDir, "scripts/ios/build-packages.sh").readText()
         val xcodeCandidateLoop = workflow.substringBefore("if [[ -z \"\$selected_xcode\" ]]; then")
@@ -110,8 +110,8 @@ class IosAndroidUiParityTest {
         assertFalse("-destination" in iosScript)
         assertFalse("xcodebuild \\" in iosScript)
         assertFalse("SUPPORTED_PLATFORMS=iphoneos" in iosScript)
-        assertTrue("26.5*)" in xcodeCandidateLoop)
-        assertTrue("26.5*)" in iosScript)
+        assertTrue("sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"" in xcodeCandidateLoop)
+        assertTrue("sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"" in iosScript)
         assertTrue("xcrun swiftc" in iosScript)
         assertTrue("-target \"arm64-apple-ios\${DEPLOYMENT_TARGET}\"" in iosScript)
         assertTrue("sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"" in iosScript)
@@ -120,12 +120,12 @@ class IosAndroidUiParityTest {
         assertInOrder(
             xcodeCandidateLoop,
             "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
-            "26.5*)",
             "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
             "selected_xcode=\"\$candidate\"",
         )
         assertInOrder(
             iosScript,
+            "sdk_version=\"\$(xcrun --sdk iphoneos --show-sdk-version)\"",
             "sdk_path=\"\$(xcrun --sdk iphoneos --show-sdk-path)\"",
             "xcrun swiftc",
             "-sdk \"\$sdk_path\"",
@@ -174,6 +174,53 @@ class IosAndroidUiParityTest {
         assertTrue("换个昵称" in iosReceive)
         assertTrue("subtitle = nickname.code" in androidDiscovery)
         assertFalse("subtitle = resolvedService.host?.hostAddress" in androidDiscovery)
+    }
+
+    @Test
+    fun receivePagesUseCompactActiveProgressAndMediaPreview() {
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
+        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
+        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/LocalSendHttpServer.kt").readText()
+        val iosModel = readIos("NativePikoModel.swift")
+        val iosReceive = readIos("NativeReceiveView.swift")
+
+        assertFalse("PikoInfoPill(text = \"最近接收\"" in androidReceive)
+        assertFalse("PikoPill(text: \"最近接收\"" in iosReceive)
+        assertFalse("CircularProgressIndicator" in androidReceive)
+        assertFalse("Circle()\n                .trim" in iosReceive)
+        assertTrue("RoundedRectProgressIndicator" in androidReceive)
+        assertTrue("RoundedRectangle(cornerRadius: 18, style: .continuous)\n                .trim" in iosReceive)
+        assertTrue("style = MaterialTheme.typography.bodyLarge" in androidReceive)
+        assertTrue(".font(.subheadline.weight(.semibold))" in iosReceive)
+        assertTrue(".offset(x = (-8).dp)" in androidReceive)
+        assertTrue(".offset(x: -8)" in iosReceive)
+        assertTrue("mediaPreviewDescription" in androidState)
+        assertTrue("isMediaPreview" in androidState)
+        assertTrue("MediaThumbnailPreview" in androidReceive)
+        assertTrue("mediaPreviewData" in iosModel)
+        assertTrue("NativeMediaPreview" in iosReceive)
+        assertTrue("AVAssetImageGenerator" in iosModel)
+        assertTrue("file.fileType.isMediaPreview" in androidDiscovery)
+        assertTrue("file.fileType.isMediaPreview" in androidLocalSendServer)
+    }
+
+    @Test
+    fun receiveHistoryPersistsAndIosSavesInDocumentsRoot() {
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
+        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveHistoryStore.kt").readText()
+        val iosModel = readIos("NativePikoModel.swift")
+
+        assertTrue("ReceiveHistoryStore.fromContext(appContext)" in androidApp)
+        assertTrue("receiveHistory = receiveHistoryStore.load()" in androidApp)
+        assertTrue("receiveHistoryStore.save(nextState.receiveHistory)" in androidApp)
+        assertTrue("receiveHistory: List<ReceiveHistoryItem> = emptyList()" in androidState)
+        assertTrue("receive_history.json" in androidStore)
+        assertTrue("NativeReceiveHistoryStore.load()" in iosModel)
+        assertTrue("NativeReceiveHistoryStore.save(receiveHistory)" in iosModel)
+        assertTrue("FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]" in iosModel)
+        assertFalse(".appendingPathComponent(\"Piko\", isDirectory: true)" in iosModel)
     }
 
     private fun readIos(name: String): String =

@@ -68,4 +68,36 @@ class ReceiveTransferStateTest {
         assertEquals("2.0 KB", state.receiveHistoryDescending.first().subtitle)
         assertEquals(byteArrayOf(1, 2, 3).toList(), state.receiveHistoryDescending.first().primaryFile.thumbnailBytes?.toList())
     }
+
+    @Test
+    fun videoReceiveKeepsMediaPreviewThumbnailInLatestHistory() {
+        val file = ReceiveHistoryFile(
+            displayName = "旅行短片.mp4",
+            fileType = ReceiveFileType.Video,
+            sizeBytes = 4096,
+            thumbnailBytes = byteArrayOf(9, 8, 7),
+        )
+        val state = PikoHomeState.initial(currentDeviceName = "Pixel")
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = "receive-video",
+                    senderName = "MacBook Pro",
+                    files = listOf(file),
+                    totalBytes = 4096,
+                ),
+            )
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Completed(
+                    transferId = "receive-video",
+                    senderName = "MacBook Pro",
+                    files = listOf(file),
+                    receivedAtEpochMillis = 1_747_011_700_000,
+                    receivedAtLabel = "刚刚",
+                ),
+            )
+
+        val history = state.receiveHistoryDescending.first()
+        assertEquals("旅行短片.mp4", history.mediaPreviewDescription)
+        assertEquals(byteArrayOf(9, 8, 7).toList(), history.primaryFile.thumbnailBytes?.toList())
+    }
 }

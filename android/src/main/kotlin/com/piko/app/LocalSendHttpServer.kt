@@ -3,8 +3,11 @@ package com.piko.app
 import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
+import android.graphics.Bitmap
+import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
+import android.util.Size
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -132,10 +135,17 @@ class LocalSendHttpServer(
                     return
                 }
                 onActiveReceiveChanged(sessionId, socket)
-                context.contentResolver.saveDownload(file.metadata, input, contentLength, mediaSaveLocation())
+                val uri = context.contentResolver.saveDownload(file.metadata, input, contentLength, mediaSaveLocation())
                 val session = receiveSessions[sessionId]
                 if (session != null) {
-                    val completedBytes = session.addCompletedBytes(contentLength)
+                    val completedFile = file.metadata.toReceiveHistoryFile(
+                        thumbnailBytes = if (file.metadata.fileType.isMediaPreview) {
+                            context.contentResolver.loadThumbnailBytes(uri)
+                        } else {
+                            null
+                        },
+                    )
+                    val completedBytes = session.completeFile(file.metadata.fileName, completedFile, contentLength)
                     onReceiveTransferEvent(
                         ReceiveTransferEvent.Progress(
                             transferId = sessionId,
@@ -149,7 +159,7 @@ class LocalSendHttpServer(
                             ReceiveTransferEvent.Completed(
                                 transferId = sessionId,
                                 senderName = session.senderName,
-                                files = session.files,
+                                files = session.historyFiles(),
                                 receivedAtEpochMillis = currentTimeMillis(),
                                 receivedAtLabel = "刚刚",
                             ),
@@ -296,7 +306,7 @@ private fun ContentResolver.saveDownload(
     input: InputStream,
     contentLength: Long,
     mediaSaveLocation: ReceiveMediaSaveLocation,
-) {
+): Uri {
     val saveTarget = file.saveTarget(mediaSaveLocation)
     val uri = insert(
         saveTarget.collectionUri,
@@ -328,6 +338,7 @@ private fun ContentResolver.saveDownload(
             null,
             null,
         )
+        return uri
     } catch (error: Throwable) {
         delete(uri, null, null)
         throw error
@@ -357,6 +368,7 @@ private fun receiveLegacyTransfer(
             ),
         )
         var completedBytes = 0L
+        val receivedFiles = mutableListOf<ReceiveHistoryFile>()
         header.files.forEach { file ->
             val metadata = LocalSendFileMetadata(
                 id = file.displayName,
@@ -364,13 +376,20 @@ private fun receiveLegacyTransfer(
                 size = file.sizeBytes,
                 fileType = file.fileType.mimeType,
             )
-            context.contentResolver.saveDownload(
+            val uri = context.contentResolver.saveDownload(
                 file = metadata,
                 input = dataInput,
                 contentLength = file.sizeBytes,
                 mediaSaveLocation = mediaSaveLocation,
             )
             completedBytes += file.sizeBytes
+            receivedFiles += file.toReceiveHistoryFile(
+                thumbnailBytes = if (file.fileType.isMediaPreview) {
+                    context.contentResolver.loadThumbnailBytes(uri)
+                } else {
+                    null
+                },
+            )
             onReceiveTransferEvent(
                 ReceiveTransferEvent.Progress(
                     transferId = transferId,
@@ -383,7 +402,7 @@ private fun receiveLegacyTransfer(
             ReceiveTransferEvent.Completed(
                 transferId = transferId,
                 senderName = header.senderName,
-                files = pendingFiles,
+                files = receivedFiles,
                 receivedAtEpochMillis = currentTimeMillis(),
                 receivedAtLabel = "刚刚",
             ),
@@ -399,24 +418,34 @@ private data class AndroidReceiveSaveTarget(
 
 private class LocalSendReceiveSessionState(
     val senderName: String,
-    val files: List<ReceiveHistoryFile>,
+    files: List<ReceiveHistoryFile>,
     val totalBytes: Long,
 ) {
+    private val files = files.toMutableList()
     private var completedBytes = 0L
 
     @Synchronized
-    fun addCompletedBytes(bytes: Long): Long {
+    fun completeFile(fileName: String, file: ReceiveHistoryFile, bytes: Long): Long {
+        val index = files.indexOfFirst { it.displayName == fileName }
+        if (index >= 0) {
+            files[index] = file
+        }
         completedBytes += bytes
         return completedBytes
     }
+
+    @Synchronized
+    fun historyFiles(): List<ReceiveHistoryFile> = files.toList()
 }
 
-private fun LocalSendFileMetadata.toReceiveHistoryFile(): ReceiveHistoryFile {
+private fun LocalSendFileMetadata.toReceiveHistoryFile(
+    thumbnailBytes: ByteArray? = null,
+): ReceiveHistoryFile {
     return ReceiveHistoryFile(
         displayName = fileName,
         fileType = fileType.toReceiveFileType(),
         sizeBytes = size,
-        thumbnailBytes = null,
+        thumbnailBytes = thumbnailBytes,
     )
 }
 
@@ -490,12 +519,30 @@ private val SendFileType.mimeType: String
         SendFileType.Other -> "application/octet-stream"
     }
 
-private fun SendTransferHeaderFile.toReceiveHistoryFile(): ReceiveHistoryFile {
+private val String.isMediaPreview: Boolean
+    get() = startsWith("image/") || startsWith("video/")
+
+private val SendFileType.isMediaPreview: Boolean
+    get() = this == SendFileType.Image || this == SendFileType.Video
+
+private fun ContentResolver.loadThumbnailBytes(uri: Uri): ByteArray? {
+    return runCatching {
+        val bitmap = loadThumbnail(uri, Size(240, 240), null)
+        ByteArrayOutputStream().use { output ->
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 82, output)
+            output.toByteArray()
+        }
+    }.getOrNull()
+}
+
+private fun SendTransferHeaderFile.toReceiveHistoryFile(
+    thumbnailBytes: ByteArray? = null,
+): ReceiveHistoryFile {
     return ReceiveHistoryFile(
         displayName = displayName,
         fileType = fileType.toReceiveFileType(),
         sizeBytes = sizeBytes,
-        thumbnailBytes = null,
+        thumbnailBytes = thumbnailBytes,
     )
 }
 

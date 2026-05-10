@@ -104,10 +104,6 @@ private struct NativeReceiveHistoryList: View {
 
     var body: some View {
         VStack(spacing: 14) {
-            HStack {
-                PikoPill(text: "最近接收", emphasized: true)
-                Spacer()
-            }
             VStack(spacing: 12) {
                 if let activeReceive {
                     NativeActiveReceiveCard(
@@ -132,7 +128,7 @@ private struct NativeActiveReceiveCard: View {
             NativeActiveReceiveProgressIcon(transfer: transfer)
             VStack(alignment: .leading, spacing: 4) {
                 Text(transfer.title)
-                    .font(.title3.weight(.semibold))
+                    .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Text(transfer.subtitle)
                     .font(.subheadline)
@@ -147,6 +143,7 @@ private struct NativeActiveReceiveCard: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.red)
+            .offset(x: -8)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -172,7 +169,7 @@ private struct NativeActiveReceiveProgressIcon: View {
                         .frame(width: 24, height: 24)
                         .foregroundStyle(PikoPalette.accent)
                 }
-            Circle()
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .trim(from: 0, to: transfer.progress)
                 .stroke(PikoPalette.accent.opacity(0.78), style: StrokeStyle(lineWidth: 3, lineCap: .round))
                 .rotationEffect(.degrees(-90))
@@ -219,8 +216,8 @@ private struct NativeReceiveHistoryPreview: View {
     var body: some View {
         if item.fileCount > 1 {
             NativeMultiFilePreview(fileType: item.primaryFileType, count: item.fileCount)
-        } else if let imagePreviewData = item.imagePreviewData {
-            NativeImagePreview(data: imagePreviewData)
+        } else if let mediaPreviewData = item.mediaPreviewData {
+            NativeMediaPreview(data: mediaPreviewData)
         } else {
             NativeFileTypePreview(fileType: item.primaryFileType)
         }
@@ -242,7 +239,7 @@ private struct NativeFileTypePreview: View {
     }
 }
 
-private struct NativeImagePreview: View {
+private struct NativeMediaPreview: View {
     let data: Data
 
     var body: some View {

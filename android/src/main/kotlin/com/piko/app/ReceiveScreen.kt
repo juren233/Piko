@@ -1,6 +1,10 @@
 package com.piko.app
 
 import android.graphics.BitmapFactory
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Path as AndroidPath
+import android.graphics.PathMeasure as AndroidPathMeasure
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +25,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -32,8 +35,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -81,9 +86,6 @@ internal fun PikoReceiveScreen(
                     ReceiveHistoryEmptyState()
                 }
             } else {
-                item {
-                    PikoInfoPill(text = "最近接收", emphasized = true)
-                }
                 if (activeReceive != null) {
                     item(key = activeReceive.transferId) {
                         ActiveReceiveCard(
@@ -139,7 +141,8 @@ private fun ActiveReceiveCard(
         ) {
             Text(
                 text = transfer.title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -151,7 +154,10 @@ private fun ActiveReceiveCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        IconButton(onClick = onCancel) {
+        IconButton(
+            onClick = onCancel,
+            modifier = Modifier.offset(x = (-8).dp),
+        ) {
             Icon(
                 imageVector = LucideXIcon,
                 contentDescription = "取消",
@@ -185,13 +191,47 @@ private fun ActiveReceiveProgressIcon(
                 tint = MaterialTheme.colorScheme.primary,
             )
         }
-        CircularProgressIndicator(
-            progress = { progress },
+        RoundedRectProgressIndicator(
+            progress = progress,
             modifier = Modifier.size(60.dp),
-            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f),
-            trackColor = Color.Transparent,
-            strokeWidth = 3.dp,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.78f).toArgb(),
         )
+    }
+}
+
+@Composable
+private fun RoundedRectProgressIndicator(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    color: Int,
+) {
+    Canvas(modifier = modifier) {
+        val strokeWidth = 3.dp.toPx()
+        val inset = strokeWidth / 2f
+        val corner = 18.dp.toPx()
+        val path = AndroidPath().apply {
+            addRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                corner,
+                corner,
+                AndroidPath.Direction.CW,
+            )
+        }
+        val measure = AndroidPathMeasure(path, false)
+        val segment = AndroidPath()
+        measure.getSegment(0f, measure.length * progress.coerceIn(0f, 1f), segment, true)
+        drawIntoCanvas { canvas ->
+            val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                style = AndroidPaint.Style.STROKE
+                strokeCap = AndroidPaint.Cap.ROUND
+                this.strokeWidth = strokeWidth
+                this.color = color
+            }
+            canvas.nativeCanvas.drawPath(segment, paint)
+        }
     }
 }
 
@@ -311,7 +351,7 @@ private fun ReceiveHistoryCard(history: ReceiveHistoryItem) {
 
 @Composable
 private fun ReceiveHistoryPreview(history: ReceiveHistoryItem) {
-    val imagePreviewDescription = history.imagePreviewDescription
+    val mediaPreviewDescription = history.mediaPreviewDescription
 
     when {
         history.fileCount > 1 -> MultiFilePreviewBadge(
@@ -320,8 +360,8 @@ private fun ReceiveHistoryPreview(history: ReceiveHistoryItem) {
             size = 60.dp,
         )
 
-        imagePreviewDescription != null -> ImageThumbnailPreview(
-            description = imagePreviewDescription,
+        mediaPreviewDescription != null -> MediaThumbnailPreview(
+            description = mediaPreviewDescription,
             thumbnailBytes = history.primaryFile.thumbnailBytes,
             size = 60.dp,
         )
@@ -453,7 +493,7 @@ private fun FileTypePreviewBadge(
 }
 
 @Composable
-private fun ImageThumbnailPreview(
+private fun MediaThumbnailPreview(
     description: String,
     thumbnailBytes: ByteArray?,
     size: Dp,

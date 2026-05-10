@@ -770,7 +770,7 @@ private fun receiveIncomingTransfer(
                     displayName = file.displayName,
                     fileType = file.fileType.toReceiveFileType(),
                     sizeBytes = file.sizeBytes,
-                    thumbnailBytes = if (file.fileType == SendFileType.Image) {
+                    thumbnailBytes = if (file.fileType.isMediaPreview) {
                         loadThumbnailBytes(context.contentResolver, uri)
                     } else {
                         null
@@ -881,6 +881,9 @@ private val SendFileType.mimeType: String
         SendFileType.Archive -> "application/zip"
         SendFileType.Other -> "application/octet-stream"
     }
+
+private val SendFileType.isMediaPreview: Boolean
+    get() = this == SendFileType.Image || this == SendFileType.Video
 
 private fun SendFileType.toReceiveFileType(): ReceiveFileType {
     return when (this) {

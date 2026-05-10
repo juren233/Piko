@@ -46,9 +46,19 @@ fun AndroidPikoApp() {
     val receivePreferences = remember(appContext) {
         AndroidReceivePreferences(appContext)
     }
+    val receiveHistoryStore = remember(appContext) {
+        ReceiveHistoryStore.fromContext(appContext)
+    }
     var currentNickname by remember(nicknameRepository) { mutableStateOf(nicknameRepository.loadOrCreate()) }
     var selectedTab by remember { mutableStateOf(PikoTab.Receive) }
-    var state by remember { mutableStateOf(PikoHomeState.initial(currentNickname.fullName)) }
+    var state by remember {
+        mutableStateOf(
+            PikoHomeState.initial(
+                currentDeviceName = currentNickname.fullName,
+                receiveHistory = receiveHistoryStore.load(),
+            ),
+        )
+    }
     var mediaSaveLocation by remember {
         mutableStateOf(receivePreferences.loadMediaSaveLocation())
     }
@@ -56,7 +66,11 @@ fun AndroidPikoApp() {
         currentNickname = currentNickname,
         mediaSaveLocation = mediaSaveLocation,
         onReceiveTransferEvent = { event ->
-            state = state.applyReceiveTransferEvent(event)
+            val nextState = state.applyReceiveTransferEvent(event)
+            if (nextState.receiveHistory != state.receiveHistory) {
+                receiveHistoryStore.save(nextState.receiveHistory)
+            }
+            state = nextState
         },
     )
     val backdrop = rememberLayerBackdrop()

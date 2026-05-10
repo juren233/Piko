@@ -1,7 +1,9 @@
 import CryptoKit
+import AVFoundation
 import Foundation
 import Network
 import Photos
+import UIKit
 
 enum NativeMediaSaveLocation: String, CaseIterable, Identifiable {
     case folder
@@ -61,6 +63,7 @@ final class NativePikoModel: ObservableObject {
         self.mediaSaveLocation = NativeMediaSaveLocation(
             rawValue: UserDefaults.standard.string(forKey: NativeMediaSaveLocation.userDefaultsKey) ?? ""
         ) ?? .folder
+        self.receiveHistory = NativeReceiveHistoryStore.load()
     }
 
     var currentDeviceName: String {
@@ -727,10 +730,16 @@ final class NativePikoModel: ObservableObject {
                     return
                 }
             }
+            let fileType = NativeFileType(mimeType: file.metadata.fileType)
+            let mediaPreviewData = self.mediaPreviewData(
+                for: temporaryURL,
+                fileType: fileType,
+                fallbackData: try? Data(contentsOf: temporaryURL)
+            )
             saveReceivedTemporaryFile(
                 temporaryURL,
                 finalURL: finalURL,
-                fileType: NativeFileType(mimeType: file.metadata.fileType)
+                fileType: fileType
             ) { saved in
                 guard saved else {
                     try? FileManager.default.removeItem(at: temporaryURL)
@@ -739,19 +748,19 @@ final class NativePikoModel: ObservableObject {
                 }
                 let received = NativeReceivedFile(
                     displayName: file.metadata.fileName,
-                    fileType: NativeFileType(mimeType: file.metadata.fileType),
-                    data: (try? Data(contentsOf: finalURL)) ?? Data()
+                    fileType: fileType,
+                    data: (try? Data(contentsOf: finalURL)) ?? Data(),
+                    mediaPreviewData: mediaPreviewData
                 )
                 DispatchQueue.main.async {
-                    self.receiveHistory.insert(
+                    self.prependReceiveHistory(
                         NativeReceiveHistoryItem(
                             title: received.displayName,
                             subtitle: ByteCountFormatter.string(fromByteCount: Int64(file.metadata.size), countStyle: .file),
                             fileCount: 1,
                             primaryFileType: received.fileType,
-                            imagePreviewData: received.fileType == .image ? received.data : nil
-                        ),
-                        at: 0
+                            mediaPreviewData: received.mediaPreviewData
+                        )
                     )
                     self.activeReceive = nil
                 }
@@ -895,11 +904,23 @@ final class NativePikoModel: ObservableObject {
             guard (try? file.data.write(to: temporaryURL, options: .atomic)) != nil else {
                 continue
             }
+            let mediaPreviewData = mediaPreviewData(
+                for: temporaryURL,
+                fileType: file.fileType,
+                fallbackData: file.data
+            )
             group.enter()
             saveReceivedTemporaryFile(temporaryURL, finalURL: finalURL, fileType: file.fileType) { saved in
                 if saved {
                     lock.lock()
-                    savedFiles.append(file)
+                    savedFiles.append(
+                        NativeReceivedFile(
+                            displayName: file.displayName,
+                            fileType: file.fileType,
+                            data: file.data,
+                            mediaPreviewData: mediaPreviewData
+                        )
+                    )
                     lock.unlock()
                 }
                 group.leave()
@@ -912,7 +933,7 @@ final class NativePikoModel: ObservableObject {
                 return
             }
             let names = savedFiles.map(\.displayName)
-            self.receiveHistory.insert(
+            self.prependReceiveHistory(
                 NativeReceiveHistoryItem(
                     title: names.count == 1 ? names[0] : "\(names[0]) + \(names.count - 1) 个文件",
                     subtitle: ByteCountFormatter.string(
@@ -921,9 +942,8 @@ final class NativePikoModel: ObservableObject {
                     ),
                     fileCount: savedFiles.count,
                     primaryFileType: firstFile.fileType,
-                    imagePreviewData: firstFile.fileType == .image ? firstFile.data : nil
-                ),
-                at: 0
+                    mediaPreviewData: firstFile.mediaPreviewData
+                )
             )
             self.activeReceive = nil
         }
@@ -953,6 +973,30 @@ final class NativePikoModel: ObservableObject {
         }
     }
 
+    private func mediaPreviewData(
+        for fileURL: URL,
+        fileType: NativeFileType,
+        fallbackData: Data?
+    ) -> Data? {
+        switch fileType {
+        case .image:
+            return fallbackData
+        case .video:
+            let asset = AVAsset(url: fileURL)
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            guard let image = try? generator.copyCGImage(
+                at: CMTime(seconds: 0, preferredTimescale: 600),
+                actualTime: nil
+            ) else {
+                return nil
+            }
+            return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
+        case .document, .spreadsheet, .archive, .other:
+            return nil
+        }
+    }
+
     private func saveMediaToPhotoLibrary(
         fileURL: URL,
         fileType: NativeFileType,
@@ -977,11 +1021,15 @@ final class NativePikoModel: ObservableObject {
 
     private func receivedDirectory() -> URL {
         FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Piko", isDirectory: true)
     }
 
     private func temporaryReceivedURL(fileName: String, directory: URL) -> URL {
         directory.appendingPathComponent(".\(UUID().uuidString)-\(fileName.sanitizedFileName)")
+    }
+
+    private func prependReceiveHistory(_ item: NativeReceiveHistoryItem) {
+        receiveHistory.insert(item, at: 0)
+        NativeReceiveHistoryStore.save(receiveHistory)
     }
 
     private func startLocalSendMulticast() {
@@ -1171,13 +1219,55 @@ struct NativeTransferItem: Identifiable {
     }
 }
 
-struct NativeReceiveHistoryItem: Identifiable {
-    let id = UUID()
+private enum NativeReceiveHistoryStore {
+    private static let fileName = "receive_history.json"
+
+    static func load() -> [NativeReceiveHistoryItem] {
+        guard let data = try? Data(contentsOf: storeURL()) else {
+            return []
+        }
+        return (try? JSONDecoder().decode([NativeReceiveHistoryItem].self, from: data)) ?? []
+    }
+
+    static func save(_ receiveHistory: [NativeReceiveHistoryItem]) {
+        let url = storeURL()
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(receiveHistory) else {
+            return
+        }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private static func storeURL() -> URL {
+        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        return baseURL.appendingPathComponent(fileName, isDirectory: false)
+    }
+}
+
+struct NativeReceiveHistoryItem: Identifiable, Codable {
+    let id: UUID
     let title: String
     let subtitle: String
     let fileCount: Int
     let primaryFileType: NativeFileType
-    let imagePreviewData: Data?
+    let mediaPreviewData: Data?
+
+    init(
+        id: UUID = UUID(),
+        title: String,
+        subtitle: String,
+        fileCount: Int,
+        primaryFileType: NativeFileType,
+        mediaPreviewData: Data?
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.fileCount = fileCount
+        self.primaryFileType = primaryFileType
+        self.mediaPreviewData = mediaPreviewData
+    }
 }
 
 struct NativeReceiveTransferState: Identifiable {
@@ -1207,7 +1297,7 @@ struct NativeReceiveTransferState: Identifiable {
     }
 }
 
-enum NativeFileType: Int {
+enum NativeFileType: Int, Codable {
     case document = 0
     case spreadsheet = 1
     case image = 2
@@ -1266,6 +1356,19 @@ struct NativeReceivedFile {
     let displayName: String
     let fileType: NativeFileType
     let data: Data
+    let mediaPreviewData: Data?
+
+    init(
+        displayName: String,
+        fileType: NativeFileType,
+        data: Data,
+        mediaPreviewData: Data? = nil
+    ) {
+        self.displayName = displayName
+        self.fileType = fileType
+        self.data = data
+        self.mediaPreviewData = mediaPreviewData
+    }
 }
 
 struct NativeReceivedTransfer {

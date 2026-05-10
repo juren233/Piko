@@ -66,12 +66,15 @@ data class PikoHomeState(
     }
 
     companion object {
-        fun initial(currentDeviceName: String = "当前设备"): PikoHomeState {
+        fun initial(
+            currentDeviceName: String = "当前设备",
+            receiveHistory: List<ReceiveHistoryItem> = emptyList(),
+        ): PikoHomeState {
             return PikoHomeState(
                 currentDeviceName = currentDeviceName,
                 trustedDeviceCount = 0,
                 pendingReceiveCount = 0,
-                receiveHistory = emptyList(),
+                receiveHistory = receiveHistory,
                 activeReceive = ReceiveTransferState.Idle,
                 sendPage = SendPageState.initial(currentDeviceName = currentDeviceName),
             )
@@ -150,11 +153,11 @@ data class ReceiveHistoryItem(
     val primaryFile: ReceiveHistoryFile
         get() = files.first()
 
-    val hasImagePreview: Boolean
-        get() = files.any { it.isImage && it.thumbnailBytes?.isNotEmpty() == true }
+    val hasMediaPreview: Boolean
+        get() = files.any { it.isMediaPreview && it.thumbnailBytes?.isNotEmpty() == true }
 
-    val imagePreviewDescription: String?
-        get() = primaryFile.displayName.takeIf { primaryFile.isImage && primaryFile.thumbnailBytes?.isNotEmpty() == true }
+    val mediaPreviewDescription: String?
+        get() = primaryFile.displayName.takeIf { primaryFile.isMediaPreview && primaryFile.thumbnailBytes?.isNotEmpty() == true }
 
     val title: String
         get() = if (fileCount == 1) {
@@ -173,8 +176,8 @@ data class ReceiveHistoryFile(
     val sizeBytes: Long,
     val thumbnailBytes: ByteArray? = null,
 ) {
-    val isImage: Boolean
-        get() = fileType == ReceiveFileType.Image
+    val isMediaPreview: Boolean
+        get() = fileType == ReceiveFileType.Image || fileType == ReceiveFileType.Video
 
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
