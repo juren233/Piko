@@ -1,5 +1,7 @@
 package com.piko.app
 
+import android.net.Uri
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -63,15 +65,18 @@ fun AndroidPikoApp() {
     var mediaSaveLocation by remember {
         mutableStateOf(receivePreferences.loadMediaSaveLocation())
     }
+    val mutateState: (((PikoHomeState) -> PikoHomeState) -> Unit) = { transform ->
+        val nextState = transform(state)
+        if (nextState.receiveHistory != state.receiveHistory) {
+            receiveHistoryStore.save(nextState.receiveHistory)
+        }
+        state = nextState
+    }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
         currentNickname = currentNickname,
         mediaSaveLocation = mediaSaveLocation,
         onReceiveTransferEvent = { event ->
-            val nextState = state.applyReceiveTransferEvent(event)
-            if (nextState.receiveHistory != state.receiveHistory) {
-                receiveHistoryStore.save(nextState.receiveHistory)
-            }
-            state = nextState
+            mutateState { current -> current.applyReceiveTransferEvent(event) }
         },
     )
     val backdrop = rememberLayerBackdrop()
@@ -91,7 +96,7 @@ fun AndroidPikoApp() {
                 PikoTabScreen(
                     tab = selectedTab,
                     state = state,
-                    onStateMutate = { transform -> state = transform(state) },
+                    onStateMutate = mutateState,
                     onResetCurrentDeviceName = {
                         currentNickname = nicknameRepository.regenerate()
                         state = state.copy(currentDeviceName = currentNickname.fullName)
@@ -102,6 +107,21 @@ fun AndroidPikoApp() {
                         receivePreferences.saveMediaSaveLocation(location)
                     },
                     sendPlatformActions = sendPlatformActions,
+                    onDeleteReceiveHistory = { item, deleteFiles ->
+                        if (deleteFiles) {
+                            val failedCount = item.files
+                                .mapNotNull { it.savedUri }
+                                .count { savedUri ->
+                                    runCatching {
+                                        appContext.contentResolver.delete(Uri.parse(savedUri), null, null) <= 0
+                                    }.getOrDefault(true)
+                                }
+                            if (failedCount > 0) {
+                                Toast.makeText(appContext, "有${failedCount}个文件未删除", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                        mutateState { current -> current.removeReceiveHistory(item.id) }
+                    },
                     bottomContentPadding = 104.dp,
                     modifier = Modifier,
                 )
@@ -156,7 +176,7 @@ fun AndroidPikoApp() {
                         startSendTransfer(
                             sendPage = state.sendPage,
                             senderName = state.currentDeviceName,
-                            onStateMutate = { transform -> state = transform(state) },
+                            onStateMutate = mutateState,
                             sendPlatformActions = sendPlatformActions,
                         )
                     },

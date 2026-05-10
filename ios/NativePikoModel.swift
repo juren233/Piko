@@ -455,6 +455,72 @@ final class NativePikoModel: ObservableObject {
         activeReceive = nil
     }
 
+    func deleteReceiveHistory(_ item: NativeReceiveHistoryItem, deleteFiles: Bool, completion: @escaping (Int) -> Void) {
+        receiveHistory.removeAll { $0.id == item.id }
+        NativeReceiveHistoryStore.save(receiveHistory)
+        guard deleteFiles else {
+            completion(0)
+            return
+        }
+        deleteReceivedFiles(item.files, completion: completion)
+    }
+
+    private func deleteReceivedFiles(_ files: [NativeReceiveHistoryFile], completion: @escaping (Int) -> Void) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var failedCount = 0
+
+        func markFailed() {
+            lock.lock()
+            failedCount += 1
+            lock.unlock()
+        }
+
+        for file in files {
+            if let path = file.savedURLPath {
+                do {
+                    try FileManager.default.removeItem(atPath: path)
+                } catch {
+                    markFailed()
+                }
+                continue
+            }
+
+            guard let assetIdentifier = file.photoAssetIdentifier else {
+                continue
+            }
+
+            group.enter()
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                guard status == .authorized || status == .limited else {
+                    markFailed()
+                    group.leave()
+                    return
+                }
+
+                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
+                guard assets.count > 0 else {
+                    markFailed()
+                    group.leave()
+                    return
+                }
+
+                PHPhotoLibrary.shared().performChanges {
+                    PHAssetChangeRequest.deleteAssets(assets)
+                } completionHandler: { deleted, _ in
+                    if !deleted {
+                        markFailed()
+                    }
+                    group.leave()
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            completion(failedCount)
+        }
+    }
+
     private func send(_ data: Data, over connection: NWConnection) -> Bool {
         let finished = DispatchSemaphore(value: 0)
         var succeeded = true
@@ -736,11 +802,13 @@ final class NativePikoModel: ObservableObject {
                 fileType: fileType,
                 fallbackData: try? Data(contentsOf: temporaryURL)
             )
+            let saveDestination = mediaSaveLocation.destination(for: fileType)
             saveReceivedTemporaryFile(
                 temporaryURL,
                 finalURL: finalURL,
-                fileType: fileType
-            ) { saved in
+                fileType: fileType,
+                destination: saveDestination
+            ) { saved, assetIdentifier in
                 guard saved else {
                     try? FileManager.default.removeItem(at: temporaryURL)
                     self.sendHttpResponse(connection, statusCode: 500, body: Data(#"{"error":"cannot save file"}"#.utf8))
@@ -749,8 +817,11 @@ final class NativePikoModel: ObservableObject {
                 let received = NativeReceivedFile(
                     displayName: file.metadata.fileName,
                     fileType: fileType,
+                    sizeBytes: file.metadata.size,
                     data: (try? Data(contentsOf: finalURL)) ?? Data(),
-                    mediaPreviewData: mediaPreviewData
+                    mediaPreviewData: mediaPreviewData,
+                    savedURLPath: saveDestination == .folder ? finalURL.path : nil,
+                    photoAssetIdentifier: assetIdentifier
                 )
                 DispatchQueue.main.async {
                     self.prependReceiveHistory(
@@ -759,7 +830,8 @@ final class NativePikoModel: ObservableObject {
                             subtitle: ByteCountFormatter.string(fromByteCount: Int64(file.metadata.size), countStyle: .file),
                             fileCount: 1,
                             primaryFileType: received.fileType,
-                            mediaPreviewData: received.mediaPreviewData
+                            mediaPreviewData: received.mediaPreviewData,
+                            files: [NativeReceiveHistoryFile(file: received)]
                         )
                     )
                     self.activeReceive = nil
@@ -909,16 +981,25 @@ final class NativePikoModel: ObservableObject {
                 fileType: file.fileType,
                 fallbackData: file.data
             )
+            let saveDestination = self.mediaSaveLocation.destination(for: file.fileType)
             group.enter()
-            saveReceivedTemporaryFile(temporaryURL, finalURL: finalURL, fileType: file.fileType) { saved in
+            saveReceivedTemporaryFile(
+                temporaryURL,
+                finalURL: finalURL,
+                fileType: file.fileType,
+                destination: saveDestination
+            ) { saved, assetIdentifier in
                 if saved {
                     lock.lock()
                     savedFiles.append(
                         NativeReceivedFile(
                             displayName: file.displayName,
                             fileType: file.fileType,
+                            sizeBytes: file.data.count,
                             data: file.data,
-                            mediaPreviewData: mediaPreviewData
+                            mediaPreviewData: mediaPreviewData,
+                            savedURLPath: saveDestination == .folder ? finalURL.path : nil,
+                            photoAssetIdentifier: assetIdentifier
                         )
                     )
                     lock.unlock()
@@ -942,7 +1023,8 @@ final class NativePikoModel: ObservableObject {
                     ),
                     fileCount: savedFiles.count,
                     primaryFileType: firstFile.fileType,
-                    mediaPreviewData: firstFile.mediaPreviewData
+                    mediaPreviewData: firstFile.mediaPreviewData,
+                    files: savedFiles.map(NativeReceiveHistoryFile.init(file:))
                 )
             )
             self.activeReceive = nil
@@ -953,22 +1035,23 @@ final class NativePikoModel: ObservableObject {
         _ temporaryURL: URL,
         finalURL: URL,
         fileType: NativeFileType,
-        completion: @escaping (Bool) -> Void
+        destination: NativeReceiveSaveDestination,
+        completion: @escaping (Bool, String?) -> Void
     ) {
-        switch mediaSaveLocation.destination(for: fileType) {
+        switch destination {
         case .folder:
             try? FileManager.default.removeItem(at: finalURL)
             do {
                 try FileManager.default.moveItem(at: temporaryURL, to: finalURL)
-                completion(true)
+                completion(true, nil)
             } catch {
                 try? FileManager.default.removeItem(at: temporaryURL)
-                completion(false)
+                completion(false, nil)
             }
         case .album:
-            saveMediaToPhotoLibrary(fileURL: temporaryURL, fileType: fileType) { saved in
+            saveMediaToPhotoLibrary(fileURL: temporaryURL, fileType: fileType) { saved, assetIdentifier in
                 try? FileManager.default.removeItem(at: temporaryURL)
-                completion(saved)
+                completion(saved, assetIdentifier)
             }
         }
     }
@@ -1000,21 +1083,24 @@ final class NativePikoModel: ObservableObject {
     private func saveMediaToPhotoLibrary(
         fileURL: URL,
         fileType: NativeFileType,
-        completion: @escaping (Bool) -> Void
+        completion: @escaping (Bool, String?) -> Void
     ) {
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
             guard status == .authorized || status == .limited else {
-                completion(false)
+                completion(false, nil)
                 return
             }
+            var createdAssetIdentifier: String?
             PHPhotoLibrary.shared().performChanges {
                 if fileType == .video {
-                    PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+                    let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
+                    createdAssetIdentifier = request?.placeholderForCreatedAsset?.localIdentifier
                 } else {
-                    PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+                    let request = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
+                    createdAssetIdentifier = request?.placeholderForCreatedAsset?.localIdentifier
                 }
             } completionHandler: { saved, _ in
-                completion(saved)
+                completion(saved, saved ? createdAssetIdentifier : nil)
             }
         }
     }
@@ -1252,6 +1338,7 @@ struct NativeReceiveHistoryItem: Identifiable, Codable {
     let fileCount: Int
     let primaryFileType: NativeFileType
     let mediaPreviewData: Data?
+    let files: [NativeReceiveHistoryFile]
 
     init(
         id: UUID = UUID(),
@@ -1259,7 +1346,8 @@ struct NativeReceiveHistoryItem: Identifiable, Codable {
         subtitle: String,
         fileCount: Int,
         primaryFileType: NativeFileType,
-        mediaPreviewData: Data?
+        mediaPreviewData: Data?,
+        files: [NativeReceiveHistoryFile]
     ) {
         self.id = id
         self.title = title
@@ -1267,6 +1355,70 @@ struct NativeReceiveHistoryItem: Identifiable, Codable {
         self.fileCount = fileCount
         self.primaryFileType = primaryFileType
         self.mediaPreviewData = mediaPreviewData
+        self.files = files
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decode(String.self, forKey: .subtitle)
+        fileCount = try container.decode(Int.self, forKey: .fileCount)
+        primaryFileType = try container.decode(NativeFileType.self, forKey: .primaryFileType)
+        mediaPreviewData = try container.decodeIfPresent(Data.self, forKey: .mediaPreviewData)
+        files = try container.decodeIfPresent([NativeReceiveHistoryFile].self, forKey: .files) ?? [
+            NativeReceiveHistoryFile(
+                displayName: title,
+                fileType: primaryFileType,
+                sizeBytes: 0,
+                savedURLPath: nil,
+                photoAssetIdentifier: nil
+            )
+        ]
+    }
+
+    var deleteConfirmationTitle: String {
+        if fileCount == 1 {
+            return "真的要删除\(files.first?.displayName ?? title)吗？"
+        }
+        return "真的要删除这\(fileCount)个吗？"
+    }
+
+    var deleteConfirmationBody: String {
+        if fileCount == 1 {
+            return "此操作不可逆！"
+        }
+        return "将会删除：\(files.map(\.displayName).joined(separator: "、")) 此操作不可逆！"
+    }
+}
+
+struct NativeReceiveHistoryFile: Codable {
+    let displayName: String
+    let fileType: NativeFileType
+    let sizeBytes: Int
+    let savedURLPath: String?
+    let photoAssetIdentifier: String?
+
+    init(
+        displayName: String,
+        fileType: NativeFileType,
+        sizeBytes: Int,
+        savedURLPath: String?,
+        photoAssetIdentifier: String?
+    ) {
+        self.displayName = displayName
+        self.fileType = fileType
+        self.sizeBytes = sizeBytes
+        self.savedURLPath = savedURLPath
+        self.photoAssetIdentifier = photoAssetIdentifier
+    }
+
+    init(file: NativeReceivedFile) {
+        self.displayName = file.displayName
+        self.fileType = file.fileType
+        self.sizeBytes = file.sizeBytes
+        self.savedURLPath = file.savedURLPath
+        self.photoAssetIdentifier = file.photoAssetIdentifier
     }
 }
 
@@ -1355,19 +1507,28 @@ enum NativeFileType: Int, Codable {
 struct NativeReceivedFile {
     let displayName: String
     let fileType: NativeFileType
+    let sizeBytes: Int
     let data: Data
     let mediaPreviewData: Data?
+    let savedURLPath: String?
+    let photoAssetIdentifier: String?
 
     init(
         displayName: String,
         fileType: NativeFileType,
+        sizeBytes: Int,
         data: Data,
-        mediaPreviewData: Data? = nil
+        mediaPreviewData: Data? = nil,
+        savedURLPath: String? = nil,
+        photoAssetIdentifier: String? = nil
     ) {
         self.displayName = displayName
         self.fileType = fileType
+        self.sizeBytes = sizeBytes
         self.data = data
         self.mediaPreviewData = mediaPreviewData
+        self.savedURLPath = savedURLPath
+        self.photoAssetIdentifier = photoAssetIdentifier
     }
 }
 

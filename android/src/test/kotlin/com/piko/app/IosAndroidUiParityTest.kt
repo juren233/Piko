@@ -224,6 +224,45 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun receiveHistoryDeletionUsesSwipeConfirmationAndSavedFileReferencesOnBothPlatforms() {
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
+        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveHistoryStore.kt").readText()
+        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/LocalSendHttpServer.kt").readText()
+        val androidLegacyReceiver = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
+        val iosReceive = readIos("NativeReceiveView.swift")
+        val iosModel = readIos("NativePikoModel.swift")
+
+        assertTrue("detectHorizontalDragGestures" in androidReceive)
+        assertTrue("receive-history-delete-offset" in androidReceive)
+        assertTrue("DeleteReceiveHistoryDialog" in androidReceive)
+        assertTrue("同时删除文件" in androidReceive)
+        assertTrue("算了" in androidReceive)
+        assertTrue("删除" in androidReceive)
+        assertTrue("真的要删除" in androidState)
+        assertTrue("将会删除：" in androidState)
+        assertTrue("removeReceiveHistory" in androidState)
+        assertTrue("savedUri" in androidStore)
+        assertTrue("savedUri = uri.toString()" in androidLocalSendServer)
+        assertTrue("savedUri = uri.toString()" in androidLegacyReceiver)
+        assertTrue("contentResolver.delete(Uri.parse(savedUri), null, null)" in androidApp)
+
+        assertTrue(".swipeActions(edge: .trailing" in iosReceive)
+        assertTrue("NativeDeleteReceiveHistoryDialog" in iosReceive)
+        assertTrue("同时删除文件" in iosReceive)
+        assertTrue("Button(\"算了\"" in iosReceive)
+        assertTrue("Button(\"删除\"" in iosReceive)
+        assertTrue("deleteReceiveHistory" in iosModel)
+        assertTrue("savedURLPath" in iosModel)
+        assertTrue("photoAssetIdentifier" in iosModel)
+        assertTrue("PHPhotoLibrary.requestAuthorization(for: .readWrite)" in iosModel)
+        assertTrue("FileManager.default.removeItem(atPath: path)" in iosModel)
+        assertTrue("真的要删除" in iosModel)
+        assertTrue("将会删除：" in iosModel)
+    }
+
+    @Test
     fun appTextUsesAdaptiveTypographyForSmallAndLargeScreens() {
         val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoTheme.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()

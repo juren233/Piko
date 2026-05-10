@@ -775,6 +775,7 @@ private fun receiveIncomingTransfer(
                     } else {
                         null
                     },
+                    savedUri = uri.toString(),
                 )
             }
             onReceiveTransferEvent(

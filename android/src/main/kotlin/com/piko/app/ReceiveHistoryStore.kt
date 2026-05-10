@@ -59,7 +59,8 @@ private fun List<ReceiveHistoryFile>.toFilesJsonArray(): JSONArray {
                 .put("displayName", file.displayName)
                 .put("fileType", file.fileType.name)
                 .put("sizeBytes", file.sizeBytes)
-                .put("thumbnailBytes", file.thumbnailBytes?.toBase64() ?: JSONObject.NULL),
+                .put("thumbnailBytes", file.thumbnailBytes?.toBase64() ?: JSONObject.NULL)
+                .put("savedUri", file.savedUri ?: JSONObject.NULL),
         )
     }
     return files
@@ -96,6 +97,7 @@ private fun JSONArray.toReceiveHistoryFiles(): List<ReceiveHistoryFile> {
                     fileType = file.optString("fileType").toReceiveFileType(),
                     sizeBytes = file.optLong("sizeBytes").coerceAtLeast(0L),
                     thumbnailBytes = file.optString("thumbnailBytes").takeIf { it.isNotBlank() }?.fromBase64(),
+                    savedUri = file.optString("savedUri").takeIf { it.isNotBlank() },
                 ),
             )
         }

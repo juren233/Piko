@@ -5,7 +5,7 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>用于在发送页显示最近图片并选择需要传输的图片。</string>
+	<string>用于在发送页显示最近图片、选择需要传输的图片，并在你确认时删除已接收的相册文件。</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>用于将接收到的图片和视频保存到相册。</string>
 	<key>NSLocalNetworkUsageDescription</key>

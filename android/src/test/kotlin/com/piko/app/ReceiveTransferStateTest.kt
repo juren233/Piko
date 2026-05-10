@@ -100,4 +100,83 @@ class ReceiveTransferStateTest {
         assertEquals("旅行短片.mp4", history.mediaPreviewDescription)
         assertEquals(byteArrayOf(9, 8, 7).toList(), history.primaryFile.thumbnailBytes?.toList())
     }
+
+    @Test
+    fun receiveHistoryDeleteCopyRemovesOnlyMatchingHistory() {
+        val first = ReceiveHistoryItem(
+            id = "receive-first",
+            receivedAtEpochMillis = 1_000,
+            receivedAtLabel = "昨天",
+            sourceDeviceName = "MacBook",
+            fileCount = 1,
+            files = listOf(
+                ReceiveHistoryFile(
+                    displayName = "报告.pdf",
+                    fileType = ReceiveFileType.Document,
+                    sizeBytes = 2_048,
+                ),
+            ),
+        )
+        val second = ReceiveHistoryItem(
+            id = "receive-second",
+            receivedAtEpochMillis = 2_000,
+            receivedAtLabel = "刚刚",
+            sourceDeviceName = "iPhone",
+            fileCount = 1,
+            files = listOf(
+                ReceiveHistoryFile(
+                    displayName = "照片.jpg",
+                    fileType = ReceiveFileType.Image,
+                    sizeBytes = 4_096,
+                ),
+            ),
+        )
+
+        val state = PikoHomeState.initial(receiveHistory = listOf(first, second))
+            .removeReceiveHistory("receive-first")
+
+        assertEquals(listOf("receive-second"), state.receiveHistory.map { it.id })
+    }
+
+    @Test
+    fun receiveHistoryDeleteDialogCopyMatchesSingleAndMultipleFiles() {
+        val single = ReceiveHistoryItem(
+            id = "single",
+            receivedAtEpochMillis = 1_000,
+            receivedAtLabel = "刚刚",
+            sourceDeviceName = "MacBook",
+            fileCount = 1,
+            files = listOf(
+                ReceiveHistoryFile(
+                    displayName = "照片.jpg",
+                    fileType = ReceiveFileType.Image,
+                    sizeBytes = 2_048,
+                ),
+            ),
+        )
+        val multiple = ReceiveHistoryItem(
+            id = "multiple",
+            receivedAtEpochMillis = 2_000,
+            receivedAtLabel = "刚刚",
+            sourceDeviceName = "MacBook",
+            fileCount = 2,
+            files = listOf(
+                ReceiveHistoryFile(
+                    displayName = "旅行计划.pdf",
+                    fileType = ReceiveFileType.Document,
+                    sizeBytes = 2_048,
+                ),
+                ReceiveHistoryFile(
+                    displayName = "费用清单.xlsx",
+                    fileType = ReceiveFileType.Spreadsheet,
+                    sizeBytes = 4_096,
+                ),
+            ),
+        )
+
+        assertEquals("真的要删除照片.jpg吗？", single.deleteConfirmationTitle)
+        assertEquals("此操作不可逆！", single.deleteConfirmationBody)
+        assertEquals("真的要删除这2个吗？", multiple.deleteConfirmationTitle)
+        assertEquals("将会删除：旅行计划.pdf、费用清单.xlsx 此操作不可逆！", multiple.deleteConfirmationBody)
+    }
 }

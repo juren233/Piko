@@ -4,11 +4,13 @@ import android.graphics.BitmapFactory
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PathMeasure as AndroidPathMeasure
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -21,16 +23,24 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -39,11 +49,15 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 
 @Composable
 internal fun PikoReceiveScreen(
@@ -51,10 +65,13 @@ internal fun PikoReceiveScreen(
     onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
     onResetCurrentDeviceName: () -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
+    onDeleteReceiveHistory: (ReceiveHistoryItem, Boolean) -> Unit = { _, _ -> },
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
     val activeReceive = state.activeReceive.takeIf { it.transferId != null }
+    var pendingDeleteHistory by remember { mutableStateOf<ReceiveHistoryItem?>(null) }
+    var deleteReceivedFiles by remember(pendingDeleteHistory) { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -105,9 +122,24 @@ internal fun PikoReceiveScreen(
                     items = state.receiveHistoryDescending,
                     key = { history -> history.id },
                 ) { history ->
-                    ReceiveHistoryCard(history = history)
+                    SwipeToDeleteReceiveHistoryCard(
+                        history = history,
+                        onDeleteClick = { pendingDeleteHistory = history },
+                    )
                 }
             }
+        }
+        pendingDeleteHistory?.let { history ->
+            DeleteReceiveHistoryDialog(
+                history = history,
+                deleteReceivedFiles = deleteReceivedFiles,
+                onDeleteReceivedFilesChange = { deleteReceivedFiles = it },
+                onDismiss = { pendingDeleteHistory = null },
+                onConfirm = {
+                    onDeleteReceiveHistory(history, deleteReceivedFiles)
+                    pendingDeleteHistory = null
+                },
+            )
         }
     }
 }
@@ -303,6 +335,127 @@ private fun CurrentDeviceNicknameBanner(
             )
         }
     }
+}
+
+@Composable
+private fun SwipeToDeleteReceiveHistoryCard(
+    history: ReceiveHistoryItem,
+    onDeleteClick: () -> Unit,
+) {
+    val deleteWidth = 96.dp
+    val deleteWidthPx = with(LocalDensity.current) { deleteWidth.toPx() }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var targetOffset by remember { mutableFloatStateOf(0f) }
+    var isDragging by remember { mutableStateOf(false) }
+    val animatedOffset by animateFloatAsState(targetValue = targetOffset, label = "receive-history-delete-offset")
+    val currentOffset = if (isDragging) dragOffset else animatedOffset
+    val revealFraction = (-currentOffset / deleteWidthPx).coerceIn(0f, 1f)
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp)),
+    ) {
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.28f + 0.64f * revealFraction)),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(deleteWidth)
+                    .fillMaxSize()
+                    .clickable(enabled = revealFraction > 0.4f, onClick = onDeleteClick),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = "删除",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onError,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(currentOffset.roundToInt(), 0) }
+                .pointerInput(deleteWidthPx) {
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            isDragging = true
+                            dragOffset = targetOffset
+                        },
+                        onHorizontalDrag = { change, dragAmount ->
+                            change.consume()
+                            dragOffset = (dragOffset + dragAmount).coerceIn(-deleteWidthPx, 0f)
+                        },
+                        onDragEnd = {
+                            isDragging = false
+                            targetOffset = if (dragOffset <= -deleteWidthPx * 0.42f) {
+                                -deleteWidthPx
+                            } else {
+                                0f
+                            }
+                        },
+                        onDragCancel = {
+                            isDragging = false
+                            targetOffset = 0f
+                        },
+                    )
+                },
+        ) {
+            ReceiveHistoryCard(history = history)
+        }
+    }
+}
+
+@Composable
+private fun DeleteReceiveHistoryDialog(
+    history: ReceiveHistoryItem,
+    deleteReceivedFiles: Boolean,
+    onDeleteReceivedFilesChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(text = history.deleteConfirmationTitle)
+        },
+        text = {
+            Text(text = history.deleteConfirmationBody)
+        },
+        confirmButton = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier = Modifier.clickable { onDeleteReceivedFilesChange(!deleteReceivedFiles) },
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Checkbox(
+                        checked = deleteReceivedFiles,
+                        onCheckedChange = onDeleteReceivedFilesChange,
+                    )
+                    Text(
+                        text = "同时删除文件",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+                Row {
+                    TextButton(onClick = onDismiss) {
+                        Text(text = "算了")
+                    }
+                    TextButton(onClick = onConfirm) {
+                        Text(text = "删除", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable

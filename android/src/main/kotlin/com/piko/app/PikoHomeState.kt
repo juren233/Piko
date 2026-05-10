@@ -65,6 +65,10 @@ data class PikoHomeState(
         )
     }
 
+    fun removeReceiveHistory(id: String): PikoHomeState {
+        return copy(receiveHistory = receiveHistory.filterNot { it.id == id })
+    }
+
     companion object {
         fun initial(
             currentDeviceName: String = "当前设备",
@@ -168,6 +172,20 @@ data class ReceiveHistoryItem(
 
     val subtitle: String
         get() = files.sumOf { file -> file.sizeBytes }.sizeLabel
+
+    val deleteConfirmationTitle: String
+        get() = if (fileCount == 1) {
+            "真的要删除${primaryFile.displayName}吗？"
+        } else {
+            "真的要删除这${fileCount}个吗？"
+        }
+
+    val deleteConfirmationBody: String
+        get() = if (fileCount == 1) {
+            "此操作不可逆！"
+        } else {
+            "将会删除：${files.joinToString("、") { it.displayName }} 此操作不可逆！"
+        }
 }
 
 data class ReceiveHistoryFile(
@@ -175,6 +193,7 @@ data class ReceiveHistoryFile(
     val fileType: ReceiveFileType,
     val sizeBytes: Long,
     val thumbnailBytes: ByteArray? = null,
+    val savedUri: String? = null,
 ) {
     val isMediaPreview: Boolean
         get() = fileType == ReceiveFileType.Image || fileType == ReceiveFileType.Video
@@ -185,7 +204,8 @@ data class ReceiveHistoryFile(
         return displayName == other.displayName &&
             fileType == other.fileType &&
             sizeBytes == other.sizeBytes &&
-            thumbnailBytes.contentEquals(other.thumbnailBytes)
+            thumbnailBytes.contentEquals(other.thumbnailBytes) &&
+            savedUri == other.savedUri
     }
 
     override fun hashCode(): Int {
@@ -193,6 +213,7 @@ data class ReceiveHistoryFile(
         result = 31 * result + fileType.hashCode()
         result = 31 * result + sizeBytes.hashCode()
         result = 31 * result + (thumbnailBytes?.contentHashCode() ?: 0)
+        result = 31 * result + (savedUri?.hashCode() ?: 0)
         return result
     }
 }

@@ -2,6 +2,9 @@ import SwiftUI
 
 struct NativeReceiveView: View {
     @ObservedObject var model: NativePikoModel
+    @State private var pendingDeleteItem: NativeReceiveHistoryItem?
+    @State private var deleteReceivedFiles = false
+    @State private var deleteFailureMessage: String?
 
     var body: some View {
         ScrollView {
@@ -21,7 +24,11 @@ struct NativeReceiveView: View {
                     NativeReceiveHistoryList(
                         activeReceive: model.activeReceive,
                         items: model.receiveHistory,
-                        onCancelReceive: model.cancelReceiveTransfer
+                        onCancelReceive: model.cancelReceiveTransfer,
+                        onDeleteHistory: { item in
+                            deleteReceivedFiles = false
+                            pendingDeleteItem = item
+                        }
                     )
                 }
             }
@@ -31,6 +38,30 @@ struct NativeReceiveView: View {
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
+        .overlay {
+            if let item = pendingDeleteItem {
+                NativeDeleteReceiveHistoryDialog(
+                    item: item,
+                    deleteReceivedFiles: deleteReceivedFiles,
+                    onDeleteReceivedFilesChange: { deleteReceivedFiles = $0 },
+                    onCancel: { pendingDeleteItem = nil },
+                    onConfirm: {
+                        pendingDeleteItem = nil
+                        model.deleteReceiveHistory(item, deleteFiles: deleteReceivedFiles) { failedCount in
+                            if failedCount > 0 {
+                                deleteFailureMessage = "有\(failedCount)个文件未删除"
+                            }
+                        }
+                    }
+                )
+            }
+        }
+        .alert(deleteFailureMessage ?? "", isPresented: Binding(
+            get: { deleteFailureMessage != nil },
+            set: { if !$0 { deleteFailureMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { deleteFailureMessage = nil }
+        }
     }
 }
 
@@ -106,6 +137,7 @@ private struct NativeReceiveHistoryList: View {
     let activeReceive: NativeReceiveTransferState?
     let items: [NativeReceiveHistoryItem]
     let onCancelReceive: () -> Void
+    let onDeleteHistory: (NativeReceiveHistoryItem) -> Void
 
     var body: some View {
         VStack(spacing: 14) {
@@ -118,8 +150,83 @@ private struct NativeReceiveHistoryList: View {
                 }
                 ForEach(items) { item in
                     NativeReceiveHistoryCard(item: item)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button(role: .destructive) {
+                                onDeleteHistory(item)
+                            } label: {
+                                Text("删除")
+                            }
+                        }
                 }
             }
+        }
+    }
+}
+
+private struct NativeDeleteReceiveHistoryDialog: View {
+    let item: NativeReceiveHistoryItem
+    let deleteReceivedFiles: Bool
+    let onDeleteReceivedFilesChange: (Bool) -> Void
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.26)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onCancel)
+            VStack(alignment: .leading, spacing: 16) {
+                Text(item.deleteConfirmationTitle)
+                    .font(PikoFont.compactTitle)
+                    .foregroundStyle(.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(item.deleteConfirmationBody)
+                    .font(PikoFont.rowSubtitle)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .center) {
+                    Button {
+                        onDeleteReceivedFilesChange(!deleteReceivedFiles)
+                    } label: {
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .stroke(deleteReceivedFiles ? PikoPalette.accent : Color.secondary.opacity(0.48), lineWidth: 1.5)
+                                .frame(width: 20, height: 20)
+                                .overlay {
+                                    if deleteReceivedFiles {
+                                        Image(uiImage: LucideTabIcon.check.image)
+                                            .resizable()
+                                            .frame(width: 14, height: 14)
+                                            .foregroundStyle(PikoPalette.accent)
+                                    }
+                                }
+                            Text("同时删除文件")
+                                .font(PikoFont.rowSubtitle)
+                                .foregroundStyle(.primary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    Spacer(minLength: 12)
+                    HStack(spacing: 12) {
+                        Button("算了", action: onCancel)
+                            .font(PikoFont.rowSubtitle)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                        Button("删除", action: onConfirm)
+                            .font(PikoFont.rowSubtitle)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: 340)
+            .background(PikoPalette.surface, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(Color.secondary.opacity(0.18), lineWidth: 1)
+            )
+            .padding(.horizontal, 24)
         }
     }
 }

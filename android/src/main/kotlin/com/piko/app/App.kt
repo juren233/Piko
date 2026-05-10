@@ -25,6 +25,7 @@ fun App(
     currentDeviceName: String = "当前设备",
     onResetCurrentDeviceName: () -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
+    onDeleteReceiveHistory: (ReceiveHistoryItem, Boolean) -> Unit = { _, _ -> },
     bottomContentPadding: Dp = 0.dp,
 ) {
     var state by remember(currentDeviceName) { mutableStateOf(PikoHomeState.initial(currentDeviceName)) }
@@ -40,6 +41,10 @@ fun App(
                 mediaSaveLocation = mediaSaveLocation,
                 onMediaSaveLocationChange = { mediaSaveLocation = it },
                 sendPlatformActions = sendPlatformActions,
+                onDeleteReceiveHistory = { item, deleteFiles ->
+                    onDeleteReceiveHistory(item, deleteFiles)
+                    state = state.removeReceiveHistory(item.id)
+                },
                 bottomContentPadding = bottomContentPadding,
             )
         }
@@ -55,6 +60,7 @@ fun PikoTabScreen(
     mediaSaveLocation: ReceiveMediaSaveLocation = ReceiveMediaSaveLocation.Folder,
     onMediaSaveLocationChange: (ReceiveMediaSaveLocation) -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
+    onDeleteReceiveHistory: (ReceiveHistoryItem, Boolean) -> Unit = { _, _ -> },
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -64,6 +70,7 @@ fun PikoTabScreen(
             onStateMutate = onStateMutate,
             onResetCurrentDeviceName = onResetCurrentDeviceName,
             sendPlatformActions = sendPlatformActions,
+            onDeleteReceiveHistory = onDeleteReceiveHistory,
             bottomContentPadding = bottomContentPadding,
             modifier = modifier,
         )

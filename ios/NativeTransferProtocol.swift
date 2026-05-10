@@ -93,7 +93,7 @@ enum NativeTransferProtocol {
             guard let bytes = data.readData(count: file.sizeBytes, offset: &offset) else {
                 return nil
             }
-            files.append(NativeReceivedFile(displayName: file.displayName, fileType: file.fileType, data: bytes))
+            files.append(NativeReceivedFile(displayName: file.displayName, fileType: file.fileType, sizeBytes: file.sizeBytes, data: bytes))
         }
 
         return NativeTransferEnvelope(

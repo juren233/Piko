@@ -144,6 +144,7 @@ class LocalSendHttpServer(
                         } else {
                             null
                         },
+                        savedUri = uri.toString(),
                     )
                     val completedBytes = session.completeFile(file.metadata.fileName, completedFile, contentLength)
                     onReceiveTransferEvent(
@@ -389,6 +390,7 @@ private fun receiveLegacyTransfer(
                 } else {
                     null
                 },
+                savedUri = uri.toString(),
             )
             onReceiveTransferEvent(
                 ReceiveTransferEvent.Progress(
@@ -440,12 +442,14 @@ private class LocalSendReceiveSessionState(
 
 private fun LocalSendFileMetadata.toReceiveHistoryFile(
     thumbnailBytes: ByteArray? = null,
+    savedUri: String? = null,
 ): ReceiveHistoryFile {
     return ReceiveHistoryFile(
         displayName = fileName,
         fileType = fileType.toReceiveFileType(),
         sizeBytes = size,
         thumbnailBytes = thumbnailBytes,
+        savedUri = savedUri,
     )
 }
 
@@ -537,12 +541,14 @@ private fun ContentResolver.loadThumbnailBytes(uri: Uri): ByteArray? {
 
 private fun SendTransferHeaderFile.toReceiveHistoryFile(
     thumbnailBytes: ByteArray? = null,
+    savedUri: String? = null,
 ): ReceiveHistoryFile {
     return ReceiveHistoryFile(
         displayName = displayName,
         fileType = fileType.toReceiveFileType(),
         sizeBytes = sizeBytes,
         thumbnailBytes = thumbnailBytes,
+        savedUri = savedUri,
     )
 }
 

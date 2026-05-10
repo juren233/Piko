@@ -38,6 +38,7 @@ class ReceiveHistoryStoreTest {
                         fileType = ReceiveFileType.Video,
                         sizeBytes = 4_096,
                         thumbnailBytes = byteArrayOf(9, 8, 7),
+                        savedUri = "content://piko/receive-new",
                     ),
                 ),
             )
@@ -51,7 +52,45 @@ class ReceiveHistoryStoreTest {
             val restored = recreatedState.receiveHistoryDescending
             assertEquals(listOf("receive-new", "receive-old"), restored.map { it.id })
             assertEquals(byteArrayOf(9, 8, 7).toList(), restored.first().primaryFile.thumbnailBytes?.toList())
+            assertEquals("content://piko/receive-new", restored.first().primaryFile.savedUri)
             assertEquals("旅行短片.mp4", restored.first().mediaPreviewDescription)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun legacyHistoryWithoutSavedUriStillLoads() {
+        val directory = createTempDirectory("piko-receive-history-legacy").toFile()
+        try {
+            val file = File(directory, "receive_history.json")
+            file.writeText(
+                """
+                [
+                  {
+                    "id":"legacy-receive",
+                    "receivedAtEpochMillis":1000,
+                    "receivedAtLabel":"昨天",
+                    "sourceDeviceName":"MacBook",
+                    "fileCount":1,
+                    "files":[
+                      {
+                        "displayName":"旧报告.pdf",
+                        "fileType":"Document",
+                        "sizeBytes":2048,
+                        "thumbnailBytes":null
+                      }
+                    ]
+                  }
+                ]
+                """.trimIndent(),
+            )
+            val store = ReceiveHistoryStore(file)
+            val history = store.load().single()
+
+            assertEquals("legacy-receive", history.id)
+            assertEquals("旧报告.pdf", history.primaryFile.displayName)
+            assertEquals(null, history.primaryFile.savedUri)
         } finally {
             directory.deleteRecursively()
         }
