@@ -28,11 +28,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Checkbox
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -57,7 +56,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
 import kotlin.math.roundToInt
 
 @Composable
@@ -72,7 +70,6 @@ internal fun PikoReceiveScreen(
 ) {
     val activeReceive = state.activeReceive.takeIf { it.transferId != null }
     var pendingDeleteHistory by remember { mutableStateOf<ReceiveHistoryItem?>(null) }
-    var deleteReceivedFiles by remember(pendingDeleteHistory) { mutableStateOf(false) }
 
     Box(
         modifier = modifier
@@ -133,11 +130,13 @@ internal fun PikoReceiveScreen(
         pendingDeleteHistory?.let { history ->
             DeleteReceiveHistoryDialog(
                 history = history,
-                deleteReceivedFiles = deleteReceivedFiles,
-                onDeleteReceivedFilesChange = { deleteReceivedFiles = it },
                 onDismiss = { pendingDeleteHistory = null },
-                onConfirm = {
-                    onDeleteReceiveHistory(history, deleteReceivedFiles)
+                onDeleteRecord = {
+                    onDeleteReceiveHistory(history, false)
+                    pendingDeleteHistory = null
+                },
+                onDeleteRecordAndFiles = {
+                    onDeleteReceiveHistory(history, true)
                     pendingDeleteHistory = null
                 },
             )
@@ -420,63 +419,43 @@ private fun SwipeToDeleteReceiveHistoryCard(
 @Composable
 private fun DeleteReceiveHistoryDialog(
     history: ReceiveHistoryItem,
-    deleteReceivedFiles: Boolean,
-    onDeleteReceivedFilesChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
-    onConfirm: () -> Unit,
+    onDeleteRecord: () -> Unit,
+    onDeleteRecordAndFiles: () -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
-        ) {
-            Column(
-                modifier = Modifier.padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    text = history.deleteConfirmationTitle,
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = history.deleteConfirmationBody,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Row(
-                        modifier = Modifier.clickable { onDeleteReceivedFilesChange(!deleteReceivedFiles) },
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Checkbox(
-                            checked = deleteReceivedFiles,
-                            onCheckedChange = onDeleteReceivedFilesChange,
-                        )
-                        Text(
-                            text = "同时删除文件",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    Row {
-                        TextButton(onClick = onDismiss) {
-                            Text(text = "算了")
-                        }
-                        TextButton(onClick = onConfirm) {
-                            Text(text = "删除", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = history.deleteConfirmationTitle,
+                style = MaterialTheme.typography.titleLarge,
+            )
+        },
+        text = {
+            Text(
+                text = history.deleteConfirmationBody,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "算了")
+            }
+        },
+        confirmButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDeleteRecord) {
+                    Text(text = "仅删除记录")
+                }
+                TextButton(onClick = onDeleteRecordAndFiles) {
+                    Text(
+                        text = "删除记录与文件",
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
             }
-        }
-    }
+        },
+    )
 }
 
 @Composable
