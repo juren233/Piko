@@ -5,55 +5,61 @@ struct NativeReceiveView: View {
     @ObservedObject var model: NativePikoModel
     @State private var deleteFailureMessage: String?
     @State private var pendingDeleteHistory: NativeReceiveHistoryItem?
-    @State private var pendingSwipeHistoryID: UUID?
 
     var body: some View {
-        ScrollView(showsIndicators: false) {
-            LazyVStack(spacing: 0) {
-                rowView(top: 28, bottom: 8) {
-                    PikoHeroPanel(
-                        title: "Piko",
-                        subtitle: "接收记录和本机收件箱",
-                        metric: "\(model.receiveHistory.count) 次"
-                    )
+        List {
+            rowView(top: 28, bottom: 8) {
+                PikoHeroPanel(
+                    title: "Piko",
+                    subtitle: "接收记录和本机收件箱",
+                    metric: "\(model.receiveHistory.count) 次"
+                )
+            }
+            .nativeReceiveListRow()
+
+            rowView(bottom: NativeReceiveLayout.deviceNicknameBottomSpacing) {
+                NativeDeviceNicknameBanner(
+                    nickname: model.currentDeviceName,
+                    onReset: model.resetDeviceNickname
+                )
+            }
+            .nativeReceiveListRow()
+
+            if model.receiveHistory.isEmpty && model.activeReceive == nil {
+                emptyStateCardView(
+                    top: NativeReceiveLayout.emptyStateTopSpacing,
+                    bottom: NativeReceiveLayout.emptyStateBottomSpacing
+                ) {
+                    NativeReceiveEmptyStateContent()
                 }
-                rowView(bottom: NativeReceiveLayout.deviceNicknameBottomSpacing) {
-                    NativeDeviceNicknameBanner(
-                        nickname: model.currentDeviceName,
-                        onReset: model.resetDeviceNickname
-                    )
-                }
-                if model.receiveHistory.isEmpty && model.activeReceive == nil {
-                    emptyStateCardView(
-                        top: NativeReceiveLayout.emptyStateTopSpacing,
-                        bottom: NativeReceiveLayout.emptyStateBottomSpacing
-                    ) {
-                        NativeReceiveEmptyStateContent()
+                .nativeReceiveListRow()
+            } else {
+                if let activeReceive = model.activeReceive {
+                    rowView(bottom: 12) {
+                        NativeActiveReceiveCard(
+                            transfer: activeReceive,
+                            onCancel: model.cancelReceiveTransfer
+                        )
                     }
-                } else {
-                    if let activeReceive = model.activeReceive {
-                        rowView(bottom: 12) {
-                            NativeActiveReceiveCard(
-                                transfer: activeReceive,
-                                onCancel: model.cancelReceiveTransfer
-                            )
+                    .nativeReceiveListRow()
+                }
+                ForEach(Array(model.receiveHistory.enumerated()), id: \.element.id) { index, item in
+                    rowView(bottom: index < model.receiveHistory.count - 1 ? NativeReceiveLayout.historyRowSpacing : 0) {
+                        NativeReceiveHistoryCard(item: item)
+                    }
+                    .nativeReceiveListRow()
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("删除", role: .destructive) {
+                            pendingDeleteHistory = item
                         }
                     }
-                    ForEach(Array(model.receiveHistory.enumerated()), id: \.element.id) { index, item in
-                        NativeReceiveSwipeRow(
-                            item: item,
-                            bottomSpacing: index < model.receiveHistory.count - 1 ? NativeReceiveLayout.historyRowSpacing : 0,
-                            pendingSwipeHistoryID: $pendingSwipeHistoryID,
-                            onDelete: { pendingDeleteHistory = item }
-                        ) {
-                            NativeReceiveHistoryCard(item: item)
-                        }
-                    }
-                    Color.clear
-                        .frame(height: NativeReceiveLayout.bottomSpacerHeight)
                 }
+                Color.clear
+                    .frame(height: NativeReceiveLayout.bottomSpacerHeight)
+                    .nativeReceiveListRow()
             }
         }
+        .listStyle(.plain)
         .ignoresSafeArea(.container, edges: [.top, .bottom])
         .background(PikoPalette.pageBackground.ignoresSafeArea())
         .systemBarBackgrounds()
@@ -63,7 +69,6 @@ struct NativeReceiveView: View {
         )) {
             Button("算了", role: .cancel) {
                 pendingDeleteHistory = nil
-                pendingSwipeHistoryID = nil
             }
             Button("仅删除记录", role: .destructive) {
                 if let item = pendingDeleteHistory {
@@ -90,7 +95,6 @@ struct NativeReceiveView: View {
 
     private func confirmDelete(_ item: NativeReceiveHistoryItem, deleteFiles: Bool) {
         pendingDeleteHistory = nil
-        pendingSwipeHistoryID = nil
         model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { failedCount in
             if failedCount > 0 {
                 deleteFailureMessage = "有\(failedCount)个文件未删除"
@@ -128,6 +132,14 @@ struct NativeReceiveView: View {
     }
 }
 
+private extension View {
+    func nativeReceiveListRow() -> some View {
+        listRowInsets(EdgeInsets())
+            .listRowSeparator(.hidden)
+            .listRowBackground(PikoPalette.pageBackground)
+    }
+}
+
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
@@ -138,74 +150,6 @@ private enum NativeReceiveLayout {
     static let emptyStateTopSpacing: CGFloat = 24
     static let emptyStateBottomSpacing: CGFloat = 112
     static let emptyStateMinimumContentHeight: CGFloat = 164
-}
-
-private struct NativeReceiveSwipeRow<Content: View>: View {
-    let item: NativeReceiveHistoryItem
-    let bottomSpacing: CGFloat
-    @Binding var pendingSwipeHistoryID: UUID?
-    let onDelete: () -> Void
-    let content: Content
-
-    @State private var dragOffset: CGFloat = 0
-
-    private let deleteWidth: CGFloat = 96
-
-    init(
-        item: NativeReceiveHistoryItem,
-        bottomSpacing: CGFloat,
-        pendingSwipeHistoryID: Binding<UUID?>,
-        onDelete: @escaping () -> Void,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.item = item
-        self.bottomSpacing = bottomSpacing
-        self._pendingSwipeHistoryID = pendingSwipeHistoryID
-        self.onDelete = onDelete
-        self.content = content()
-    }
-
-    var body: some View {
-        let revealedWidth = pendingSwipeHistoryID == item.id ? deleteWidth : dragOffset
-        ZStack(alignment: .trailing) {
-            Button(action: onDelete) {
-                Text("删除")
-                    .font(PikoFont.button)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .frame(width: deleteWidth)
-            .background(Color.red, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .opacity(max(0.001, revealedWidth / deleteWidth))
-
-            content
-                .offset(x: -revealedWidth)
-                .gesture(
-                    DragGesture(minimumDistance: 12)
-                        .onChanged { value in
-                            let translation = value.translation.width
-                            if translation < 0 {
-                                dragOffset = min(deleteWidth, -translation)
-                            } else if pendingSwipeHistoryID == item.id {
-                                dragOffset = max(0, deleteWidth - translation)
-                            }
-                        }
-                        .onEnded { _ in
-                            if dragOffset > deleteWidth * 0.5 {
-                                pendingSwipeHistoryID = item.id
-                            } else {
-                                pendingSwipeHistoryID = nil
-                            }
-                            dragOffset = 0
-                        }
-                )
-        }
-        .padding(.horizontal, NativeReceiveLayout.pageHorizontalInset)
-        .padding(.trailing, NativeReceiveLayout.contentTrailingInset)
-        .padding(.bottom, bottomSpacing)
-        .animation(.easeOut(duration: 0.18), value: pendingSwipeHistoryID)
-        .animation(.easeOut(duration: 0.18), value: dragOffset)
-    }
 }
 
 private struct NativeDeviceNicknameBanner: View {
