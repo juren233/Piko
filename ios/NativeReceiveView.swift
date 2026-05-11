@@ -7,7 +7,6 @@ private let nativeReceiveViewLogger = Logger(subsystem: "com.juren233.piko", cat
 
 private func receiveListLog(_ message: String) {
     nativeReceiveViewLogger.notice("\(message, privacy: .public)")
-    NSLog("%@", message)
 }
 
 struct NativeReceiveView: View {
@@ -244,8 +243,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
             return UITableViewCell(style: .default, reuseIdentifier: nil)
         }
         let row = rows[indexPath.row]
-        let tableRect = tableView.rectForRow(at: indexPath)
-        receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) tableRect=\(receiveListFrameDescription(tableRect)) expectedHeight=\(Double(row.expectedTableHeight ?? -1))")
+        receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) expectedHeight=\(Double(row.expectedTableHeight ?? -1))")
         let cell = NativeReceiveHostingCell(style: .default, reuseIdentifier: nil)
         cell.configure(
             rootView: row.makeView(model: model),
@@ -401,7 +399,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private var visibleRowsDiagnosticDescription: String {
         (tableView.indexPathsForVisibleRows ?? []).map { indexPath in
             let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
-            return "row:\(indexPath.row),rect:\(receiveListFrameDescription(tableView.rectForRow(at: indexPath))),item:\(item)"
+            return "row:\(indexPath.row),item:\(item)"
         }.joined(separator: ";")
     }
 }
@@ -416,7 +414,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
     private var host: UIHostingController<AnyView>?
     private var diagnosticDescription = "unset"
     private var expectedHeight: CGFloat?
-    private var lastLoggedLayoutDescription: String?
 
     func configure(
         rootView: AnyView,
@@ -427,7 +424,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         detachHost()
         self.diagnosticDescription = diagnosticDescription
         self.expectedHeight = expectedHeight
-        lastLoggedLayoutDescription = nil
         selectionStyle = .none
         backgroundColor = PikoPalette.pageBackgroundUIColor
         contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
@@ -448,7 +444,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         ])
         controller.didMove(toParent: parent)
         host = controller
-        logLayoutIfNeeded(reason: "configure")
     }
 
     func detachHost() {
@@ -461,17 +456,11 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         self.host = nil
     }
 
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        logLayoutIfNeeded(reason: "layoutSubviews")
-    }
-
     override func prepareForReuse() {
         super.prepareForReuse()
         detachHost()
         diagnosticDescription = "unset"
         expectedHeight = nil
-        lastLoggedLayoutDescription = nil
     }
 
     deinit {
@@ -479,22 +468,8 @@ private final class NativeReceiveHostingCell: UITableViewCell {
     }
 
     var layoutDiagnosticDescription: String {
-        let fittingSize = contentView.systemLayoutSizeFitting(
-            CGSize(width: max(contentView.bounds.width, 1), height: UIView.layoutFittingCompressedSize.height),
-            withHorizontalFittingPriority: .required,
-            verticalFittingPriority: .fittingSizeLevel
-        )
         let hostFrame = host.map { receiveListFrameDescription($0.view.frame) } ?? "none"
-        return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame),fitting:\(receiveListSizeDescription(fittingSize)),expected:\(Int((expectedHeight ?? -1).rounded()))"
-    }
-
-    private func logLayoutIfNeeded(reason: String) {
-        let layout = layoutDiagnosticDescription
-        guard layout != lastLoggedLayoutDescription else {
-            return
-        }
-        lastLoggedLayoutDescription = layout
-        receiveListLog("[ReceiveList] cellLayout reason=\(reason) item=\(self.diagnosticDescription) layout=\(layout)")
+        return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame),expected:\(Int((expectedHeight ?? -1).rounded()))"
     }
 }
 
