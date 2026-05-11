@@ -320,7 +320,9 @@ private final class NativeReceiveHostingCell: UITableViewCell {
             controller.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         controller.didMove(toParent: parent)
+        if #available(iOS 16, *) {
         controller.sizingOptions = .intrinsicContentSize
+        }
         host = controller
     }
 
