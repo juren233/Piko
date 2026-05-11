@@ -137,7 +137,7 @@ private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
     static let historyRowSpacing: CGFloat = 12
-    static let historyCardHeight: CGFloat = 84
+    static let historyEstimatedHeight: CGFloat = 84
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
     static let emptyStateTopSpacing: CGFloat = 24
@@ -459,8 +459,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             return emptyStateRowHeight()
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
-        case let .history(_, bottomSpacing):
-            return NativeReceiveLayout.historyCardHeight + bottomSpacing
         default:
             return UITableView.automaticDimension
         }
@@ -479,7 +477,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         case .active:
             return 84
         case let .history(_, bottomSpacing):
-            return NativeReceiveLayout.historyCardHeight + bottomSpacing
+            return NativeReceiveLayout.historyEstimatedHeight + bottomSpacing
         }
     }
 
@@ -766,7 +764,7 @@ private struct NativeActiveReceiveCard: View {
     var body: some View {
         HStack(spacing: 14) {
             NativeActiveReceiveProgressIcon(transfer: transfer)
-            VStack(alignment: .leading, spacing: 4) {
+            NativeReceiveTextColumn {
                 Text(transfer.title)
                     .font(PikoFont.compactTitle)
                     .lineLimit(1)
@@ -778,7 +776,6 @@ private struct NativeActiveReceiveCard: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Spacer()
             Button(action: onCancel) {
                 Image(uiImage: LucideTabIcon.x.image)
                     .resizable()
@@ -786,6 +783,8 @@ private struct NativeActiveReceiveCard: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.red)
+            .frame(width: 44, height: 44)
+            .fixedSize(horizontal: true, vertical: false)
             .offset(x: -8)
         }
         .padding(.horizontal, 14)
@@ -828,7 +827,7 @@ private struct NativeReceiveHistoryCard: View {
     var body: some View {
         HStack(spacing: 14) {
             NativeReceiveHistoryPreview(item: item)
-            VStack(alignment: .leading, spacing: 4) {
+            NativeReceiveTextColumn {
                 Text(item.title)
                     .font(PikoFont.rowTitle)
                     .lineLimit(1)
@@ -840,11 +839,11 @@ private struct NativeReceiveHistoryCard: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Spacer()
             Image(uiImage: LucideTabIcon.chevronRight.image)
                 .resizable()
                 .frame(width: 20, height: 20)
                 .foregroundStyle(.secondary.opacity(0.7))
+                .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -853,6 +852,22 @@ private struct NativeReceiveHistoryCard: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
         )
+    }
+}
+
+private struct NativeReceiveTextColumn<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .layoutPriority(1)
     }
 }
 

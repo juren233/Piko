@@ -206,6 +206,22 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun iosReceiveRowsReserveTextSpaceBeforeTrailingControls() {
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
+        val iosReceive = readIos("NativeReceiveView.swift")
+        val normalizedIosReceive = iosReceive.replace("\r\n", "\n")
+
+        assertTrue("modifier = Modifier.weight(1f)" in androidReceive)
+        assertTrue("private struct NativeReceiveTextColumn<Content: View>: View" in iosReceive)
+        assertTrue(".frame(maxWidth: .infinity, alignment: .leading)" in iosReceive)
+        assertTrue(".layoutPriority(1)" in iosReceive)
+        assertTrue("NativeReceiveTextColumn {\n                Text(transfer.title)" in normalizedIosReceive)
+        assertTrue("NativeReceiveTextColumn {\n                Text(item.title)" in normalizedIosReceive)
+        assertFalse("            Spacer()\n            Button(action: onCancel)" in normalizedIosReceive)
+        assertFalse("            Spacer()\n            Image(uiImage: LucideTabIcon.chevronRight.image)" in normalizedIosReceive)
+    }
+
+    @Test
     fun receiveHistoryPersistsAndIosSavesInDocumentsRoot() {
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
@@ -275,7 +291,7 @@ class IosAndroidUiParityTest {
         assertTrue("static let pageHorizontalInset: CGFloat = 24" in iosReceive)
         assertTrue("static let contentTrailingInset: CGFloat = 0" in iosReceive)
         assertTrue("static let historyRowSpacing: CGFloat = 12" in iosReceive)
-        assertTrue("static let historyCardHeight: CGFloat = 84" in iosReceive)
+        assertTrue("static let historyEstimatedHeight: CGFloat = 84" in iosReceive)
         assertTrue("case history(NativeReceiveHistoryItem, bottomSpacing: CGFloat)" in iosReceive)
         assertTrue("let bottomSpacing = index < model.receiveHistory.count - 1 ? NativeReceiveLayout.historyRowSpacing : 0" in iosReceive)
         assertTrue("nextRows.append(.history(item, bottomSpacing: bottomSpacing))" in iosReceive)
@@ -286,7 +302,8 @@ class IosAndroidUiParityTest {
         assertTrue("tableView.register(UITableViewCell.self, forCellReuseIdentifier: \"spacer\")" in iosReceive)
         assertTrue("heightForRowAt" in iosReceive)
         assertTrue("estimatedHeightForRowAt" in iosReceive)
-        assertTrue("case let .history(_, bottomSpacing):\n            return NativeReceiveLayout.historyCardHeight + bottomSpacing" in normalizedIosReceive)
+        assertTrue("case let .history(_, bottomSpacing):\n            return NativeReceiveLayout.historyEstimatedHeight + bottomSpacing" in normalizedIosReceive)
+        assertFalse("return NativeReceiveLayout.historyCardHeight + bottomSpacing" in iosReceive)
         assertFalse("case .active, .history:\n            return 84" in normalizedIosReceive)
         assertTrue("return emptyFixedHeightCell(for: row, at: indexPath)" in iosReceive)
         assertTrue("static let bottomSpacerHeight: CGFloat = 112" in iosReceive)
