@@ -58,8 +58,7 @@ private enum NativeReceiveTableRow {
     case deviceName(String)
     case empty
     case active(NativeReceiveTransferState)
-    case history(NativeReceiveHistoryItem)
-    case gap(CGFloat)
+    case history(NativeReceiveHistoryItem, bottomSpacing: CGFloat)
     case spacer
 
     var reuseIdentifier: String {
@@ -74,8 +73,6 @@ private enum NativeReceiveTableRow {
             return "active"
         case .history:
             return "history"
-        case .gap:
-            return "gap"
         case .spacer:
             return "spacer"
         }
@@ -101,21 +98,28 @@ private extension Array where Element == NativeReceiveTableRow {
 
 private extension NativeReceiveTableRow {
     func isHistory(id: UUID) -> Bool {
-        if case let .history(item) = self {
+        if case let .history(item, _) = self {
             return item.id == id
         }
         return false
     }
 
-    var isEmpty: Bool {
-        if case .empty = self {
-            return true
+    var historyID: UUID? {
+        if case let .history(item, _) = self {
+            return item.id
         }
-        return false
+        return nil
     }
 
-    var isGap: Bool {
-        if case .gap = self {
+    var historyBottomSpacing: CGFloat? {
+        if case let .history(_, bottomSpacing) = self {
+            return bottomSpacing
+        }
+        return nil
+    }
+
+    var isEmpty: Bool {
+        if case .empty = self {
             return true
         }
         return false
@@ -133,7 +137,7 @@ private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
     static let historyRowSpacing: CGFloat = 12
-    static let historyRowHeight: CGFloat = 84
+    static let historyCardHeight: CGFloat = 84
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
     static let emptyStateTopSpacing: CGFloat = 24
@@ -233,7 +237,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "empty")
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "active")
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "history")
-        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "gap")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "spacer")
     }
 
@@ -268,10 +271,8 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 nextRows.append(.active(activeReceive))
             }
             for (index, item) in model.receiveHistory.enumerated() {
-                nextRows.append(.history(item))
-                if index < model.receiveHistory.count - 1 {
-                    nextRows.append(.gap(NativeReceiveLayout.historyRowSpacing))
-                }
+                let bottomSpacing = index < model.receiveHistory.count - 1 ? NativeReceiveLayout.historyRowSpacing : 0
+                nextRows.append(.history(item, bottomSpacing: bottomSpacing))
             }
             nextRows.append(.spacer)
         }
@@ -326,6 +327,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
         let deletedIndexPaths = deletedIndexPathsForHistory(id: deletedID, in: currentRows, nextRows: nextRows)
         let insertedIndexPaths = insertedIndexPathsForAnimatedDeletion(from: currentRows, to: nextRows)
+        let reloadIndexPaths = reloadIndexPathsForAnimatedDeletion(from: currentRows, to: nextRows)
         guard !deletedIndexPaths.isEmpty || !insertedIndexPaths.isEmpty else {
             return false
         }
@@ -346,8 +348,9 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             guard let self else {
                 return
             }
-            if !self.rows.isEmpty {
-                self.tableView.reloadRows(at: [IndexPath(row: 0, section: 0)], with: .none)
+            let validReloadIndexPaths = reloadIndexPaths.filter { $0.row < self.rows.count }
+            if !validReloadIndexPaths.isEmpty {
+                self.tableView.reloadRows(at: validReloadIndexPaths, with: .none)
             }
             self.tableView.layoutIfNeeded()
         }
@@ -364,11 +367,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         }
 
         var deletedRows = [historyIndex]
-        if sourceRows.indices.contains(historyIndex + 1), sourceRows[historyIndex + 1].isGap {
-            deletedRows.append(historyIndex + 1)
-        } else if sourceRows.indices.contains(historyIndex - 1), sourceRows[historyIndex - 1].isGap {
-            deletedRows.insert(historyIndex - 1, at: 0)
-        } else if sourceRows.indices.contains(historyIndex + 1),
+        if sourceRows.indices.contains(historyIndex + 1),
                   sourceRows[historyIndex + 1].isSpacer,
                   nextRows.containsEmptyRow {
             deletedRows.append(historyIndex + 1)
@@ -387,6 +386,26 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         return nextRows.enumerated().compactMap { index, row in
             row.isEmpty ? IndexPath(row: index, section: 0) : nil
         }
+    }
+
+    private func reloadIndexPathsForAnimatedDeletion(
+        from currentRows: [NativeReceiveTableRow],
+        to nextRows: [NativeReceiveTableRow]
+    ) -> [IndexPath] {
+        var indexPaths = [IndexPath(row: 0, section: 0)]
+        for (index, nextRow) in nextRows.enumerated() {
+            guard
+                let historyID = nextRow.historyID,
+                let nextSpacing = nextRow.historyBottomSpacing,
+                let currentRow = currentRows.first(where: { $0.isHistory(id: historyID) }),
+                let currentSpacing = currentRow.historyBottomSpacing,
+                abs(nextSpacing - currentSpacing) > 0.5
+            else {
+                continue
+            }
+            indexPaths.append(IndexPath(row: index, section: 0))
+        }
+        return Array(Set(indexPaths)).sorted { $0.row < $1.row }
     }
 
     private func emptyStateRowHeight() -> CGFloat {
@@ -425,9 +444,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let row = rows[indexPath.row]
-        if case .gap = row {
-            return emptyFixedHeightCell(for: row, at: indexPath)
-        }
         if case .spacer = row {
             return emptyFixedHeightCell(for: row, at: indexPath)
         }
@@ -439,14 +455,12 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
     func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         switch rows[indexPath.row] {
-        case let .gap(height):
-            return height
         case .empty:
             return emptyStateRowHeight()
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
-        case .history:
-            return NativeReceiveLayout.historyRowHeight
+        case let .history(_, bottomSpacing):
+            return NativeReceiveLayout.historyCardHeight + bottomSpacing
         default:
             return UITableView.automaticDimension
         }
@@ -454,8 +468,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
     func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
         switch rows[indexPath.row] {
-        case let .gap(height):
-            return height
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
         case .hero:
@@ -466,8 +478,8 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             return emptyStateRowHeight()
         case .active:
             return 84
-        case .history:
-            return NativeReceiveLayout.historyRowHeight
+        case let .history(_, bottomSpacing):
+            return NativeReceiveLayout.historyCardHeight + bottomSpacing
         }
     }
 
@@ -533,15 +545,10 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                     onCancel: { [weak self] in self?.onCancelReceive?() }
                 )
             }
-        case let .history(item):
-            return rowView {
+        case let .history(item, bottomSpacing):
+            return rowView(bottom: bottomSpacing) {
                 NativeReceiveHistoryCard(item: item)
             }
-        case let .gap(height):
-            return AnyView(
-                Color.clear
-                    .frame(height: height)
-            )
         case .spacer:
             return AnyView(
                 Color.clear
@@ -643,6 +650,7 @@ private final class NativeHostingTableCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
         backgroundColor = .clear
         contentView.backgroundColor = .clear
+        contentView.clipsToBounds = true
         selectionStyle = .none
     }
 
@@ -662,6 +670,7 @@ private final class NativeHostingTableCell: UITableViewCell {
 
         let controller = UIHostingController(rootView: rootView)
         controller.view.backgroundColor = .clear
+        controller.view.clipsToBounds = true
         hostingController = controller
         parent.addChild(controller)
         contentView.addSubview(controller.view)
