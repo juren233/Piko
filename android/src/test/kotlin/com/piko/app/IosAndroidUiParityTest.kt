@@ -359,6 +359,7 @@ class IosAndroidUiParityTest {
         assertTrue("emptyStateCardView(" in iosReceive)
         assertTrue("private struct NativeReceiveEmptyStateContent: View" in iosReceive)
         assertTrue("let emptyStateShape = RoundedRectangle(cornerRadius: 24, style: .continuous)" in iosReceive)
+        assertTrue("return AnyView(\n            ZStack {" in iosReceive)
         assertTrue(".fill(Color.secondary.opacity(0.08))" in iosReceive)
         assertTrue(".clipShape(emptyStateShape)" in iosReceive)
         assertTrue(".frame(maxWidth: .infinity)" in iosReceive)

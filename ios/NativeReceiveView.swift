@@ -415,7 +415,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     ) -> AnyView {
         let emptyStateShape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         let cardHeight = max(CGFloat.zero, height - top - bottom)
-        AnyView(
+        return AnyView(
             ZStack {
                 emptyStateShape
                     .fill(Color.secondary.opacity(0.08))
