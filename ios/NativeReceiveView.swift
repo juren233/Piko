@@ -95,8 +95,18 @@ private enum NativeReceiveLayout {
     static let historyRowSpacing: CGFloat = 12
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
-    static let emptyStateEstimatedHeight: CGFloat = 300
+    static let emptyStateTopSpacing: CGFloat = 24
+    static let emptyStateBottomSpacing: CGFloat = 112
+    static let emptyStateMinimumContentHeight: CGFloat = 164
+    static let heroEstimatedHeight: CGFloat = 116
+    static let deviceNameEstimatedHeight: CGFloat = 64
     static let bottomSpacerHeight: CGFloat = 112
+
+    static func emptyStateRowHeight(for tableHeight: CGFloat) -> CGFloat {
+        let occupiedHeight = heroEstimatedHeight + deviceNameEstimatedHeight
+        let minimumHeight = emptyStateTopSpacing + emptyStateMinimumContentHeight + emptyStateBottomSpacing
+        return max(minimumHeight, tableHeight - occupiedHeight)
+    }
 }
 
 private final class NativeReceiveTableViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
@@ -104,6 +114,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     private var rows: [NativeReceiveTableRow] = []
     private var pendingRows: [NativeReceiveTableRow]?
     private var needsDeferredReload = false
+    private var lastEmptyStateRowHeight: CGFloat = 0
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -153,6 +164,11 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "history")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "gap")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "spacer")
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        reloadEmptyStateIfNeeded()
     }
 
     func update(
@@ -216,6 +232,31 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
     private func applyRows(_ nextRows: [NativeReceiveTableRow]) {
         rows = nextRows
+        lastEmptyStateRowHeight = emptyStateRowHeight()
+        UIView.performWithoutAnimation {
+            tableView.reloadData()
+            tableView.layoutIfNeeded()
+        }
+    }
+
+    private func emptyStateRowHeight() -> CGFloat {
+        NativeReceiveLayout.emptyStateRowHeight(for: tableView.bounds.height)
+    }
+
+    private func reloadEmptyStateIfNeeded() {
+        guard rows.contains(where: { row in
+            if case .empty = row {
+                return true
+            }
+            return false
+        }) else {
+            return
+        }
+        let nextHeight = emptyStateRowHeight()
+        guard abs(nextHeight - lastEmptyStateRowHeight) > 0.5 else {
+            return
+        }
+        lastEmptyStateRowHeight = nextHeight
         UIView.performWithoutAnimation {
             tableView.reloadData()
             tableView.layoutIfNeeded()
@@ -244,6 +285,8 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         switch rows[indexPath.row] {
         case let .gap(height):
             return height
+        case .empty:
+            return emptyStateRowHeight()
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
         default:
@@ -258,11 +301,11 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
         case .hero:
-            return 116
+            return NativeReceiveLayout.heroEstimatedHeight
         case .deviceName:
-            return 64
+            return NativeReceiveLayout.deviceNameEstimatedHeight
         case .empty:
-            return NativeReceiveLayout.emptyStateEstimatedHeight
+            return emptyStateRowHeight()
         case .active, .history:
             return 84
         }
@@ -316,7 +359,11 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 )
             }
         case .empty:
-            return rowView(bottom: 136) {
+            return fixedHeightRowView(
+                height: emptyStateRowHeight(),
+                top: NativeReceiveLayout.emptyStateTopSpacing,
+                bottom: NativeReceiveLayout.emptyStateBottomSpacing
+            ) {
                 NativeReceiveEmptyState()
             }
         case let .active(transfer):
@@ -354,6 +401,22 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             content()
                 .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
                 .frame(maxWidth: .infinity)
+                .background(PikoPalette.pageBackground)
+        )
+    }
+
+    private func fixedHeightRowView<Content: View>(
+        height: CGFloat,
+        top: CGFloat = 0,
+        leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
+        trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
+        bottom: CGFloat = 0,
+        @ViewBuilder content: () -> Content
+    ) -> AnyView {
+        AnyView(
+            content()
+                .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
+                .frame(maxWidth: .infinity, height: height, alignment: .top)
                 .background(PikoPalette.pageBackground)
         )
     }
