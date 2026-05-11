@@ -413,18 +413,12 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         bottom: CGFloat = 0,
         @ViewBuilder content: () -> Content
     ) -> AnyView {
-        let emptyStateShape = RoundedRectangle(cornerRadius: 24, style: .continuous)
         let cardHeight = max(CGFloat.zero, height - top - bottom)
         return AnyView(
-            ZStack {
-                emptyStateShape
-                    .fill(Color.secondary.opacity(0.08))
-                content()
-                    .padding(.horizontal, 22)
-            }
+            content()
+                .padding(.horizontal, 22)
                 .frame(maxWidth: .infinity)
                 .frame(height: cardHeight)
-                .clipShape(emptyStateShape)
                 .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
                 .frame(maxWidth: .infinity)
                 .frame(height: height, alignment: .top)
