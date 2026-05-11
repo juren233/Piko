@@ -426,6 +426,13 @@ private struct NativeSwipeToDeleteReceiveHistoryCard: View {
         min(max(deleteWidth + currentOffset, 0), deleteWidth)
     }
 
+    private func horizontalOffset(for translation: CGSize) -> CGFloat? {
+        guard abs(translation.width) > abs(translation.height) else {
+            return nil
+        }
+        return min(max(settledOffset + translation.width, -deleteWidth), 0)
+    }
+
     var body: some View {
         NativeReceiveHistoryCard(item: item)
             .opacity(0)
@@ -457,14 +464,19 @@ private struct NativeSwipeToDeleteReceiveHistoryCard: View {
                             settledOffset = 0
                         }
                     }
-                    .gesture(
-                        DragGesture(minimumDistance: 8)
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 12)
                             .updating($dragTranslation) { value, state, _ in
-                                let nextOffset = min(max(settledOffset + value.translation.width, -deleteWidth), 0)
+                                guard let nextOffset = horizontalOffset(for: value.translation) else {
+                                    state = 0
+                                    return
+                                }
                                 state = nextOffset - settledOffset
                             }
                             .onEnded { value in
-                                let nextOffset = min(max(settledOffset + value.translation.width, -deleteWidth), 0)
+                                guard let nextOffset = horizontalOffset(for: value.translation) else {
+                                    return
+                                }
                                 settledOffset = nextOffset <= -deleteWidth * 0.42 ? -deleteWidth : 0
                             }
                     )
