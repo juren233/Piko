@@ -64,14 +64,20 @@ private enum NativeReceiveTableRow {
 
     var reuseIdentifier: String {
         switch self {
+        case .hero:
+            return "hero"
+        case .deviceName:
+            return "deviceName"
+        case .empty:
+            return "empty"
+        case .active:
+            return "active"
         case .history:
             return "history"
         case .gap:
             return "gap"
         case .spacer:
             return "spacer"
-        default:
-            return "content"
         }
     }
 
@@ -89,12 +95,15 @@ private enum NativeReceiveLayout {
     static let historyRowSpacing: CGFloat = 12
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
+    static let emptyStateEstimatedHeight: CGFloat = 300
     static let bottomSpacerHeight: CGFloat = 112
 }
 
 private final class NativeReceiveTableViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var rows: [NativeReceiveTableRow] = []
+    private var pendingRows: [NativeReceiveTableRow]?
+    private var needsDeferredReload = false
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -137,7 +146,10 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         if #available(iOS 15.0, *) {
             tableView.sectionHeaderTopPadding = 0
         }
-        tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "content")
+        tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "hero")
+        tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "deviceName")
+        tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "empty")
+        tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "active")
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "history")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "gap")
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: "spacer")
@@ -154,8 +166,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         self.onCancelReceive = onCancelReceive
         self.onDeleteReceiveHistory = onDeleteReceiveHistory
         self.onDeleteFailure = onDeleteFailure
-        rows = Self.makeRows(model: model)
-        tableView.reloadData()
+        scheduleRows(Self.makeRows(model: model))
     }
 
     private static func makeRows(model: NativePikoModel) -> [NativeReceiveTableRow] {
@@ -178,6 +189,37 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             nextRows.append(.spacer)
         }
         return nextRows
+    }
+
+    private func scheduleRows(_ nextRows: [NativeReceiveTableRow]) {
+        if rows.isEmpty && pendingRows == nil && !needsDeferredReload {
+            applyRows(nextRows)
+            return
+        }
+        pendingRows = nextRows
+        guard !needsDeferredReload else {
+            return
+        }
+        needsDeferredReload = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else {
+                return
+            }
+            self.needsDeferredReload = false
+            guard let pendingRows = self.pendingRows else {
+                return
+            }
+            self.pendingRows = nil
+            self.applyRows(pendingRows)
+        }
+    }
+
+    private func applyRows(_ nextRows: [NativeReceiveTableRow]) {
+        rows = nextRows
+        UIView.performWithoutAnimation {
+            tableView.reloadData()
+            tableView.layoutIfNeeded()
+        }
     }
 
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
@@ -218,9 +260,9 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         case .hero:
             return 116
         case .deviceName:
-            return 82
+            return 64
         case .empty:
-            return 156
+            return NativeReceiveLayout.emptyStateEstimatedHeight
         case .active, .history:
             return 84
         }
@@ -384,6 +426,8 @@ private final class NativeHostingTableCell: UITableViewCell {
         if let hostingController {
             hostingController.rootView = rootView
             hostingController.view.invalidateIntrinsicContentSize()
+            hostingController.view.setNeedsLayout()
+            contentView.setNeedsLayout()
             return
         }
 
