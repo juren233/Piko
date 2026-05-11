@@ -416,7 +416,8 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         AnyView(
             content()
                 .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
-                .frame(maxWidth: .infinity, height: height, alignment: .top)
+                .frame(maxWidth: .infinity)
+                .frame(height: height, alignment: .top)
                 .background(PikoPalette.pageBackground)
         )
     }
