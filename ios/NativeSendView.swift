@@ -2,16 +2,19 @@ import SwiftUI
 
 struct NativeSendView: View {
     @ObservedObject var model: NativePikoModel
+    let onScrollProgressChange: (CGFloat) -> Void
+    @StateObject private var titleCollapseState = PikoTitleCollapseState()
     @State private var showingPhotoPicker = false
     @State private var showingDocumentPicker = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                PikoHeroPanel(
+                PikoCollapsingPageHeroHeader(
                     title: "发送",
                     subtitle: "选择目标和文件后直接传输",
-                    metric: "\(model.selectedDeviceIds.count) 台 / \(model.selectedItemIds.count) 项"
+                    metric: "\(model.selectedDeviceIds.count) 台 / \(model.selectedItemIds.count) 项",
+                    collapseState: titleCollapseState
                 )
                 if model.transferIsVisible {
                     NativeTransferSection(model: model)
@@ -45,8 +48,15 @@ struct NativeSendView: View {
                 )
             }
             .padding(.horizontal, 24)
-            .padding(.top, 32)
+            .padding(.top, 68)
             .padding(.bottom, 136)
+            .background(alignment: .top) {
+                PikoScrollProgressObserver { progress in
+                    titleCollapseState.update(progress)
+                    onScrollProgressChange(progress)
+                }
+                    .frame(width: 0, height: 0)
+            }
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()

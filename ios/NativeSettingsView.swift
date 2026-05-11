@@ -2,14 +2,17 @@ import SwiftUI
 
 struct NativeSettingsView: View {
     @ObservedObject var model: NativePikoModel
+    let onScrollProgressChange: (CGFloat) -> Void
+    @StateObject private var titleCollapseState = PikoTitleCollapseState()
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                PikoHeroPanel(
+                PikoCollapsingPageHeroHeader(
                     title: "设置",
                     subtitle: "设备、账号和传输偏好",
-                    metric: "本机"
+                    metric: "本机",
+                    collapseState: titleCollapseState
                 )
                 PikoSectionPanel(title: "传输") {
                     NativeSettingsRow(title: "自动接收", value: "可信设备")
@@ -40,8 +43,15 @@ struct NativeSettingsView: View {
                 }
             }
             .padding(.horizontal, 24)
-            .padding(.top, 32)
+            .padding(.top, 68)
             .padding(.bottom, 136)
+            .background(alignment: .top) {
+                PikoScrollProgressObserver { progress in
+                    titleCollapseState.update(progress)
+                    onScrollProgressChange(progress)
+                }
+                    .frame(width: 0, height: 0)
+            }
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()

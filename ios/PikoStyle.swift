@@ -24,6 +24,94 @@ enum PikoPalette {
     }
 }
 
+enum PikoTopBarProgress {
+    static func value(for offset: CGFloat) -> CGFloat {
+        min(max(offset / 58, 0), 1)
+    }
+}
+
+final class PikoTitleCollapseState: ObservableObject {
+    @Published private(set) var progress: CGFloat = 0
+
+    func update(_ progress: CGFloat) {
+        let normalizedProgress = min(max(progress, 0), 1)
+        let delta = abs(normalizedProgress - self.progress)
+        let isChangedEdge = (normalizedProgress == 0 || normalizedProgress == 1) && normalizedProgress != self.progress
+        guard isChangedEdge || delta >= 0.01 else {
+            return
+        }
+        self.progress = normalizedProgress
+    }
+}
+
+struct PikoScrollProgressObserver: UIViewRepresentable {
+    let onProgressChange: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> PikoScrollProgressObserverView {
+        let view = PikoScrollProgressObserverView()
+        view.onProgressChange = onProgressChange
+        return view
+    }
+
+    func updateUIView(_ view: PikoScrollProgressObserverView, context: Context) {
+        view.onProgressChange = onProgressChange
+        view.attachToNearestScrollView()
+    }
+}
+
+final class PikoScrollProgressObserverView: UIView {
+    var onProgressChange: ((CGFloat) -> Void)?
+
+    private weak var observedScrollView: UIScrollView?
+    private var observation: NSKeyValueObservation?
+    private var baselineOffset: CGFloat?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.attachToNearestScrollView()
+        }
+    }
+
+    func attachToNearestScrollView() {
+        guard let scrollView = nearestScrollView(), observedScrollView !== scrollView else {
+            publishProgress()
+            return
+        }
+
+        observation = nil
+        observedScrollView = scrollView
+        baselineOffset = nil
+        observation = scrollView.observe(\.contentOffset, options: [.new]) { [weak self] _, _ in
+            self?.publishProgress()
+        }
+        publishProgress()
+    }
+
+    private func nearestScrollView() -> UIScrollView? {
+        var view = superview
+        while let current = view {
+            if let scrollView = current as? UIScrollView {
+                return scrollView
+            }
+            view = current.superview
+        }
+        return nil
+    }
+
+    private func publishProgress() {
+        guard let scrollView = observedScrollView else {
+            return
+        }
+        let rawOffset = scrollView.contentOffset.y + scrollView.adjustedContentInset.top
+        if baselineOffset == nil {
+            baselineOffset = rawOffset
+        }
+        let offset = max(rawOffset - (baselineOffset ?? rawOffset), 0)
+        onProgressChange?(PikoTopBarProgress.value(for: offset))
+    }
+}
+
 enum PikoFont {
     private enum ScreenTextScale {
         case compact
@@ -81,23 +169,11 @@ enum PikoFont {
     }
 }
 
-struct PikoHeroPanel<Action: View>: View {
+struct PikoPageHeroHeader: View {
     let title: String
     let subtitle: String
     let metric: String
-    let action: Action
-
-    init(
-        title: String,
-        subtitle: String,
-        metric: String,
-        @ViewBuilder action: () -> Action = { EmptyView() }
-    ) {
-        self.title = title
-        self.subtitle = subtitle
-        self.metric = metric
-        self.action = action()
-    }
+    var titleCollapseProgress: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 18) {
@@ -108,6 +184,8 @@ struct PikoHeroPanel<Action: View>: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.88)
                     .truncationMode(.tail)
+                    .blur(radius: titleCollapseProgress * 8)
+                    .opacity(1 - titleCollapseProgress)
                 Text(subtitle)
                     .font(PikoFont.pageSubtitle)
                     .lineLimit(2)
@@ -115,13 +193,26 @@ struct PikoHeroPanel<Action: View>: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
-            VStack(alignment: .trailing, spacing: 8) {
-                PikoPill(text: metric, emphasized: true)
-                action
-            }
+            PikoPill(text: metric, emphasized: true)
         }
         .padding(.top, 10)
         .padding(.bottom, 12)
+    }
+}
+
+struct PikoCollapsingPageHeroHeader: View {
+    let title: String
+    let subtitle: String
+    let metric: String
+    @ObservedObject var collapseState: PikoTitleCollapseState
+
+    var body: some View {
+        PikoPageHeroHeader(
+            title: title,
+            subtitle: subtitle,
+            metric: metric,
+            titleCollapseProgress: collapseState.progress
+        )
     }
 }
 

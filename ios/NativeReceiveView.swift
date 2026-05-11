@@ -12,16 +12,22 @@ private func receiveListLog(_ message: String) {
 
 struct NativeReceiveView: View {
     @ObservedObject var model: NativePikoModel
+    let onScrollProgressChange: (CGFloat) -> Void
+    @StateObject private var titleCollapseState = PikoTitleCollapseState()
     @State private var deleteFailureMessage: String?
 
     var body: some View {
-        NativeReceiveTable(model: model) { failedCount in
+        NativeReceiveTable(
+            model: model,
+            titleCollapseState: titleCollapseState,
+            onScrollProgressChange: onScrollProgressChange
+        ) { failedCount in
             if failedCount > 0 {
                 deleteFailureMessage = "有\(failedCount)个文件未删除"
             }
         }
-        .ignoresSafeArea(.container, edges: [.top, .bottom])
-        .background(PikoPalette.pageBackground.ignoresSafeArea())
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
         .alert(deleteFailureMessage ?? "", isPresented: Binding(
             get: { deleteFailureMessage != nil },
@@ -34,17 +40,29 @@ struct NativeReceiveView: View {
 
 private struct NativeReceiveTable: UIViewControllerRepresentable {
     let model: NativePikoModel
+    let titleCollapseState: PikoTitleCollapseState
+    let onScrollProgressChange: (CGFloat) -> Void
     let onDeleteFailure: (Int) -> Void
 
     func makeUIViewController(context: Context) -> NativeReceiveTableViewController {
         let controller = NativeReceiveTableViewController(style: .plain)
-        controller.configure(model: model, onDeleteFailure: onDeleteFailure)
+        controller.configure(
+            model: model,
+            titleCollapseState: titleCollapseState,
+            onScrollProgressChange: onScrollProgressChange,
+            onDeleteFailure: onDeleteFailure
+        )
         receiveListLog("[ReceiveList] make controller history=\(self.model.receiveHistory.count) active=\(self.model.activeReceive == nil ? 0 : 1)")
         return controller
     }
 
     func updateUIViewController(_ controller: NativeReceiveTableViewController, context: Context) {
-        controller.configure(model: model, onDeleteFailure: onDeleteFailure)
+        controller.configure(
+            model: model,
+            titleCollapseState: titleCollapseState,
+            onScrollProgressChange: onScrollProgressChange,
+            onDeleteFailure: onDeleteFailure
+        )
         receiveListLog("[ReceiveList] update controller history=\(self.model.receiveHistory.count) active=\(self.model.activeReceive == nil ? 0 : 1)")
         controller.apply(rows: NativeReceiveRow.rows(for: model))
     }
@@ -56,33 +74,19 @@ private enum NativeReceiveRow {
     case empty
     case active(NativeReceiveTransferState)
     case history(NativeReceiveHistoryItem)
-    case spacer
 
     var diagnosticDescription: String {
         switch self {
         case .hero(let count):
             return "hero(count:\(count))"
-        case .device:
-            return "device"
+        case .device(let nickname):
+            return "device(nickname:\(nickname))"
         case .empty:
             return "empty"
         case .active(let transfer):
             return "active(id:\(transfer.id),files:\(transfer.files.count),received:\(transfer.receivedBytes),total:\(transfer.totalBytes))"
         case .history(let item):
             return item.receiveListDiagnosticDescription
-        case .spacer:
-            return "spacer"
-        }
-    }
-
-    var expectedTableHeight: CGFloat? {
-        switch self {
-        case .history, .active:
-            return 80
-        case .spacer:
-            return NativeReceiveLayout.bottomSpacerHeight
-        case .hero, .device, .empty:
-            return nil
         }
     }
 
@@ -98,21 +102,21 @@ private enum NativeReceiveRow {
                 result.append(.active(activeReceive))
             }
             result.append(contentsOf: model.receiveHistory.map(NativeReceiveRow.history))
-            result.append(.spacer)
         }
         return result
     }
 
-    func makeView(model: NativePikoModel) -> AnyView? {
+    func makeView(model: NativePikoModel, titleCollapseState: PikoTitleCollapseState) -> AnyView? {
         let probeName = diagnosticDescription
         switch self {
         case .hero(let count):
             return AnyView(
-                rowView(top: 28, bottom: 8) {
-                    PikoHeroPanel(
+                rowView(top: 12, bottom: 8) {
+                    PikoCollapsingPageHeroHeader(
                         title: "Piko",
                         subtitle: "接收记录和本机收件箱",
-                        metric: "\(count) 次"
+                        metric: "\(count) 次",
+                        collapseState: titleCollapseState
                     )
                 }
                 .receiveListLayoutProbe(probeName)
@@ -160,27 +164,40 @@ private enum NativeReceiveRow {
                 }
                 .receiveListLayoutProbe(probeName)
             )
-        case .spacer:
-            return nil
         }
     }
 }
 
 private final class NativeReceiveTableViewController: UITableViewController {
     private var model: NativePikoModel?
+    private var titleCollapseState: PikoTitleCollapseState?
+    private var onScrollProgressChange: ((CGFloat) -> Void)?
     private var onDeleteFailure: ((Int) -> Void)?
     private var rows: [NativeReceiveRow] = []
     private var isApplyingAnimatedDelete = false
     private var lastScrollLogOffsetY: CGFloat?
+    private var baselineScrollOffset: CGFloat?
 
-    func configure(model: NativePikoModel, onDeleteFailure: @escaping (Int) -> Void) {
+    func configure(
+        model: NativePikoModel,
+        titleCollapseState: PikoTitleCollapseState,
+        onScrollProgressChange: @escaping (CGFloat) -> Void,
+        onDeleteFailure: @escaping (Int) -> Void
+    ) {
         self.model = model
+        self.titleCollapseState = titleCollapseState
+        self.onScrollProgressChange = onScrollProgressChange
         self.onDeleteFailure = onDeleteFailure
     }
 
     func apply(rows: [NativeReceiveRow]) {
         let previousRows = self.rows
+        guard previousRows.diagnosticDescription != rows.diagnosticDescription else {
+            receiveListLog("[ReceiveList] apply skipped unchanged rows=\(rows.count)")
+            return
+        }
         self.rows = rows
+        baselineScrollOffset = nil
         receiveListLog("[ReceiveList] apply previous=\(previousRows.count) next=\(rows.count) previousRows=\(previousRows.diagnosticDescription) nextRows=\(rows.diagnosticDescription)")
         guard isViewLoaded else {
             receiveListLog("[ReceiveList] apply deferred viewLoaded=false")
@@ -205,7 +222,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.separatorStyle = .none
         tableView.allowsSelection = false
         tableView.showsVerticalScrollIndicator = false
-        tableView.contentInsetAdjustmentBehavior = .never
+        tableView.contentInsetAdjustmentBehavior = .automatic
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 84
         applyReadableContentInsets(reason: "viewDidLoad")
@@ -216,6 +233,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         applyReadableContentInsets(reason: "viewDidLayoutSubviews")
+        publishScrollProgress()
         logTableGeometry(reason: "viewDidLayoutSubviews")
     }
 
@@ -226,16 +244,14 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         guard rows.indices.contains(indexPath.row) else {
-            receiveListLog("[ReceiveList] height row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=80")
-            return 80
+            receiveListLog("[ReceiveList] height row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=automatic")
+            return UITableView.automaticDimension
         }
         let row = rows[indexPath.row]
         let height: CGFloat
         switch row {
         case .history, .active:
-            height = 80
-        case .spacer:
-            height = NativeReceiveLayout.bottomSpacerHeight
+            height = UITableView.automaticDimension
         case .hero, .device, .empty:
             height = UITableView.automaticDimension
         }
@@ -245,13 +261,12 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
         guard rows.indices.contains(indexPath.row) else {
-            receiveListLog("[ReceiveList] estimate row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=80")
-            return 80
+            receiveListLog("[ReceiveList] estimate row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=\(Double(tableView.estimatedRowHeight))")
+            return tableView.estimatedRowHeight
         }
         let row = rows[indexPath.row]
-        let estimate = row.expectedTableHeight ?? tableView.estimatedRowHeight
-        receiveListLog("[ReceiveList] estimate row=\(indexPath.row) item=\(row.diagnosticDescription) estimate=\(Double(estimate))")
-        return estimate
+        receiveListLog("[ReceiveList] estimate row=\(indexPath.row) item=\(row.diagnosticDescription) estimate=\(Double(tableView.estimatedRowHeight))")
+        return tableView.estimatedRowHeight
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -260,20 +275,31 @@ private final class NativeReceiveTableViewController: UITableViewController {
             return UITableViewCell(style: .default, reuseIdentifier: nil)
         }
         let row = rows[indexPath.row]
-        receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) expectedHeight=\(Double(row.expectedTableHeight ?? -1))")
-        if case .spacer = row {
-            return NativeReceiveSpacerCell(height: NativeReceiveLayout.bottomSpacerHeight)
+        receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription)")
+        guard let titleCollapseState, let rootView = row.makeView(model: model, titleCollapseState: titleCollapseState) else {
+            receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) missingHostedView fallback=emptyCell")
+            return UITableViewCell(style: .default, reuseIdentifier: nil)
         }
-        guard let rootView = row.makeView(model: model) else {
-            receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) missingHostedView fallback=spacer")
-            return NativeReceiveSpacerCell(height: NativeReceiveLayout.bottomSpacerHeight)
+        if #available(iOS 16.0, *) {
+            let cell = UITableViewCell(style: .default, reuseIdentifier: nil)
+            cell.selectionStyle = .none
+            cell.backgroundColor = PikoPalette.pageBackgroundUIColor
+            cell.contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
+            cell.preservesSuperviewLayoutMargins = false
+            cell.contentView.preservesSuperviewLayoutMargins = false
+            cell.contentView.layoutMargins = .zero
+            cell.contentConfiguration = UIHostingConfiguration {
+                rootView
+            }
+            .margins(.all, 0)
+            .background(PikoPalette.pageBackground)
+            return cell
         }
         let cell = NativeReceiveHostingCell(style: .default, reuseIdentifier: nil)
         cell.configure(
             rootView: rootView,
             parent: self,
-            diagnosticDescription: row.diagnosticDescription,
-            expectedHeight: row.expectedTableHeight
+            diagnosticDescription: row.diagnosticDescription
         )
         return cell
     }
@@ -319,15 +345,30 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
         let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] didEndDisplaying row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
+        if let hostingCell = cell as? NativeReceiveHostingCell {
+            hostingCell.detachHost()
+        }
     }
 
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        publishScrollProgress()
         let offsetY = scrollView.contentOffset.y
         guard lastScrollLogOffsetY.map({ abs(offsetY - $0) >= 96 }) ?? true else {
             return
         }
         lastScrollLogOffsetY = offsetY
         logTableGeometry(reason: "scroll")
+    }
+
+    private func publishScrollProgress() {
+        let rawOffset = tableView.contentOffset.y + tableView.adjustedContentInset.top
+        if baselineScrollOffset == nil {
+            baselineScrollOffset = rawOffset
+        }
+        let offset = max(rawOffset - (baselineScrollOffset ?? rawOffset), 0)
+        let progress = PikoTopBarProgress.value(for: offset)
+        titleCollapseState?.update(progress)
+        onScrollProgressChange?(progress)
     }
 
     private func presentDeleteConfirmation(
@@ -450,9 +491,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
         if let hostingCell = cell as? NativeReceiveHostingCell {
             return hostingCell.layoutDiagnosticDescription
         }
-        if let spacerCell = cell as? NativeReceiveSpacerCell {
-            return spacerCell.layoutDiagnosticDescription
-        }
         return "nonHostingCell"
     }
 
@@ -496,18 +534,15 @@ private extension Array where Element == NativeReceiveRow {
 private final class NativeReceiveHostingCell: UITableViewCell {
     private var host: UIHostingController<AnyView>?
     private var diagnosticDescription = "unset"
-    private var expectedHeight: CGFloat?
     private var lastLayoutDiagnosticDescription = ""
 
     func configure(
         rootView: AnyView,
         parent: UIViewController,
-        diagnosticDescription: String,
-        expectedHeight: CGFloat?
+        diagnosticDescription: String
     ) {
         detachHost()
         self.diagnosticDescription = diagnosticDescription
-        self.expectedHeight = expectedHeight
         selectionStyle = .none
         backgroundColor = PikoPalette.pageBackgroundUIColor
         contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
@@ -528,7 +563,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         ])
         controller.didMove(toParent: parent)
         host = controller
-        receiveListLog("[ReceiveList] hostingCell configure item=\(diagnosticDescription) expected=\(Int((expectedHeight ?? -1).rounded()))")
+        receiveListLog("[ReceiveList] hostingCell configure item=\(diagnosticDescription)")
     }
 
     func detachHost() {
@@ -545,7 +580,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         super.prepareForReuse()
         detachHost()
         diagnosticDescription = "unset"
-        expectedHeight = nil
         lastLayoutDiagnosticDescription = ""
     }
 
@@ -555,7 +589,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
 
     var layoutDiagnosticDescription: String {
         let hostFrame = host.map { receiveListFrameDescription($0.view.frame) } ?? "none"
-        return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame),expected:\(Int((expectedHeight ?? -1).rounded()))"
+        return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame)"
     }
 
     override func layoutSubviews() {
@@ -566,40 +600,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         }
         lastLayoutDiagnosticDescription = description
         receiveListLog("[ReceiveList] hostingCell layout item=\(diagnosticDescription) layout=\(description)")
-    }
-}
-
-private final class NativeReceiveSpacerCell: UITableViewCell {
-    private let expectedHeight: CGFloat
-    private var lastLayoutDiagnosticDescription = ""
-
-    init(height: CGFloat) {
-        expectedHeight = height
-        super.init(style: .default, reuseIdentifier: nil)
-        selectionStyle = .none
-        backgroundColor = PikoPalette.pageBackgroundUIColor
-        contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
-        preservesSuperviewLayoutMargins = false
-        contentView.preservesSuperviewLayoutMargins = false
-        contentView.layoutMargins = .zero
-    }
-
-    required init?(coder: NSCoder) {
-        return nil
-    }
-
-    var layoutDiagnosticDescription: String {
-        "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),expected:\(Int(expectedHeight.rounded()))"
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        let description = layoutDiagnosticDescription
-        guard description != lastLayoutDiagnosticDescription else {
-            return
-        }
-        lastLayoutDiagnosticDescription = description
-        receiveListLog("[ReceiveList] spacerCell layout expected=\(Int(expectedHeight.rounded())) layout=\(description)")
     }
 }
 
