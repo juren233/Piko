@@ -166,6 +166,18 @@ private final class NativeReceiveTableViewController: UITableViewController {
         rows.count
     }
 
+    override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        guard rows.indices.contains(indexPath.row) else { return 80 }
+        switch rows[indexPath.row] {
+        case .history, .active:
+            return 80
+        case .spacer:
+            return NativeReceiveLayout.bottomSpacerHeight
+        case .hero, .device, .empty:
+            return UITableView.automaticDimension
+        }
+    }
+
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let model, rows.indices.contains(indexPath.row) else {
             return UITableViewCell(style: .default, reuseIdentifier: nil)
@@ -340,24 +352,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
 
     deinit {
         detachHost()
-    }
-
-    override func systemLayoutSizeFitting(
-        _ targetSize: CGSize,
-        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
-        verticalFittingPriority: UILayoutPriority
-    ) -> CGSize {
-        guard let host else {
-            return super.systemLayoutSizeFitting(
-                targetSize,
-                withHorizontalFittingPriority: horizontalFittingPriority,
-                verticalFittingPriority: verticalFittingPriority
-            )
-        }
-        return host.sizeThatFits(in: CGSize(
-            width: targetSize.width,
-            height: UIView.layoutFittingCompressedSize.height
-        ))
     }
 
 }
