@@ -591,6 +591,11 @@ private extension NativeReceiveHistoryItem {
         let firstFile = files.first?.displayName.receiveListLogPreview ?? "none"
         return "history(id:\(String(id.uuidString.prefix(8))),files:\(fileCount),type:\(primaryFileType.rawValue),titleLen:\(title.count),title:\(title.receiveListLogPreview),subtitle:\(subtitle.receiveListLogPreview),previewBytes:\(previewBytes),firstFile:\(firstFile))"
     }
+
+    var receiveListCompactDiagnosticDescription: String {
+        let previewBytes = mediaPreviewData?.count ?? 0
+        return "id:\(String(id.uuidString.prefix(8))),titleLen:\(title.count),subtitle:\(subtitle.receiveListLogPreview),previewBytes:\(previewBytes)"
+    }
 }
 
 private extension String {
@@ -625,21 +630,21 @@ private struct NativeReceiveLayoutProbe: View {
         GeometryReader { proxy in
             Color.clear
                 .onAppear {
-                    log(size: proxy.size, event: "appear")
+                    log(size: proxy.size, globalFrame: proxy.frame(in: .global), event: "appear")
                 }
                 .onChange(of: proxy.size) { size in
-                    log(size: size, event: "change")
+                    log(size: size, globalFrame: proxy.frame(in: .global), event: "change")
                 }
         }
     }
 
-    private func log(size: CGSize, event: String) {
-        let description = receiveListSizeDescription(size)
+    private func log(size: CGSize, globalFrame: CGRect, event: String) {
+        let description = "size=\(receiveListSizeDescription(size)),global:\(receiveListFrameDescription(globalFrame))"
         guard description != lastSizeDescription else {
             return
         }
         lastSizeDescription = description
-        receiveListLog("[ReceiveList] swiftUILayout event=\(event) item=\(name) size=\(description)")
+        receiveListLog("[ReceiveList] swiftUILayout event=\(event) item=\(name) \(description)")
     }
 }
 
@@ -828,23 +833,29 @@ private struct NativeReceiveHistoryRow: View {
     let item: NativeReceiveHistoryItem
 
     var body: some View {
+        let diagnostic = item.receiveListCompactDiagnosticDescription
         HStack(spacing: 12) {
             NativeReceiveHistoryPreview(item: item)
+                .receiveListLayoutProbe("historyPreviewFrame(\(diagnostic))")
             NativeReceiveTextColumn {
                 Text(item.title)
                     .font(PikoFont.rowTitle)
                     .lineLimit(1)
                     .minimumScaleFactor(0.88)
                     .truncationMode(.tail)
+                    .receiveListLayoutProbe("historyTitle(\(diagnostic),title:\(item.title.receiveListLogPreview))")
                 Text(item.subtitle)
                     .font(PikoFont.rowSubtitle)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                    .receiveListLayoutProbe("historySubtitle(\(diagnostic))")
             }
+            .receiveListLayoutProbe("historyTextColumn(\(diagnostic))")
         }
         .padding(.vertical, 10)
         .contentShape(Rectangle())
+        .receiveListLayoutProbe("historyHStack(\(diagnostic))")
     }
 }
 
@@ -868,12 +879,16 @@ private struct NativeReceiveHistoryPreview: View {
     let item: NativeReceiveHistoryItem
 
     var body: some View {
+        let diagnostic = item.receiveListCompactDiagnosticDescription
         if item.fileCount > 1 {
             NativeMultiFilePreview(fileType: item.primaryFileType, count: item.fileCount)
+                .receiveListLayoutProbe("historyPreviewBranch(kind:multi,\(diagnostic))")
         } else if let mediaPreviewData = item.mediaPreviewData {
-            NativeMediaPreview(data: mediaPreviewData)
+            NativeMediaPreview(data: mediaPreviewData, diagnostic: diagnostic)
+                .receiveListLayoutProbe("historyPreviewBranch(kind:media,\(diagnostic))")
         } else {
             NativeFileTypePreview(fileType: item.primaryFileType)
+                .receiveListLayoutProbe("historyPreviewBranch(kind:fileType,\(diagnostic))")
         }
     }
 }
@@ -895,6 +910,7 @@ private struct NativeFileTypePreview: View {
 
 private struct NativeMediaPreview: View {
     let data: Data
+    let diagnostic: String
 
     var body: some View {
         if let image = UIImage(data: data) {
@@ -903,7 +919,7 @@ private struct NativeMediaPreview: View {
                 .scaledToFill()
                 .frame(width: 60, height: 60)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .receiveListLayoutProbe("mediaPreview(bytes:\(data.count),pixels:\(receiveListImageDescription(image)))")
+                .receiveListLayoutProbe("mediaPreview(bytes:\(data.count),pixels:\(receiveListImageDescription(image)),\(diagnostic))")
         } else {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(PikoPalette.accent.opacity(0.12))
@@ -914,7 +930,7 @@ private struct NativeMediaPreview: View {
                         .frame(width: 24, height: 24)
                         .foregroundStyle(PikoPalette.accent)
                 }
-                .receiveListLayoutProbe("mediaPreviewInvalid(bytes:\(data.count))")
+                .receiveListLayoutProbe("mediaPreviewInvalid(bytes:\(data.count),\(diagnostic))")
         }
     }
 }
