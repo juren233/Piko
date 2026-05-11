@@ -66,6 +66,10 @@ private enum NativeReceiveTableRow {
         switch self {
         case .history:
             return "history"
+        case .gap:
+            return "gap"
+        case .spacer:
+            return "spacer"
         default:
             return "content"
         }
@@ -81,12 +85,16 @@ private enum NativeReceiveTableRow {
 
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
-    static let historySwipeTrailingInset: CGFloat = 8
+    static let contentTrailingInset: CGFloat = 0
+    static let historySwipeCardGap: CGFloat = 8
+    static let historyRowSpacing: CGFloat = 12
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
+    static let bottomSpacerHeight: CGFloat = 112
 }
 
-private final class NativeReceiveTableViewController: UITableViewController {
+private final class NativeReceiveTableViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
+    private let tableView = UITableView(frame: .zero, style: .plain)
     private var rows: [NativeReceiveTableRow] = []
     private var swipeEditingIndexPath: IndexPath?
     private var onResetDeviceName: (() -> Void)?
@@ -95,7 +103,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private var onDeleteFailure: ((Int) -> Void)?
 
     init() {
-        super.init(style: .plain)
+        super.init(nibName: nil, bundle: nil)
     }
 
     @available(*, unavailable)
@@ -107,6 +115,14 @@ private final class NativeReceiveTableViewController: UITableViewController {
         super.viewDidLoad()
         view.backgroundColor = PikoPalette.pageBackgroundUIColor
         view.insetsLayoutMarginsFromSafeArea = false
+        tableView.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tableView)
+        NSLayoutConstraint.activate([
+            tableView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            tableView.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -NativeReceiveLayout.pageHorizontalInset),
+            tableView.topAnchor.constraint(equalTo: view.topAnchor),
+            tableView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         tableView.backgroundColor = PikoPalette.pageBackgroundUIColor
         tableView.separatorStyle = .none
         tableView.showsVerticalScrollIndicator = false
@@ -118,11 +134,15 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.layoutMargins = .zero
         tableView.contentInset = .zero
         tableView.scrollIndicatorInsets = .zero
+        tableView.dataSource = self
+        tableView.delegate = self
         if #available(iOS 15.0, *) {
             tableView.sectionHeaderTopPadding = 0
         }
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "content")
         tableView.register(NativeHostingTableCell.self, forCellReuseIdentifier: "history")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "gap")
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "spacer")
     }
 
     func update(
@@ -155,7 +175,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
             for (index, item) in model.receiveHistory.enumerated() {
                 nextRows.append(.history(item))
                 if index < model.receiveHistory.count - 1 {
-                    nextRows.append(.gap(12))
+                    nextRows.append(.gap(NativeReceiveLayout.historyRowSpacing))
                 }
             }
             nextRows.append(.spacer)
@@ -163,23 +183,58 @@ private final class NativeReceiveTableViewController: UITableViewController {
         return nextRows
     }
 
-    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+    func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
         rows.count
     }
 
-    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+    func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let row = rows[indexPath.row]
+        if case .gap = row {
+            return emptyFixedHeightCell(for: row, at: indexPath)
+        }
+        if case .spacer = row {
+            return emptyFixedHeightCell(for: row, at: indexPath)
+        }
+
         let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath) as! NativeHostingTableCell
         cell.configure(rootView: viewForRow(row, isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
         return cell
     }
 
-    override func tableView(_ tableView: UITableView, willBeginEditingRowAt indexPath: IndexPath) {
+    func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
+        switch rows[indexPath.row] {
+        case let .gap(height):
+            return height
+        case .spacer:
+            return NativeReceiveLayout.bottomSpacerHeight
+        default:
+            return UITableView.automaticDimension
+        }
+    }
+
+    func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        switch rows[indexPath.row] {
+        case let .gap(height):
+            return height
+        case .spacer:
+            return NativeReceiveLayout.bottomSpacerHeight
+        case .hero:
+            return 116
+        case .deviceName:
+            return 82
+        case .empty:
+            return 156
+        case .active, .history:
+            return 84
+        }
+    }
+
+    func tableView(_ tableView: UITableView, willBeginEditingRowAt indexPath: IndexPath) {
         swipeEditingIndexPath = indexPath
         updateVisibleCell(at: indexPath)
     }
 
-    override func tableView(_ tableView: UITableView, didEndEditingRowAt indexPath: IndexPath?) {
+    func tableView(_ tableView: UITableView, didEndEditingRowAt indexPath: IndexPath?) {
         let previousIndexPath = swipeEditingIndexPath
         swipeEditingIndexPath = nil
         if let previousIndexPath {
@@ -187,7 +242,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         }
     }
 
-    override func tableView(
+    func tableView(
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
@@ -217,6 +272,14 @@ private final class NativeReceiveTableViewController: UITableViewController {
             return
         }
         cell.configure(rootView: viewForRow(rows[indexPath.row], isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
+    }
+
+    private func emptyFixedHeightCell(for row: NativeReceiveTableRow, at indexPath: IndexPath) -> UITableViewCell {
+        let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath)
+        cell.backgroundColor = .clear
+        cell.contentView.backgroundColor = .clear
+        cell.selectionStyle = .none
+        return cell
     }
 
     private func viewForRow(_ row: NativeReceiveTableRow, isSwipeEditing: Bool = false) -> AnyView {
@@ -250,8 +313,8 @@ private final class NativeReceiveTableViewController: UITableViewController {
         case let .history(item):
             return rowView(
                 trailing: isSwipeEditing
-                    ? NativeReceiveLayout.historySwipeTrailingInset
-                    : NativeReceiveLayout.pageHorizontalInset
+                    ? NativeReceiveLayout.historySwipeCardGap
+                    : NativeReceiveLayout.contentTrailingInset
             ) {
                 NativeReceiveHistoryCard(item: item)
             }
@@ -263,7 +326,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         case .spacer:
             return AnyView(
                 Color.clear
-                    .frame(height: 112)
+                    .frame(height: NativeReceiveLayout.bottomSpacerHeight)
             )
         }
     }
@@ -271,7 +334,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private func rowView<Content: View>(
         top: CGFloat = 0,
         leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
-        trailing: CGFloat = NativeReceiveLayout.pageHorizontalInset,
+        trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
         bottom: CGFloat = 0,
         @ViewBuilder content: () -> Content
     ) -> AnyView {
