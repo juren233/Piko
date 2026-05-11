@@ -86,7 +86,6 @@ private enum NativeReceiveTableRow {
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
-    static let historySwipeCardGap: CGFloat = 8
     static let historyRowSpacing: CGFloat = 12
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
@@ -96,7 +95,6 @@ private enum NativeReceiveLayout {
 private final class NativeReceiveTableViewController: UIViewController, UITableViewDataSource, UITableViewDelegate {
     private let tableView = UITableView(frame: .zero, style: .plain)
     private var rows: [NativeReceiveTableRow] = []
-    private var swipeEditingIndexPath: IndexPath?
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -156,7 +154,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         self.onCancelReceive = onCancelReceive
         self.onDeleteReceiveHistory = onDeleteReceiveHistory
         self.onDeleteFailure = onDeleteFailure
-        swipeEditingIndexPath = nil
         rows = Self.makeRows(model: model)
         tableView.reloadData()
     }
@@ -197,7 +194,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         }
 
         let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath) as! NativeHostingTableCell
-        cell.configure(rootView: viewForRow(row, isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
+        cell.configure(rootView: viewForRow(row), parent: self)
         return cell
     }
 
@@ -229,19 +226,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         }
     }
 
-    func tableView(_ tableView: UITableView, willBeginEditingRowAt indexPath: IndexPath) {
-        swipeEditingIndexPath = indexPath
-        updateVisibleCell(at: indexPath)
-    }
-
-    func tableView(_ tableView: UITableView, didEndEditingRowAt indexPath: IndexPath?) {
-        let previousIndexPath = swipeEditingIndexPath
-        swipeEditingIndexPath = nil
-        if let previousIndexPath {
-            updateVisibleCell(at: previousIndexPath)
-        }
-    }
-
     func tableView(
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
@@ -264,16 +248,6 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         return configuration
     }
 
-    private func updateVisibleCell(at indexPath: IndexPath) {
-        guard
-            rows.indices.contains(indexPath.row),
-            let cell = tableView.cellForRow(at: indexPath) as? NativeHostingTableCell
-        else {
-            return
-        }
-        cell.configure(rootView: viewForRow(rows[indexPath.row], isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
-    }
-
     private func emptyFixedHeightCell(for row: NativeReceiveTableRow, at indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath)
         cell.backgroundColor = .clear
@@ -282,7 +256,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         return cell
     }
 
-    private func viewForRow(_ row: NativeReceiveTableRow, isSwipeEditing: Bool = false) -> AnyView {
+    private func viewForRow(_ row: NativeReceiveTableRow) -> AnyView {
         switch row {
         case let .hero(count):
             return rowView(top: 28, bottom: 8) {
@@ -311,11 +285,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 )
             }
         case let .history(item):
-            return rowView(
-                trailing: isSwipeEditing
-                    ? NativeReceiveLayout.historySwipeCardGap
-                    : NativeReceiveLayout.contentTrailingInset
-            ) {
+            return rowView {
                 NativeReceiveHistoryCard(item: item)
             }
         case let .gap(height):
