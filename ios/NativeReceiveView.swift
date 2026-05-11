@@ -89,6 +89,46 @@ private enum NativeReceiveTableRow {
     }
 }
 
+private extension Array where Element == NativeReceiveTableRow {
+    func containsHistory(id: UUID) -> Bool {
+        contains { $0.isHistory(id: id) }
+    }
+
+    var containsEmptyRow: Bool {
+        contains { $0.isEmpty }
+    }
+}
+
+private extension NativeReceiveTableRow {
+    func isHistory(id: UUID) -> Bool {
+        if case let .history(item) = self {
+            return item.id == id
+        }
+        return false
+    }
+
+    var isEmpty: Bool {
+        if case .empty = self {
+            return true
+        }
+        return false
+    }
+
+    var isGap: Bool {
+        if case .gap = self {
+            return true
+        }
+        return false
+    }
+
+    var isSpacer: Bool {
+        if case .spacer = self {
+            return true
+        }
+        return false
+    }
+}
+
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
@@ -115,6 +155,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     private var pendingRows: [NativeReceiveTableRow]?
     private var needsDeferredReload = false
     private var lastEmptyStateRowHeight: CGFloat = 0
+    private var pendingAnimatedDeletedHistoryID: UUID?
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -231,11 +272,90 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     }
 
     private func applyRows(_ nextRows: [NativeReceiveTableRow]) {
+        if animatePendingDeletedHistoryIfNeeded(nextRows) {
+            return
+        }
         rows = nextRows
         lastEmptyStateRowHeight = emptyStateRowHeight()
         UIView.performWithoutAnimation {
             tableView.reloadData()
             tableView.layoutIfNeeded()
+        }
+    }
+
+    private func animatePendingDeletedHistoryIfNeeded(_ nextRows: [NativeReceiveTableRow]) -> Bool {
+        guard let deletedID = pendingAnimatedDeletedHistoryID else {
+            return false
+        }
+        pendingAnimatedDeletedHistoryID = nil
+
+        let currentRows = rows
+        guard currentRows.containsHistory(id: deletedID), !nextRows.containsHistory(id: deletedID) else {
+            return false
+        }
+
+        let deletedIndexPaths = deletedIndexPathsForHistory(id: deletedID, in: currentRows, nextRows: nextRows)
+        let insertedIndexPaths = insertedIndexPathsForAnimatedDeletion(from: currentRows, to: nextRows)
+        guard !deletedIndexPaths.isEmpty || !insertedIndexPaths.isEmpty else {
+            return false
+        }
+        guard currentRows.count - deletedIndexPaths.count + insertedIndexPaths.count == nextRows.count else {
+            return false
+        }
+
+        rows = nextRows
+        lastEmptyStateRowHeight = emptyStateRowHeight()
+        tableView.performBatchUpdates {
+            if !deletedIndexPaths.isEmpty {
+                tableView.deleteRows(at: deletedIndexPaths, with: .automatic)
+            }
+            if !insertedIndexPaths.isEmpty {
+                tableView.insertRows(at: insertedIndexPaths, with: .fade)
+            }
+        } completion: { [weak self] _ in
+            guard let self else {
+                return
+            }
+            if !self.rows.isEmpty {
+                self.tableView.reloadRows(at: [IndexPath(row: 0, section: 0)], with: .none)
+            }
+            self.tableView.layoutIfNeeded()
+        }
+        return true
+    }
+
+    private func deletedIndexPathsForHistory(
+        id: UUID,
+        in sourceRows: [NativeReceiveTableRow],
+        nextRows: [NativeReceiveTableRow]
+    ) -> [IndexPath] {
+        guard let historyIndex = sourceRows.firstIndex(where: { $0.isHistory(id: id) }) else {
+            return []
+        }
+
+        var deletedRows = [historyIndex]
+        if sourceRows.indices.contains(historyIndex + 1), sourceRows[historyIndex + 1].isGap {
+            deletedRows.append(historyIndex + 1)
+        } else if sourceRows.indices.contains(historyIndex - 1), sourceRows[historyIndex - 1].isGap {
+            deletedRows.insert(historyIndex - 1, at: 0)
+        } else if sourceRows.indices.contains(historyIndex + 1),
+                  sourceRows[historyIndex + 1].isSpacer,
+                  nextRows.containsEmptyRow {
+            deletedRows.append(historyIndex + 1)
+        }
+
+        return deletedRows.map { IndexPath(row: $0, section: 0) }
+    }
+
+    private func insertedIndexPathsForAnimatedDeletion(
+        from currentRows: [NativeReceiveTableRow],
+        to nextRows: [NativeReceiveTableRow]
+    ) -> [IndexPath] {
+        guard !currentRows.containsEmptyRow else {
+            return []
+        }
+        return nextRows.enumerated().compactMap { index, row in
+            row.isEmpty ? IndexPath(row: index, section: 0) : nil
         }
     }
 
@@ -464,6 +584,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             swipeCompletion(false)
             return
         }
+        pendingAnimatedDeletedHistoryID = item.id
         onDeleteReceiveHistory(item, deleteFiles) { [weak self] failedCount in
             DispatchQueue.main.async {
                 if failedCount > 0 {
