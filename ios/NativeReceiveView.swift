@@ -102,7 +102,7 @@ private enum NativeReceiveRow {
         return result
     }
 
-    func makeView(model: NativePikoModel) -> AnyView {
+    func makeView(model: NativePikoModel) -> AnyView? {
         switch self {
         case .hero(let count):
             return AnyView(
@@ -154,12 +154,7 @@ private enum NativeReceiveRow {
                 }
             )
         case .spacer:
-            return AnyView(
-                rowView {
-                    Color.clear
-                        .frame(height: NativeReceiveLayout.bottomSpacerHeight)
-                }
-            )
+            return nil
         }
     }
 }
@@ -237,6 +232,13 @@ private final class NativeReceiveTableViewController: UITableViewController {
         return height
     }
 
+    override func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
+        guard rows.indices.contains(indexPath.row) else {
+            return 80
+        }
+        return rows[indexPath.row].expectedTableHeight ?? tableView.estimatedRowHeight
+    }
+
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let model, rows.indices.contains(indexPath.row) else {
             receiveListLog("[ReceiveList] cell row=\(indexPath.row) missing modelOrRow rows=\(self.rows.count)")
@@ -244,9 +246,16 @@ private final class NativeReceiveTableViewController: UITableViewController {
         }
         let row = rows[indexPath.row]
         receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) expectedHeight=\(Double(row.expectedTableHeight ?? -1))")
+        if case .spacer = row {
+            return NativeReceiveSpacerCell(height: NativeReceiveLayout.bottomSpacerHeight)
+        }
+        guard let rootView = row.makeView(model: model) else {
+            receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) missingHostedView fallback=spacer")
+            return NativeReceiveSpacerCell(height: NativeReceiveLayout.bottomSpacerHeight)
+        }
         let cell = NativeReceiveHostingCell(style: .default, reuseIdentifier: nil)
         cell.configure(
-            rootView: row.makeView(model: model),
+            rootView: rootView,
             parent: self,
             diagnosticDescription: row.diagnosticDescription,
             expectedHeight: row.expectedTableHeight
@@ -256,7 +265,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
-        let cellLayout = (cell as? NativeReceiveHostingCell)?.layoutDiagnosticDescription ?? "nonHostingCell"
+        let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] willDisplay row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
     }
 
@@ -293,7 +302,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
-        let cellLayout = (cell as? NativeReceiveHostingCell)?.layoutDiagnosticDescription ?? "nonHostingCell"
+        let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] didEndDisplaying row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
         (cell as? NativeReceiveHostingCell)?.detachHost()
     }
@@ -396,6 +405,16 @@ private final class NativeReceiveTableViewController: UITableViewController {
         receiveListLog("[ReceiveList] tableGeometry reason=\(reason) bounds=\(receiveListFrameDescription(self.tableView.bounds)) contentSize=\(receiveListSizeDescription(self.tableView.contentSize)) offsetY=\(Double(self.tableView.contentOffset.y)) visible=\(self.visibleRowsDiagnosticDescription)")
     }
 
+    private func receiveListLayoutDescription(for cell: UITableViewCell) -> String {
+        if let hostingCell = cell as? NativeReceiveHostingCell {
+            return hostingCell.layoutDiagnosticDescription
+        }
+        if let spacerCell = cell as? NativeReceiveSpacerCell {
+            return spacerCell.layoutDiagnosticDescription
+        }
+        return "nonHostingCell"
+    }
+
     private var visibleRowsDiagnosticDescription: String {
         (tableView.indexPathsForVisibleRows ?? []).map { indexPath in
             let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
@@ -473,18 +492,34 @@ private final class NativeReceiveHostingCell: UITableViewCell {
     }
 }
 
-private extension NativeReceiveHistoryItem {
-    var receiveListDiagnosticDescription: String {
-        let previewBytes = mediaPreviewData?.count ?? 0
-        let previewPixels = mediaPreviewData.flatMap { UIImage(data: $0)?.receiveListPixelDescription } ?? "none"
-        let firstFile = files.first?.displayName.receiveListLogPreview ?? "none"
-        return "history(id:\(String(id.uuidString.prefix(8))),files:\(fileCount),type:\(primaryFileType.rawValue),titleLen:\(title.count),title:\(title.receiveListLogPreview),subtitle:\(subtitle.receiveListLogPreview),previewBytes:\(previewBytes),previewPixels:\(previewPixels),firstFile:\(firstFile))"
+private final class NativeReceiveSpacerCell: UITableViewCell {
+    private let expectedHeight: CGFloat
+
+    init(height: CGFloat) {
+        expectedHeight = height
+        super.init(style: .default, reuseIdentifier: nil)
+        selectionStyle = .none
+        backgroundColor = PikoPalette.pageBackgroundUIColor
+        contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
+        preservesSuperviewLayoutMargins = false
+        contentView.preservesSuperviewLayoutMargins = false
+        contentView.layoutMargins = .zero
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    var layoutDiagnosticDescription: String {
+        "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),expected:\(Int(expectedHeight.rounded()))"
     }
 }
 
-private extension UIImage {
-    var receiveListPixelDescription: String {
-        "\(Int(size.width * scale))x\(Int(size.height * scale))"
+private extension NativeReceiveHistoryItem {
+    var receiveListDiagnosticDescription: String {
+        let previewBytes = mediaPreviewData?.count ?? 0
+        let firstFile = files.first?.displayName.receiveListLogPreview ?? "none"
+        return "history(id:\(String(id.uuidString.prefix(8))),files:\(fileCount),type:\(primaryFileType.rawValue),titleLen:\(title.count),title:\(title.receiveListLogPreview),subtitle:\(subtitle.receiveListLogPreview),previewBytes:\(previewBytes),firstFile:\(firstFile))"
     }
 }
 

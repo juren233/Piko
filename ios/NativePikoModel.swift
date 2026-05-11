@@ -1070,21 +1070,30 @@ final class NativePikoModel: ObservableObject {
     ) -> Data? {
         switch fileType {
         case .image:
-            return fallbackData
+            return mediaPreviewImageData(for: fileURL, fallbackData: fallbackData)
         case .video:
             let asset = AVAsset(url: fileURL)
             let generator = AVAssetImageGenerator(asset: asset)
             generator.appliesPreferredTrackTransform = true
+            generator.maximumSize = NativeReceivePreviewThumbnail.targetSize
             guard let image = try? generator.copyCGImage(
                 at: CMTime(seconds: 0, preferredTimescale: 600),
                 actualTime: nil
             ) else {
                 return nil
             }
-            return UIImage(cgImage: image).jpegData(compressionQuality: 0.82)
+            return NativeReceivePreviewThumbnail.jpegData(from: UIImage(cgImage: image))
         case .document, .spreadsheet, .archive, .other:
             return nil
         }
+    }
+
+    private func mediaPreviewImageData(for fileURL: URL, fallbackData: Data?) -> Data? {
+        let imageData = (try? Data(contentsOf: fileURL)) ?? fallbackData
+        guard let imageData, let image = UIImage(data: imageData) else {
+            return nil
+        }
+        return NativeReceivePreviewThumbnail.jpegData(from: image)
     }
 
     private func saveMediaToPhotoLibrary(
@@ -1511,6 +1520,31 @@ enum NativeFileType: Int, Codable {
         case .other:
             return "FILE"
         }
+    }
+}
+
+private enum NativeReceivePreviewThumbnail {
+    static let targetSize = CGSize(width: 240, height: 240)
+
+    static func jpegData(from image: UIImage) -> Data? {
+        guard image.size.width > 0, image.size.height > 0 else {
+            return nil
+        }
+        let scale = max(targetSize.width / image.size.width, targetSize.height / image.size.height)
+        let scaledSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let origin = CGPoint(
+            x: (targetSize.width - scaledSize.width) / 2,
+            y: (targetSize.height - scaledSize.height) / 2
+        )
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        let thumbnail = UIGraphicsImageRenderer(size: targetSize, format: format).image { context in
+            UIColor.white.setFill()
+            context.cgContext.fill(CGRect(origin: .zero, size: targetSize))
+            image.draw(in: CGRect(origin: origin, size: scaledSize))
+        }
+        return thumbnail.jpegData(compressionQuality: 0.82)
     }
 }
 
