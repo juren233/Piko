@@ -1,8 +1,14 @@
 import SwiftUI
 import UIKit
+import Foundation
 import OSLog
 
 private let nativeReceiveViewLogger = Logger(subsystem: "com.juren233.piko", category: "receive-list")
+
+private func receiveListLog(_ message: String) {
+    nativeReceiveViewLogger.notice("\(message, privacy: .public)")
+    NSLog("%@", message)
+}
 
 struct NativeReceiveView: View {
     @ObservedObject var model: NativePikoModel
@@ -33,13 +39,13 @@ private struct NativeReceiveTable: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> NativeReceiveTableViewController {
         let controller = NativeReceiveTableViewController(style: .plain)
         controller.configure(model: model, onDeleteFailure: onDeleteFailure)
-        nativeReceiveViewLogger.notice("[ReceiveList] make controller history=\(self.model.receiveHistory.count, privacy: .public) active=\(self.model.activeReceive == nil ? 0 : 1, privacy: .public)")
+        receiveListLog("[ReceiveList] make controller history=\(self.model.receiveHistory.count) active=\(self.model.activeReceive == nil ? 0 : 1)")
         return controller
     }
 
     func updateUIViewController(_ controller: NativeReceiveTableViewController, context: Context) {
         controller.configure(model: model, onDeleteFailure: onDeleteFailure)
-        nativeReceiveViewLogger.notice("[ReceiveList] update controller history=\(self.model.receiveHistory.count, privacy: .public) active=\(self.model.activeReceive == nil ? 0 : 1, privacy: .public)")
+        receiveListLog("[ReceiveList] update controller history=\(self.model.receiveHistory.count) active=\(self.model.activeReceive == nil ? 0 : 1)")
         controller.apply(rows: NativeReceiveRow.rows(for: model))
     }
 }
@@ -63,9 +69,20 @@ private enum NativeReceiveRow {
         case .active(let transfer):
             return "active(id:\(transfer.id),files:\(transfer.files.count),received:\(transfer.receivedBytes),total:\(transfer.totalBytes))"
         case .history(let item):
-            return "history(id:\(String(item.id.uuidString.prefix(8))),files:\(item.fileCount),type:\(item.primaryFileType.rawValue))"
+            return item.receiveListDiagnosticDescription
         case .spacer:
             return "spacer"
+        }
+    }
+
+    var expectedTableHeight: CGFloat? {
+        switch self {
+        case .history, .active:
+            return 80
+        case .spacer:
+            return NativeReceiveLayout.bottomSpacerHeight
+        case .hero, .device, .empty:
+            return nil
         }
     }
 
@@ -162,18 +179,19 @@ private final class NativeReceiveTableViewController: UITableViewController {
     func apply(rows: [NativeReceiveRow]) {
         let previousRows = self.rows
         self.rows = rows
-        nativeReceiveViewLogger.notice("[ReceiveList] apply previous=\(previousRows.count, privacy: .public) next=\(rows.count, privacy: .public) previousRows=\(previousRows.diagnosticDescription, privacy: .public) nextRows=\(rows.diagnosticDescription, privacy: .public)")
+        receiveListLog("[ReceiveList] apply previous=\(previousRows.count) next=\(rows.count) previousRows=\(previousRows.diagnosticDescription) nextRows=\(rows.diagnosticDescription)")
         guard isViewLoaded else {
-            nativeReceiveViewLogger.notice("[ReceiveList] apply deferred viewLoaded=false")
+            receiveListLog("[ReceiveList] apply deferred viewLoaded=false")
             return
         }
         guard !isApplyingAnimatedDelete else {
-            nativeReceiveViewLogger.notice("[ReceiveList] apply skipped animatedDelete=true nextRows=\(rows.diagnosticDescription, privacy: .public)")
+            receiveListLog("[ReceiveList] apply skipped animatedDelete=true nextRows=\(rows.diagnosticDescription)")
             return
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] reloadData begin contentOffsetY=\(Double(self.tableView.contentOffset.y), privacy: .public) contentHeight=\(Double(self.tableView.contentSize.height), privacy: .public)")
+        receiveListLog("[ReceiveList] reloadData begin contentOffsetY=\(Double(self.tableView.contentOffset.y)) contentHeight=\(Double(self.tableView.contentSize.height))")
         tableView.reloadData()
-        nativeReceiveViewLogger.notice("[ReceiveList] reloadData end contentOffsetY=\(Double(self.tableView.contentOffset.y), privacy: .public) contentHeight=\(Double(self.tableView.contentSize.height), privacy: .public)")
+        receiveListLog("[ReceiveList] reloadData end contentOffsetY=\(Double(self.tableView.contentOffset.y)) contentHeight=\(Double(self.tableView.contentSize.height))")
+        logTableGeometry(reason: "reloadData")
     }
 
     override func viewDidLoad() {
@@ -187,18 +205,23 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.estimatedRowHeight = 84
         tableView.contentInset = .zero
         tableView.scrollIndicatorInsets = .zero
-        nativeReceiveViewLogger.notice("[ReceiveList] viewDidLoad estimatedRowHeight=\(Double(self.tableView.estimatedRowHeight), privacy: .public)")
+        receiveListLog("[ReceiveList] viewDidLoad estimatedRowHeight=\(Double(self.tableView.estimatedRowHeight))")
         tableView.reloadData()
     }
 
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        logTableGeometry(reason: "viewDidLayoutSubviews")
+    }
+
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        nativeReceiveViewLogger.notice("[ReceiveList] numberOfRows section=\(section, privacy: .public) count=\(self.rows.count, privacy: .public) rows=\(self.rows.diagnosticDescription, privacy: .public)")
+        receiveListLog("[ReceiveList] numberOfRows section=\(section) count=\(self.rows.count) rows=\(self.rows.diagnosticDescription)")
         return rows.count
     }
 
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
         guard rows.indices.contains(indexPath.row) else {
-            nativeReceiveViewLogger.notice("[ReceiveList] height row=\(indexPath.row, privacy: .public) outOfRange rows=\(self.rows.count, privacy: .public) fallback=80")
+            receiveListLog("[ReceiveList] height row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=80")
             return 80
         }
         let row = rows[indexPath.row]
@@ -211,19 +234,32 @@ private final class NativeReceiveTableViewController: UITableViewController {
         case .hero, .device, .empty:
             height = UITableView.automaticDimension
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] height row=\(indexPath.row, privacy: .public) item=\(row.diagnosticDescription, privacy: .public) height=\(Double(height), privacy: .public)")
+        receiveListLog("[ReceiveList] height row=\(indexPath.row) item=\(row.diagnosticDescription) height=\(Double(height))")
         return height
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         guard let model, rows.indices.contains(indexPath.row) else {
-            nativeReceiveViewLogger.notice("[ReceiveList] cell row=\(indexPath.row, privacy: .public) missing modelOrRow rows=\(self.rows.count, privacy: .public)")
+            receiveListLog("[ReceiveList] cell row=\(indexPath.row) missing modelOrRow rows=\(self.rows.count)")
             return UITableViewCell(style: .default, reuseIdentifier: nil)
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] cell row=\(indexPath.row, privacy: .public) item=\(self.rows[indexPath.row].diagnosticDescription, privacy: .public)")
+        let row = rows[indexPath.row]
+        let tableRect = tableView.rectForRow(at: indexPath)
+        receiveListLog("[ReceiveList] cell row=\(indexPath.row) item=\(row.diagnosticDescription) tableRect=\(receiveListFrameDescription(tableRect)) expectedHeight=\(Double(row.expectedTableHeight ?? -1))")
         let cell = NativeReceiveHostingCell(style: .default, reuseIdentifier: nil)
-        cell.configure(rootView: rows[indexPath.row].makeView(model: model), parent: self)
+        cell.configure(
+            rootView: row.makeView(model: model),
+            parent: self,
+            diagnosticDescription: row.diagnosticDescription,
+            expectedHeight: row.expectedTableHeight
+        )
         return cell
+    }
+
+    override func tableView(_ tableView: UITableView, willDisplay cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
+        let cellLayout = (cell as? NativeReceiveHostingCell)?.layoutDiagnosticDescription ?? "nonHostingCell"
+        receiveListLog("[ReceiveList] willDisplay row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
@@ -243,7 +279,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         guard rows.indices.contains(indexPath.row), case .history(let item) = rows[indexPath.row] else {
             return nil
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] swipe row=\(indexPath.row, privacy: .public) history=\(String(item.id.uuidString.prefix(8)), privacy: .public)")
+        receiveListLog("[ReceiveList] swipe row=\(indexPath.row) history=\(String(item.id.uuidString.prefix(8)))")
         let deleteAction = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, swipeCompletion in
             guard let self else {
                 swipeCompletion(false)
@@ -259,7 +295,8 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
-        nativeReceiveViewLogger.notice("[ReceiveList] didEndDisplaying row=\(indexPath.row, privacy: .public) item=\(description, privacy: .public)")
+        let cellLayout = (cell as? NativeReceiveHostingCell)?.layoutDiagnosticDescription ?? "nonHostingCell"
+        receiveListLog("[ReceiveList] didEndDisplaying row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
         (cell as? NativeReceiveHostingCell)?.detachHost()
     }
 
@@ -267,10 +304,10 @@ private final class NativeReceiveTableViewController: UITableViewController {
         for item: NativeReceiveHistoryItem,
         swipeCompletion: @escaping (Bool) -> Void
     ) {
-        nativeReceiveViewLogger.notice("[ReceiveList] presentDeleteConfirmation history=\(String(item.id.uuidString.prefix(8)), privacy: .public) files=\(item.fileCount, privacy: .public)")
+        receiveListLog("[ReceiveList] presentDeleteConfirmation history=\(String(item.id.uuidString.prefix(8))) files=\(item.fileCount)")
         let alert = UIAlertController(title: item.deleteConfirmationTitle, message: item.deleteConfirmationBody, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "算了", style: .cancel) { _ in
-            nativeReceiveViewLogger.notice("[ReceiveList] delete cancelled history=\(String(item.id.uuidString.prefix(8)), privacy: .public)")
+            receiveListLog("[ReceiveList] delete cancelled history=\(String(item.id.uuidString.prefix(8)))")
             swipeCompletion(false)
         })
         alert.addAction(UIAlertAction(title: "仅删除记录", style: .destructive) { [weak self] _ in
@@ -296,13 +333,13 @@ private final class NativeReceiveTableViewController: UITableViewController {
         swipeCompletion: @escaping (Bool) -> Void
     ) {
         guard let model else {
-            nativeReceiveViewLogger.notice("[ReceiveList] delete aborted missingModel history=\(String(item.id.uuidString.prefix(8)), privacy: .public)")
+            receiveListLog("[ReceiveList] delete aborted missingModel history=\(String(item.id.uuidString.prefix(8)))")
             swipeCompletion(false)
             return
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] delete begin history=\(String(item.id.uuidString.prefix(8)), privacy: .public) deleteFiles=\(deleteFiles ? 1 : 0, privacy: .public) rows=\(self.rows.diagnosticDescription, privacy: .public)")
+        receiveListLog("[ReceiveList] delete begin history=\(String(item.id.uuidString.prefix(8))) deleteFiles=\(deleteFiles ? 1 : 0) rows=\(self.rows.diagnosticDescription)")
         guard let indexPath = indexPath(for: item) else {
-            nativeReceiveViewLogger.notice("[ReceiveList] delete fallback missingIndex history=\(String(item.id.uuidString.prefix(8)), privacy: .public)")
+            receiveListLog("[ReceiveList] delete fallback missingIndex history=\(String(item.id.uuidString.prefix(8)))")
             model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { [weak self] failedCount in
                 self?.onDeleteFailure?(failedCount)
             }
@@ -331,7 +368,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     }
 
     private func animateDelete(_ item: NativeReceiveHistoryItem, at indexPath: IndexPath) {
-        nativeReceiveViewLogger.notice("[ReceiveList] animateDelete begin row=\(indexPath.row, privacy: .public) history=\(String(item.id.uuidString.prefix(8)), privacy: .public) rowsBefore=\(self.rows.diagnosticDescription, privacy: .public)")
+        receiveListLog("[ReceiveList] animateDelete begin row=\(indexPath.row) history=\(String(item.id.uuidString.prefix(8))) rowsBefore=\(self.rows.diagnosticDescription)")
         if let model {
             rows = NativeReceiveRow.rows(for: model)
         } else {
@@ -342,7 +379,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 return false
             }
         }
-        nativeReceiveViewLogger.notice("[ReceiveList] animateDelete rowsAfterModelUpdate=\(self.rows.diagnosticDescription, privacy: .public)")
+        receiveListLog("[ReceiveList] animateDelete rowsAfterModelUpdate=\(self.rows.diagnosticDescription)")
         tableView.deleteRows(at: [indexPath], with: .automatic)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
             guard let self else {
@@ -352,9 +389,20 @@ private final class NativeReceiveTableViewController: UITableViewController {
             if let model = self.model {
                 self.rows = NativeReceiveRow.rows(for: model)
             }
-            nativeReceiveViewLogger.notice("[ReceiveList] animateDelete finish rows=\(self.rows.diagnosticDescription, privacy: .public)")
+            receiveListLog("[ReceiveList] animateDelete finish rows=\(self.rows.diagnosticDescription)")
             self.tableView.reloadData()
         }
+    }
+
+    private func logTableGeometry(reason: String) {
+        receiveListLog("[ReceiveList] tableGeometry reason=\(reason) bounds=\(receiveListFrameDescription(self.tableView.bounds)) contentSize=\(receiveListSizeDescription(self.tableView.contentSize)) offsetY=\(Double(self.tableView.contentOffset.y)) visible=\(self.visibleRowsDiagnosticDescription)")
+    }
+
+    private var visibleRowsDiagnosticDescription: String {
+        (tableView.indexPathsForVisibleRows ?? []).map { indexPath in
+            let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
+            return "row:\(indexPath.row),rect:\(receiveListFrameDescription(tableView.rectForRow(at: indexPath))),item:\(item)"
+        }.joined(separator: ";")
     }
 }
 
@@ -366,9 +414,20 @@ private extension Array where Element == NativeReceiveRow {
 
 private final class NativeReceiveHostingCell: UITableViewCell {
     private var host: UIHostingController<AnyView>?
+    private var diagnosticDescription = "unset"
+    private var expectedHeight: CGFloat?
+    private var lastLoggedLayoutDescription: String?
 
-    func configure(rootView: AnyView, parent: UIViewController) {
+    func configure(
+        rootView: AnyView,
+        parent: UIViewController,
+        diagnosticDescription: String,
+        expectedHeight: CGFloat?
+    ) {
         detachHost()
+        self.diagnosticDescription = diagnosticDescription
+        self.expectedHeight = expectedHeight
+        lastLoggedLayoutDescription = nil
         selectionStyle = .none
         backgroundColor = PikoPalette.pageBackgroundUIColor
         contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
@@ -389,6 +448,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         ])
         controller.didMove(toParent: parent)
         host = controller
+        logLayoutIfNeeded(reason: "configure")
     }
 
     func detachHost() {
@@ -401,15 +461,72 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         self.host = nil
     }
 
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        logLayoutIfNeeded(reason: "layoutSubviews")
+    }
+
     override func prepareForReuse() {
         super.prepareForReuse()
         detachHost()
+        diagnosticDescription = "unset"
+        expectedHeight = nil
+        lastLoggedLayoutDescription = nil
     }
 
     deinit {
         detachHost()
     }
 
+    var layoutDiagnosticDescription: String {
+        let fittingSize = contentView.systemLayoutSizeFitting(
+            CGSize(width: max(contentView.bounds.width, 1), height: UIView.layoutFittingCompressedSize.height),
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let hostFrame = host.map { receiveListFrameDescription($0.view.frame) } ?? "none"
+        return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame),fitting:\(receiveListSizeDescription(fittingSize)),expected:\(Int((expectedHeight ?? -1).rounded()))"
+    }
+
+    private func logLayoutIfNeeded(reason: String) {
+        let layout = layoutDiagnosticDescription
+        guard layout != lastLoggedLayoutDescription else {
+            return
+        }
+        lastLoggedLayoutDescription = layout
+        receiveListLog("[ReceiveList] cellLayout reason=\(reason) item=\(self.diagnosticDescription) layout=\(layout)")
+    }
+}
+
+private extension NativeReceiveHistoryItem {
+    var receiveListDiagnosticDescription: String {
+        let previewBytes = mediaPreviewData?.count ?? 0
+        let previewPixels = mediaPreviewData.flatMap { UIImage(data: $0)?.receiveListPixelDescription } ?? "none"
+        let firstFile = files.first?.displayName.receiveListLogPreview ?? "none"
+        return "history(id:\(String(id.uuidString.prefix(8))),files:\(fileCount),type:\(primaryFileType.rawValue),titleLen:\(title.count),title:\(title.receiveListLogPreview),subtitle:\(subtitle.receiveListLogPreview),previewBytes:\(previewBytes),previewPixels:\(previewPixels),firstFile:\(firstFile))"
+    }
+}
+
+private extension UIImage {
+    var receiveListPixelDescription: String {
+        "\(Int(size.width * scale))x\(Int(size.height * scale))"
+    }
+}
+
+private extension String {
+    var receiveListLogPreview: String {
+        String(prefix(32))
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "|", with: "/")
+    }
+}
+
+private func receiveListFrameDescription(_ rect: CGRect) -> String {
+    "x:\(Int(rect.origin.x.rounded())),y:\(Int(rect.origin.y.rounded())),w:\(Int(rect.width.rounded())),h:\(Int(rect.height.rounded()))"
+}
+
+private func receiveListSizeDescription(_ size: CGSize) -> String {
+    "w:\(Int(size.width.rounded())),h:\(Int(size.height.rounded()))"
 }
 
 private func rowView<Content: View>(
