@@ -320,9 +320,6 @@ private final class NativeReceiveHostingCell: UITableViewCell {
             controller.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
         ])
         controller.didMove(toParent: parent)
-        if #available(iOS 16, *) {
-        controller.sizingOptions = .intrinsicContentSize
-        }
         host = controller
     }
 
@@ -344,6 +341,25 @@ private final class NativeReceiveHostingCell: UITableViewCell {
     deinit {
         detachHost()
     }
+
+    override func systemLayoutSizeFitting(
+        _ targetSize: CGSize,
+        withHorizontalFittingPriority horizontalFittingPriority: UILayoutPriority,
+        verticalFittingPriority: UILayoutPriority
+    ) -> CGSize {
+        guard let host else {
+            return super.systemLayoutSizeFitting(
+                targetSize,
+                withHorizontalFittingPriority: horizontalFittingPriority,
+                verticalFittingPriority: verticalFittingPriority
+            )
+        }
+        return host.sizeThatFits(in: CGSize(
+            width: targetSize.width,
+            height: UIView.layoutFittingCompressedSize.height
+        ))
+    }
+
 }
 
 private func rowView<Content: View>(
