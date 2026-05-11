@@ -307,7 +307,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         lastEmptyStateRowHeight = emptyStateRowHeight()
         tableView.performBatchUpdates {
             if !deletedIndexPaths.isEmpty {
-                tableView.deleteRows(at: deletedIndexPaths, with: .automatic)
+                tableView.deleteRows(at: deletedIndexPaths, with: .fade)
             }
             if !insertedIndexPaths.isEmpty {
                 tableView.insertRows(at: insertedIndexPaths, with: .fade)
@@ -592,7 +592,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 }
             }
         }
-        swipeCompletion(true)
+        swipeCompletion(false)
     }
 }
 
