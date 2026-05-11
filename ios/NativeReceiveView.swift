@@ -487,7 +487,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         _ tableView: UITableView,
         trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
     ) -> UISwipeActionsConfiguration? {
-        guard case let .history(item) = rows[indexPath.row] else {
+        guard case let .history(item, bottomSpacing: _) = rows[indexPath.row] else {
             return nil
         }
 
@@ -498,7 +498,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             }
             self.presentDeleteConfirmation(for: item, swipeCompletion: completion)
         }
-        deleteAction.backgroundColor = .systemRed
+        deleteAction.backgroundColor = UIColor.systemRed
 
         let configuration = UISwipeActionsConfiguration(actions: [deleteAction])
         configuration.performsFirstActionWithFullSwipe = false
