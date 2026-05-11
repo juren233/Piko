@@ -2,8 +2,11 @@ import CryptoKit
 import AVFoundation
 import Foundation
 import Network
+import OSLog
 import Photos
 import UIKit
+
+private let nativeReceiveModelLogger = Logger(subsystem: "com.juren233.piko", category: "receive-list")
 
 enum NativeMediaSaveLocation: String, CaseIterable, Identifiable {
     case folder
@@ -64,6 +67,7 @@ final class NativePikoModel: ObservableObject {
             rawValue: UserDefaults.standard.string(forKey: NativeMediaSaveLocation.userDefaultsKey) ?? ""
         ) ?? .folder
         self.receiveHistory = NativeReceiveHistoryStore.load()
+        nativeReceiveModelLogger.notice("[ReceiveList] model init history=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
     }
 
     var currentDeviceName: String {
@@ -456,8 +460,11 @@ final class NativePikoModel: ObservableObject {
     }
 
     func deleteReceiveHistory(_ item: NativeReceiveHistoryItem, deleteFiles: Bool, completion: @escaping (Int) -> Void) {
+        let beforeCount = receiveHistory.count
+        nativeReceiveModelLogger.notice("[ReceiveList] model delete begin id=\(String(item.id.uuidString.prefix(8)), privacy: .public) deleteFiles=\(deleteFiles ? 1 : 0, privacy: .public) before=\(beforeCount, privacy: .public)")
         receiveHistory.removeAll { $0.id == item.id }
         NativeReceiveHistoryStore.save(receiveHistory)
+        nativeReceiveModelLogger.notice("[ReceiveList] model delete saved id=\(String(item.id.uuidString.prefix(8)), privacy: .public) before=\(beforeCount, privacy: .public) after=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
         guard deleteFiles else {
             completion(0)
             return
@@ -1114,8 +1121,11 @@ final class NativePikoModel: ObservableObject {
     }
 
     private func prependReceiveHistory(_ item: NativeReceiveHistoryItem) {
+        let beforeCount = receiveHistory.count
+        nativeReceiveModelLogger.notice("[ReceiveList] model prepend begin id=\(String(item.id.uuidString.prefix(8)), privacy: .public) before=\(beforeCount, privacy: .public) files=\(item.fileCount, privacy: .public)")
         receiveHistory.insert(item, at: 0)
         NativeReceiveHistoryStore.save(receiveHistory)
+        nativeReceiveModelLogger.notice("[ReceiveList] model prepend saved id=\(String(item.id.uuidString.prefix(8)), privacy: .public) before=\(beforeCount, privacy: .public) after=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
     }
 
     private func startLocalSendMulticast() {
@@ -1575,5 +1585,13 @@ private extension Array where Element == NativeTransferItem {
             return ""
         }
         return count == 1 ? first.displayName : "\(first.displayName) + \(count - 1) 个文件"
+    }
+}
+
+private extension Array where Element == NativeReceiveHistoryItem {
+    var receiveListDiagnosticDescription: String {
+        map { item in
+            "history(id:\(String(item.id.uuidString.prefix(8))),files:\(item.fileCount),type:\(item.primaryFileType.rawValue))"
+        }.joined(separator: "|")
     }
 }
