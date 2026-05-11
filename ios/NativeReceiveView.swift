@@ -7,6 +7,7 @@ private let nativeReceiveViewLogger = Logger(subsystem: "com.juren233.piko", cat
 
 private func receiveListLog(_ message: String) {
     nativeReceiveViewLogger.notice("\(message, privacy: .public)")
+    NSLog("%@", message)
 }
 
 struct NativeReceiveView: View {
@@ -103,6 +104,7 @@ private enum NativeReceiveRow {
     }
 
     func makeView(model: NativePikoModel) -> AnyView? {
+        let probeName = diagnosticDescription
         switch self {
         case .hero(let count):
             return AnyView(
@@ -113,6 +115,7 @@ private enum NativeReceiveRow {
                         metric: "\(count) 次"
                     )
                 }
+                .receiveListLayoutProbe(probeName)
             )
         case .device(let nickname):
             return AnyView(
@@ -122,6 +125,7 @@ private enum NativeReceiveRow {
                         onReset: model.resetDeviceNickname
                     )
                 }
+                .receiveListLayoutProbe(probeName)
             )
         case .empty:
             return AnyView(
@@ -131,6 +135,7 @@ private enum NativeReceiveRow {
                 ) {
                     NativeReceiveEmptyStateContent()
                 }
+                .receiveListLayoutProbe(probeName)
             )
         case .active(let transfer):
             return AnyView(
@@ -143,6 +148,7 @@ private enum NativeReceiveRow {
                         onCancel: model.cancelReceiveTransfer
                     )
                 }
+                .receiveListLayoutProbe(probeName)
             )
         case .history(let item):
             return AnyView(
@@ -152,6 +158,7 @@ private enum NativeReceiveRow {
                 ) {
                     NativeReceiveHistoryRow(item: item)
                 }
+                .receiveListLayoutProbe(probeName)
             )
         case .spacer:
             return nil
@@ -164,6 +171,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private var onDeleteFailure: ((Int) -> Void)?
     private var rows: [NativeReceiveRow] = []
     private var isApplyingAnimatedDelete = false
+    private var lastScrollLogOffsetY: CGFloat?
 
     func configure(model: NativePikoModel, onDeleteFailure: @escaping (Int) -> Void) {
         self.model = model
@@ -186,6 +194,9 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.reloadData()
         receiveListLog("[ReceiveList] reloadData end contentOffsetY=\(Double(self.tableView.contentOffset.y)) contentHeight=\(Double(self.tableView.contentSize.height))")
         logTableGeometry(reason: "reloadData")
+        DispatchQueue.main.async { [weak self] in
+            self?.logTableGeometry(reason: "postReloadAsync")
+        }
     }
 
     override func viewDidLoad() {
@@ -234,9 +245,13 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func tableView(_ tableView: UITableView, estimatedHeightForRowAt indexPath: IndexPath) -> CGFloat {
         guard rows.indices.contains(indexPath.row) else {
+            receiveListLog("[ReceiveList] estimate row=\(indexPath.row) outOfRange rows=\(self.rows.count) fallback=80")
             return 80
         }
-        return rows[indexPath.row].expectedTableHeight ?? tableView.estimatedRowHeight
+        let row = rows[indexPath.row]
+        let estimate = row.expectedTableHeight ?? tableView.estimatedRowHeight
+        receiveListLog("[ReceiveList] estimate row=\(indexPath.row) item=\(row.diagnosticDescription) estimate=\(Double(estimate))")
+        return estimate
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -267,6 +282,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
         let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] willDisplay row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
+        logTableGeometry(reason: "willDisplay-\(indexPath.row)")
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
@@ -305,6 +321,15 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] didEndDisplaying row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
         (cell as? NativeReceiveHostingCell)?.detachHost()
+    }
+
+    override func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        let offsetY = scrollView.contentOffset.y
+        guard lastScrollLogOffsetY.map({ abs(offsetY - $0) >= 96 }) ?? true else {
+            return
+        }
+        lastScrollLogOffsetY = offsetY
+        logTableGeometry(reason: "scroll")
     }
 
     private func presentDeleteConfirmation(
@@ -402,7 +427,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     }
 
     private func logTableGeometry(reason: String) {
-        receiveListLog("[ReceiveList] tableGeometry reason=\(reason) bounds=\(receiveListFrameDescription(self.tableView.bounds)) contentSize=\(receiveListSizeDescription(self.tableView.contentSize)) offsetY=\(Double(self.tableView.contentOffset.y)) visible=\(self.visibleRowsDiagnosticDescription)")
+        receiveListLog("[ReceiveList] tableGeometry reason=\(reason) frame=\(receiveListFrameDescription(self.tableView.frame)) bounds=\(receiveListFrameDescription(self.tableView.bounds)) safeArea=\(receiveListInsetsDescription(self.tableView.safeAreaInsets)) contentInset=\(receiveListInsetsDescription(self.tableView.contentInset)) adjustedInset=\(receiveListInsetsDescription(self.tableView.adjustedContentInset)) indicatorInset=\(receiveListInsetsDescription(self.tableView.scrollIndicatorInsets)) contentSize=\(receiveListSizeDescription(self.tableView.contentSize)) offsetY=\(Double(self.tableView.contentOffset.y)) visibleRows=\(self.visibleRowsDiagnosticDescription) visibleCells=\(self.visibleCellsDiagnosticDescription)")
     }
 
     private func receiveListLayoutDescription(for cell: UITableViewCell) -> String {
@@ -421,6 +446,19 @@ private final class NativeReceiveTableViewController: UITableViewController {
             return "row:\(indexPath.row),item:\(item)"
         }.joined(separator: ";")
     }
+
+    private var visibleCellsDiagnosticDescription: String {
+        var previousMaxY: CGFloat?
+        return (tableView.indexPathsForVisibleRows ?? []).sorted { $0.row < $1.row }.map { indexPath in
+            let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
+            guard let cell = tableView.cellForRow(at: indexPath) else {
+                return "row:\(indexPath.row),item:\(item),cell:none"
+            }
+            let gap = previousMaxY.map { cell.frame.minY - $0 } ?? 0
+            previousMaxY = cell.frame.maxY
+            return "row:\(indexPath.row),item:\(item),gap:\(Int(gap.rounded())),layout:\(receiveListLayoutDescription(for: cell))"
+        }.joined(separator: ";")
+    }
 }
 
 private extension Array where Element == NativeReceiveRow {
@@ -433,6 +471,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
     private var host: UIHostingController<AnyView>?
     private var diagnosticDescription = "unset"
     private var expectedHeight: CGFloat?
+    private var lastLayoutDiagnosticDescription = ""
 
     func configure(
         rootView: AnyView,
@@ -463,6 +502,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         ])
         controller.didMove(toParent: parent)
         host = controller
+        receiveListLog("[ReceiveList] hostingCell configure item=\(diagnosticDescription) expected=\(Int((expectedHeight ?? -1).rounded()))")
     }
 
     func detachHost() {
@@ -480,6 +520,7 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         detachHost()
         diagnosticDescription = "unset"
         expectedHeight = nil
+        lastLayoutDiagnosticDescription = ""
     }
 
     deinit {
@@ -490,10 +531,21 @@ private final class NativeReceiveHostingCell: UITableViewCell {
         let hostFrame = host.map { receiveListFrameDescription($0.view.frame) } ?? "none"
         return "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),host:\(hostFrame),expected:\(Int((expectedHeight ?? -1).rounded()))"
     }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let description = layoutDiagnosticDescription
+        guard description != lastLayoutDiagnosticDescription else {
+            return
+        }
+        lastLayoutDiagnosticDescription = description
+        receiveListLog("[ReceiveList] hostingCell layout item=\(diagnosticDescription) layout=\(description)")
+    }
 }
 
 private final class NativeReceiveSpacerCell: UITableViewCell {
     private let expectedHeight: CGFloat
+    private var lastLayoutDiagnosticDescription = ""
 
     init(height: CGFloat) {
         expectedHeight = height
@@ -512,6 +564,16 @@ private final class NativeReceiveSpacerCell: UITableViewCell {
 
     var layoutDiagnosticDescription: String {
         "cell:\(receiveListFrameDescription(frame)),content:\(receiveListFrameDescription(contentView.frame)),expected:\(Int(expectedHeight.rounded()))"
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let description = layoutDiagnosticDescription
+        guard description != lastLayoutDiagnosticDescription else {
+            return
+        }
+        lastLayoutDiagnosticDescription = description
+        receiveListLog("[ReceiveList] spacerCell layout expected=\(Int(expectedHeight.rounded())) layout=\(description)")
     }
 }
 
@@ -537,6 +599,46 @@ private func receiveListFrameDescription(_ rect: CGRect) -> String {
 
 private func receiveListSizeDescription(_ size: CGSize) -> String {
     "w:\(Int(size.width.rounded())),h:\(Int(size.height.rounded()))"
+}
+
+private func receiveListInsetsDescription(_ insets: UIEdgeInsets) -> String {
+    "t:\(Int(insets.top.rounded())),l:\(Int(insets.left.rounded())),b:\(Int(insets.bottom.rounded())),r:\(Int(insets.right.rounded()))"
+}
+
+private func receiveListImageDescription(_ image: UIImage) -> String {
+    "\(Int((image.size.width * image.scale).rounded()))x\(Int((image.size.height * image.scale).rounded()))"
+}
+
+private struct NativeReceiveLayoutProbe: View {
+    let name: String
+    @State private var lastSizeDescription = ""
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear {
+                    log(size: proxy.size, event: "appear")
+                }
+                .onChange(of: proxy.size) { size in
+                    log(size: size, event: "change")
+                }
+        }
+    }
+
+    private func log(size: CGSize, event: String) {
+        let description = receiveListSizeDescription(size)
+        guard description != lastSizeDescription else {
+            return
+        }
+        lastSizeDescription = description
+        receiveListLog("[ReceiveList] swiftUILayout event=\(event) item=\(name) size=\(description)")
+    }
+}
+
+private extension View {
+    func receiveListLayoutProbe(_ name: String) -> some View {
+        background(NativeReceiveLayoutProbe(name: name))
+    }
 }
 
 private func rowView<Content: View>(
@@ -793,6 +895,7 @@ private struct NativeMediaPreview: View {
                 .scaledToFill()
                 .frame(width: 60, height: 60)
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .receiveListLayoutProbe("mediaPreview(bytes:\(data.count),pixels:\(receiveListImageDescription(image)))")
         } else {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(PikoPalette.accent.opacity(0.12))
@@ -803,6 +906,7 @@ private struct NativeMediaPreview: View {
                         .frame(width: 24, height: 24)
                         .foregroundStyle(PikoPalette.accent)
                 }
+                .receiveListLayoutProbe("mediaPreviewInvalid(bytes:\(data.count))")
         }
     }
 }
