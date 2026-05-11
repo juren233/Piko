@@ -359,12 +359,12 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 )
             }
         case .empty:
-            return fixedHeightRowView(
+            return emptyStateCardView(
                 height: emptyStateRowHeight(),
                 top: NativeReceiveLayout.emptyStateTopSpacing,
                 bottom: NativeReceiveLayout.emptyStateBottomSpacing
             ) {
-                NativeReceiveEmptyState()
+                NativeReceiveEmptyStateContent()
             }
         case let .active(transfer):
             return rowView(bottom: 12) {
@@ -405,7 +405,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         )
     }
 
-    private func fixedHeightRowView<Content: View>(
+    private func emptyStateCardView<Content: View>(
         height: CGFloat,
         top: CGFloat = 0,
         leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
@@ -413,8 +413,18 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         bottom: CGFloat = 0,
         @ViewBuilder content: () -> Content
     ) -> AnyView {
+        let emptyStateShape = RoundedRectangle(cornerRadius: 24, style: .continuous)
+        let cardHeight = max(CGFloat.zero, height - top - bottom)
         AnyView(
-            content()
+            ZStack {
+                emptyStateShape
+                    .fill(Color.secondary.opacity(0.08))
+                content()
+                    .padding(.horizontal, 22)
+            }
+                .frame(maxWidth: .infinity)
+                .frame(height: cardHeight)
+                .clipShape(emptyStateShape)
                 .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
                 .frame(maxWidth: .infinity)
                 .frame(height: height, alignment: .top)
@@ -563,9 +573,9 @@ private struct NativeDeviceNicknameBanner: View {
     }
 }
 
-private struct NativeReceiveEmptyState: View {
+private struct NativeReceiveEmptyStateContent: View {
     var body: some View {
-        PikoEmptyPlane(text: "还没有接收过文件") {
+        VStack(spacing: 14) {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(PikoPalette.surfaceVariant.opacity(0.34))
                 .frame(width: 76, height: 76)
@@ -575,7 +585,14 @@ private struct NativeReceiveEmptyState: View {
                         .frame(width: 38, height: 38)
                         .foregroundStyle(.secondary.opacity(0.78))
                 }
+            Text("还没有接收过文件")
+                .font(PikoFont.emptyState)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .truncationMode(.tail)
         }
+        .frame(maxWidth: .infinity)
     }
 }
 private struct NativeActiveReceiveCard: View {
