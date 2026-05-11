@@ -208,14 +208,14 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.contentInsetAdjustmentBehavior = .never
         tableView.rowHeight = UITableView.automaticDimension
         tableView.estimatedRowHeight = 84
-        tableView.contentInset = .zero
-        tableView.scrollIndicatorInsets = .zero
+        applyReadableContentInsets(reason: "viewDidLoad")
         receiveListLog("[ReceiveList] viewDidLoad estimatedRowHeight=\(Double(self.tableView.estimatedRowHeight))")
         tableView.reloadData()
     }
 
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        applyReadableContentInsets(reason: "viewDidLayoutSubviews")
         logTableGeometry(reason: "viewDidLayoutSubviews")
     }
 
@@ -426,6 +426,24 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     private func logTableGeometry(reason: String) {
         receiveListLog("[ReceiveList] tableGeometry reason=\(reason) frame=\(receiveListFrameDescription(self.tableView.frame)) bounds=\(receiveListFrameDescription(self.tableView.bounds)) safeArea=\(receiveListInsetsDescription(self.tableView.safeAreaInsets)) contentInset=\(receiveListInsetsDescription(self.tableView.contentInset)) adjustedInset=\(receiveListInsetsDescription(self.tableView.adjustedContentInset)) indicatorInset=\(receiveListInsetsDescription(self.tableView.scrollIndicatorInsets)) contentSize=\(receiveListSizeDescription(self.tableView.contentSize)) offsetY=\(Double(self.tableView.contentOffset.y)) visibleRows=\(self.visibleRowsDiagnosticDescription) visibleCells=\(self.visibleCellsDiagnosticDescription)")
+    }
+
+    private func applyReadableContentInsets(reason: String) {
+        let bottomInset = NativeReceiveLayout.readableBottomInset(
+            for: tableView.safeAreaInsets.bottom
+        )
+        let nextInset = UIEdgeInsets(top: 0, left: 0, bottom: bottomInset, right: 0)
+        guard abs(tableView.contentInset.bottom - bottomInset) > 0.5
+            || tableView.contentInset.top != 0
+            || tableView.contentInset.left != 0
+            || tableView.contentInset.right != 0
+            || abs(tableView.scrollIndicatorInsets.bottom - bottomInset) > 0.5
+        else {
+            return
+        }
+        tableView.contentInset = nextInset
+        tableView.scrollIndicatorInsets = nextInset
+        receiveListLog("[ReceiveList] readableInsets reason=\(reason) safeBottom=\(Double(tableView.safeAreaInsets.bottom)) bottomInset=\(Double(bottomInset))")
     }
 
     private func receiveListLayoutDescription(for cell: UITableViewCell) -> String {
@@ -687,12 +705,18 @@ private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let fileRowTrailingInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 24
-    static let bottomSpacerHeight: CGFloat = 112
+    static let bottomSpacerHeight: CGFloat = 32
+    static let bottomReadableClearance: CGFloat = 56
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
     static let emptyStateTopSpacing: CGFloat = 24
     static let emptyStateBottomSpacing: CGFloat = 112
     static let emptyStateMinimumContentHeight: CGFloat = 164
+
+    static func readableBottomInset(for safeAreaBottom: CGFloat) -> CGFloat {
+        // TabView 的 safe area 只描述系统保留区域，悬浮底栏的圆角和阴影还需要额外避让。
+        max(0, safeAreaBottom + bottomReadableClearance)
+    }
 }
 
 private struct NativeDeviceNicknameBanner: View {
