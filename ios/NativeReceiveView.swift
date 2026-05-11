@@ -35,19 +35,15 @@ struct NativeReceiveView: View {
                 .nativeReceiveListRow()
             } else {
                 if let activeReceive = model.activeReceive {
-                    rowView(bottom: 12) {
-                        NativeActiveReceiveCard(
-                            transfer: activeReceive,
-                            onCancel: model.cancelReceiveTransfer
-                        )
-                    }
-                    .nativeReceiveListRow()
+                    NativeActiveReceiveRow(
+                        transfer: activeReceive,
+                        onCancel: model.cancelReceiveTransfer
+                    )
+                    .nativeReceiveFileListRow()
                 }
-                ForEach(Array(model.receiveHistory.enumerated()), id: \.element.id) { index, item in
-                    rowView(bottom: index < model.receiveHistory.count - 1 ? NativeReceiveLayout.historyRowSpacing : 0) {
-                        NativeReceiveHistoryCard(item: item)
-                    }
-                    .nativeReceiveListRow()
+                ForEach(model.receiveHistory, id: \.id) { item in
+                    NativeReceiveHistoryRow(item: item)
+                    .nativeReceiveFileListRow()
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button("删除", role: .destructive) {
                             pendingDeleteHistory = item
@@ -138,12 +134,22 @@ private extension View {
             .listRowSeparator(.hidden)
             .listRowBackground(PikoPalette.pageBackground)
     }
+
+    func nativeReceiveFileListRow() -> some View {
+        listRowInsets(EdgeInsets(
+            top: 0,
+            leading: NativeReceiveLayout.pageHorizontalInset,
+            bottom: 0,
+            trailing: 16
+        ))
+        .listRowSeparator(.visible)
+        .listRowBackground(PikoPalette.pageBackground)
+    }
 }
 
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
-    static let historyRowSpacing: CGFloat = 12
     static let bottomSpacerHeight: CGFloat = 112
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
@@ -226,12 +232,12 @@ private struct NativeReceiveEmptyStateContent: View {
         .frame(maxWidth: .infinity)
     }
 }
-private struct NativeActiveReceiveCard: View {
+private struct NativeActiveReceiveRow: View {
     let transfer: NativeReceiveTransferState
     let onCancel: () -> Void
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             NativeActiveReceiveProgressIcon(transfer: transfer)
             NativeReceiveTextColumn {
                 Text(transfer.title)
@@ -244,6 +250,9 @@ private struct NativeActiveReceiveCard: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                ProgressView(value: transfer.progress)
+                    .progressViewStyle(.linear)
+                    .tint(PikoPalette.accent)
             }
             Button(action: onCancel) {
                 Image(uiImage: LucideTabIcon.x.image)
@@ -256,13 +265,8 @@ private struct NativeActiveReceiveCard: View {
             .fixedSize(horizontal: true, vertical: false)
             .offset(x: -8)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(PikoPalette.surface.opacity(0.56), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
-        )
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 }
 
@@ -290,11 +294,11 @@ private struct NativeActiveReceiveProgressIcon: View {
     }
 }
 
-private struct NativeReceiveHistoryCard: View {
+private struct NativeReceiveHistoryRow: View {
     let item: NativeReceiveHistoryItem
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             NativeReceiveHistoryPreview(item: item)
             NativeReceiveTextColumn {
                 Text(item.title)
@@ -308,19 +312,9 @@ private struct NativeReceiveHistoryCard: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-            Image(uiImage: LucideTabIcon.chevronRight.image)
-                .resizable()
-                .frame(width: 20, height: 20)
-                .foregroundStyle(.secondary.opacity(0.7))
-                .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(PikoPalette.surface.opacity(0.56), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
-        )
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
     }
 }
 
