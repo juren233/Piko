@@ -141,11 +141,38 @@ private enum NativeReceiveLayout {
     static let heroEstimatedHeight: CGFloat = 116
     static let deviceNameEstimatedHeight: CGFloat = 64
     static let bottomSpacerHeight: CGFloat = 112
+    static let emptyStateHeightCacheKeyPrefix = "piko.receive.emptyStateHeight"
 
     static func emptyStateRowHeight(for tableHeight: CGFloat) -> CGFloat {
         let occupiedHeight = heroEstimatedHeight + deviceNameEstimatedHeight
         let minimumHeight = emptyStateTopSpacing + emptyStateMinimumContentHeight + emptyStateBottomSpacing
         return max(minimumHeight, tableHeight - occupiedHeight)
+    }
+
+    static func cachedEmptyStateRowHeight(for tableView: UITableView) -> CGFloat? {
+        let key = emptyStateHeightCacheKey(for: tableView)
+        let height = UserDefaults.standard.double(forKey: key)
+        guard height > 0 else {
+            return nil
+        }
+        return CGFloat(height)
+    }
+
+    static func persistEmptyStateRowHeight(_ height: CGFloat, for tableView: UITableView) {
+        guard height.isFinite, height > 0 else {
+            return
+        }
+        let key = emptyStateHeightCacheKey(for: tableView)
+        UserDefaults.standard.set(Double(height), forKey: key)
+    }
+
+    private static func emptyStateHeightCacheKey(for tableView: UITableView) -> String {
+        let screen = tableView.window?.screen ?? UIScreen.main
+        let bounds = screen.bounds
+        let width = Int(bounds.width.rounded())
+        let height = Int(bounds.height.rounded())
+        let scale = Int((screen.nativeScale * 100).rounded())
+        return "\(emptyStateHeightCacheKeyPrefix).\(width)x\(height)@\(scale)"
     }
 }
 
@@ -156,6 +183,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     private var needsDeferredReload = false
     private var lastEmptyStateRowHeight: CGFloat = 0
     private var pendingAnimatedDeletedHistoryID: UUID?
+    private var cachedEmptyStateRowHeight: CGFloat?
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -172,6 +200,7 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        cachedEmptyStateRowHeight = NativeReceiveLayout.cachedEmptyStateRowHeight(for: tableView)
         view.backgroundColor = PikoPalette.pageBackgroundUIColor
         view.insetsLayoutMarginsFromSafeArea = false
         tableView.translatesAutoresizingMaskIntoConstraints = false
@@ -360,6 +389,10 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
     }
 
     private func emptyStateRowHeight() -> CGFloat {
+        cachedEmptyStateRowHeight ?? measuredEmptyStateRowHeight()
+    }
+
+    private func measuredEmptyStateRowHeight() -> CGFloat {
         NativeReceiveLayout.emptyStateRowHeight(for: tableView.bounds.height)
     }
 
@@ -372,7 +405,9 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
         }) else {
             return
         }
-        let nextHeight = emptyStateRowHeight()
+        let nextHeight = measuredEmptyStateRowHeight()
+        cachedEmptyStateRowHeight = nextHeight
+        NativeReceiveLayout.persistEmptyStateRowHeight(nextHeight, for: tableView)
         guard abs(nextHeight - lastEmptyStateRowHeight) > 0.5 else {
             return
         }
