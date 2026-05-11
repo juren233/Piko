@@ -130,6 +130,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private var model: NativePikoModel?
     private var onDeleteFailure: ((Int) -> Void)?
     private var rows: [NativeReceiveRow] = []
+    private var isApplyingAnimatedDelete = false
 
     func configure(model: NativePikoModel, onDeleteFailure: @escaping (Int) -> Void) {
         self.model = model
@@ -139,6 +140,9 @@ private final class NativeReceiveTableViewController: UITableViewController {
     func apply(rows: [NativeReceiveRow]) {
         self.rows = rows
         guard isViewLoaded else {
+            return
+        }
+        guard !isApplyingAnimatedDelete else {
             return
         }
         tableView.reloadData()
@@ -239,10 +243,56 @@ private final class NativeReceiveTableViewController: UITableViewController {
             swipeCompletion(false)
             return
         }
+        guard let indexPath = indexPath(for: item) else {
+            model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { [weak self] failedCount in
+                self?.onDeleteFailure?(failedCount)
+            }
+            tableView.reloadData()
+            swipeCompletion(true)
+            return
+        }
+        isApplyingAnimatedDelete = true
         model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { [weak self] failedCount in
             self?.onDeleteFailure?(failedCount)
         }
+        animateDelete(item, at: indexPath)
         swipeCompletion(true)
+    }
+
+    private func indexPath(for item: NativeReceiveHistoryItem) -> IndexPath? {
+        guard let row = rows.firstIndex(where: { row in
+            if case .history(let history) = row {
+                return history.id == item.id
+            }
+            return false
+        }) else {
+            return nil
+        }
+        return IndexPath(row: row, section: 0)
+    }
+
+    private func animateDelete(_ item: NativeReceiveHistoryItem, at indexPath: IndexPath) {
+        if let model {
+            rows = NativeReceiveRow.rows(for: model)
+        } else {
+            rows.removeAll { row in
+                if case .history(let history) = row {
+                    return history.id == item.id
+                }
+                return false
+            }
+        }
+        tableView.deleteRows(at: [indexPath], with: .automatic)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self] in
+            guard let self else {
+                return
+            }
+            self.isApplyingAnimatedDelete = false
+            if let model = self.model {
+                self.rows = NativeReceiveRow.rows(for: model)
+            }
+            self.tableView.reloadData()
+        }
     }
 }
 
@@ -325,7 +375,7 @@ private func emptyStateCardView<Content: View>(
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let fileRowTrailingInset: CGFloat = 24
-    static let contentTrailingInset: CGFloat = 0
+    static let contentTrailingInset: CGFloat = 24
     static let bottomSpacerHeight: CGFloat = 112
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
