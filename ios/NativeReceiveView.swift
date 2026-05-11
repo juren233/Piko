@@ -4,83 +4,16 @@ import UIKit
 struct NativeReceiveView: View {
     @ObservedObject var model: NativePikoModel
     @State private var deleteFailureMessage: String?
-    @State private var pendingDeleteHistory: NativeReceiveHistoryItem?
 
     var body: some View {
-        List {
-            rowView(top: 28, bottom: 8) {
-                PikoHeroPanel(
-                    title: "Piko",
-                    subtitle: "接收记录和本机收件箱",
-                    metric: "\(model.receiveHistory.count) 次"
-                )
-            }
-            .nativeReceiveListRow()
-
-            rowView(bottom: NativeReceiveLayout.deviceNicknameBottomSpacing) {
-                NativeDeviceNicknameBanner(
-                    nickname: model.currentDeviceName,
-                    onReset: model.resetDeviceNickname
-                )
-            }
-            .nativeReceiveListRow()
-
-            if model.receiveHistory.isEmpty && model.activeReceive == nil {
-                emptyStateCardView(
-                    top: NativeReceiveLayout.emptyStateTopSpacing,
-                    bottom: NativeReceiveLayout.emptyStateBottomSpacing
-                ) {
-                    NativeReceiveEmptyStateContent()
-                }
-                .nativeReceiveListRow()
-            } else {
-                if let activeReceive = model.activeReceive {
-                    NativeActiveReceiveRow(
-                        transfer: activeReceive,
-                        onCancel: model.cancelReceiveTransfer
-                    )
-                    .nativeReceiveFileListRow()
-                }
-                ForEach(model.receiveHistory, id: \.id) { item in
-                    NativeReceiveHistoryRow(item: item)
-                    .nativeReceiveFileListRow()
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("删除", role: .destructive) {
-                            pendingDeleteHistory = item
-                        }
-                    }
-                }
-                Color.clear
-                    .frame(height: NativeReceiveLayout.bottomSpacerHeight)
-                    .nativeReceiveListRow()
+        NativeReceiveTable(model: model) { failedCount in
+            if failedCount > 0 {
+                deleteFailureMessage = "有\(failedCount)个文件未删除"
             }
         }
-        .listStyle(.plain)
         .ignoresSafeArea(.container, edges: [.top, .bottom])
         .background(PikoPalette.pageBackground.ignoresSafeArea())
         .systemBarBackgrounds()
-        .alert(pendingDeleteHistory?.deleteConfirmationTitle ?? "", isPresented: Binding(
-            get: { pendingDeleteHistory != nil },
-            set: { if !$0 { pendingDeleteHistory = nil } }
-        )) {
-            Button("算了", role: .cancel) {
-                pendingDeleteHistory = nil
-            }
-            Button("仅删除记录", role: .destructive) {
-                if let item = pendingDeleteHistory {
-                    confirmDelete(item, deleteFiles: false)
-                }
-            }
-            Button("删除记录与文件", role: .destructive) {
-                if let item = pendingDeleteHistory {
-                    confirmDelete(item, deleteFiles: true)
-                }
-            }
-        } message: {
-            if let item = pendingDeleteHistory {
-                Text(item.deleteConfirmationBody)
-            }
-        }
         .alert(deleteFailureMessage ?? "", isPresented: Binding(
             get: { deleteFailureMessage != nil },
             set: { if !$0 { deleteFailureMessage = nil } }
@@ -88,67 +21,310 @@ struct NativeReceiveView: View {
             Button("好", role: .cancel) { deleteFailureMessage = nil }
         }
     }
+}
 
-    private func confirmDelete(_ item: NativeReceiveHistoryItem, deleteFiles: Bool) {
-        pendingDeleteHistory = nil
-        model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { failedCount in
-            if failedCount > 0 {
-                deleteFailureMessage = "有\(failedCount)个文件未删除"
-            }
-        }
+private struct NativeReceiveTable: UIViewControllerRepresentable {
+    let model: NativePikoModel
+    let onDeleteFailure: (Int) -> Void
+
+    func makeUIViewController(context: Context) -> NativeReceiveTableViewController {
+        let controller = NativeReceiveTableViewController(style: .plain)
+        controller.configure(model: model, onDeleteFailure: onDeleteFailure)
+        return controller
     }
 
-    private func rowView<Content: View>(
-        top: CGFloat = 0,
-        leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
-        trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
-        bottom: CGFloat = 0,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
-            .frame(maxWidth: .infinity)
-            .background(PikoPalette.pageBackground)
-    }
-
-    private func emptyStateCardView<Content: View>(
-        top: CGFloat = 0,
-        leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
-        trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
-        bottom: CGFloat = 0,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .padding(.horizontal, 22)
-            .frame(maxWidth: .infinity)
-            .frame(minHeight: NativeReceiveLayout.emptyStateMinimumContentHeight)
-            .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
-            .frame(maxWidth: .infinity)
-            .background(PikoPalette.pageBackground)
+    func updateUIViewController(_ controller: NativeReceiveTableViewController, context: Context) {
+        controller.configure(model: model, onDeleteFailure: onDeleteFailure)
+        controller.apply(rows: NativeReceiveRow.rows(for: model))
     }
 }
 
-private extension View {
-    func nativeReceiveListRow() -> some View {
-        listRowInsets(EdgeInsets())
-            .listRowSeparator(.hidden)
-            .listRowBackground(PikoPalette.pageBackground)
+private enum NativeReceiveRow {
+    case hero(count: Int)
+    case device(nickname: String)
+    case empty
+    case active(NativeReceiveTransferState)
+    case history(NativeReceiveHistoryItem)
+    case spacer
+
+    static func rows(for model: NativePikoModel) -> [NativeReceiveRow] {
+        var result: [NativeReceiveRow] = [
+            .hero(count: model.receiveHistory.count),
+            .device(nickname: model.currentDeviceName),
+        ]
+        if model.receiveHistory.isEmpty && model.activeReceive == nil {
+            result.append(.empty)
+        } else {
+            if let activeReceive = model.activeReceive {
+                result.append(.active(activeReceive))
+            }
+            result.append(contentsOf: model.receiveHistory.map(NativeReceiveRow.history))
+            result.append(.spacer)
+        }
+        return result
     }
 
-    func nativeReceiveFileListRow() -> some View {
-        listRowInsets(EdgeInsets(
-            top: 0,
-            leading: NativeReceiveLayout.pageHorizontalInset,
-            bottom: 0,
-            trailing: 16
-        ))
-        .listRowSeparator(.visible)
-        .listRowBackground(PikoPalette.pageBackground)
+    func makeView(model: NativePikoModel) -> AnyView {
+        switch self {
+        case .hero(let count):
+            return AnyView(
+                rowView(top: 28, bottom: 8) {
+                    PikoHeroPanel(
+                        title: "Piko",
+                        subtitle: "接收记录和本机收件箱",
+                        metric: "\(count) 次"
+                    )
+                }
+            )
+        case .device(let nickname):
+            return AnyView(
+                rowView(bottom: NativeReceiveLayout.deviceNicknameBottomSpacing) {
+                    NativeDeviceNicknameBanner(
+                        nickname: nickname,
+                        onReset: model.resetDeviceNickname
+                    )
+                }
+            )
+        case .empty:
+            return AnyView(
+                emptyStateCardView(
+                    top: NativeReceiveLayout.emptyStateTopSpacing,
+                    bottom: NativeReceiveLayout.emptyStateBottomSpacing
+                ) {
+                    NativeReceiveEmptyStateContent()
+                }
+            )
+        case .active(let transfer):
+            return AnyView(
+                rowView(
+                    leading: NativeReceiveLayout.pageHorizontalInset,
+                    trailing: NativeReceiveLayout.fileRowTrailingInset
+                ) {
+                    NativeActiveReceiveRow(
+                        transfer: transfer,
+                        onCancel: model.cancelReceiveTransfer
+                    )
+                }
+            )
+        case .history(let item):
+            return AnyView(
+                rowView(
+                    leading: NativeReceiveLayout.pageHorizontalInset,
+                    trailing: NativeReceiveLayout.fileRowTrailingInset
+                ) {
+                    NativeReceiveHistoryRow(item: item)
+                }
+            )
+        case .spacer:
+            return AnyView(
+                rowView {
+                    Color.clear
+                        .frame(height: NativeReceiveLayout.bottomSpacerHeight)
+                }
+            )
+        }
     }
+}
+
+private final class NativeReceiveTableViewController: UITableViewController {
+    private var model: NativePikoModel?
+    private var onDeleteFailure: ((Int) -> Void)?
+    private var rows: [NativeReceiveRow] = []
+
+    func configure(model: NativePikoModel, onDeleteFailure: @escaping (Int) -> Void) {
+        self.model = model
+        self.onDeleteFailure = onDeleteFailure
+    }
+
+    func apply(rows: [NativeReceiveRow]) {
+        self.rows = rows
+        guard isViewLoaded else {
+            return
+        }
+        tableView.reloadData()
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        tableView.backgroundColor = PikoPalette.pageBackgroundUIColor
+        tableView.separatorStyle = .none
+        tableView.allowsSelection = false
+        tableView.showsVerticalScrollIndicator = false
+        tableView.contentInsetAdjustmentBehavior = .never
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 84
+        tableView.contentInset = .zero
+        tableView.scrollIndicatorInsets = .zero
+        tableView.reloadData()
+    }
+
+    override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+        rows.count
+    }
+
+    override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+        guard let model, rows.indices.contains(indexPath.row) else {
+            return UITableViewCell(style: .default, reuseIdentifier: nil)
+        }
+        let cell = NativeReceiveHostingCell(style: .default, reuseIdentifier: nil)
+        cell.configure(rootView: rows[indexPath.row].makeView(model: model), parent: self)
+        return cell
+    }
+
+    override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+        guard rows.indices.contains(indexPath.row) else {
+            return false
+        }
+        if case .history = rows[indexPath.row] {
+            return true
+        }
+        return false
+    }
+
+    override func tableView(
+        _ tableView: UITableView,
+        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+    ) -> UISwipeActionsConfiguration? {
+        guard rows.indices.contains(indexPath.row), case .history(let item) = rows[indexPath.row] else {
+            return nil
+        }
+        let deleteAction = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, swipeCompletion in
+            guard let self else {
+                swipeCompletion(false)
+                return
+            }
+            self.presentDeleteConfirmation(for: item, swipeCompletion: swipeCompletion)
+        }
+        deleteAction.backgroundColor = UIColor.systemRed
+        let configuration = UISwipeActionsConfiguration(actions: [deleteAction])
+        configuration.performsFirstActionWithFullSwipe = false
+        return configuration
+    }
+
+    override func tableView(_ tableView: UITableView, didEndDisplaying cell: UITableViewCell, forRowAt indexPath: IndexPath) {
+        (cell as? NativeReceiveHostingCell)?.detachHost()
+    }
+
+    private func presentDeleteConfirmation(
+        for item: NativeReceiveHistoryItem,
+        swipeCompletion: @escaping (Bool) -> Void
+    ) {
+        let alert = UIAlertController(title: item.deleteConfirmationTitle, message: item.deleteConfirmationBody, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "算了", style: .cancel) { _ in
+            swipeCompletion(false)
+        })
+        alert.addAction(UIAlertAction(title: "仅删除记录", style: .destructive) { [weak self] _ in
+            guard let self else {
+                swipeCompletion(false)
+                return
+            }
+            self.delete(item, deleteFiles: false, swipeCompletion: swipeCompletion)
+        })
+        alert.addAction(UIAlertAction(title: "删除记录与文件", style: .destructive) { [weak self] _ in
+            guard let self else {
+                swipeCompletion(false)
+                return
+            }
+            self.delete(item, deleteFiles: true, swipeCompletion: swipeCompletion)
+        })
+        present(alert, animated: true)
+    }
+
+    private func delete(
+        _ item: NativeReceiveHistoryItem,
+        deleteFiles: Bool,
+        swipeCompletion: @escaping (Bool) -> Void
+    ) {
+        guard let model else {
+            swipeCompletion(false)
+            return
+        }
+        model.deleteReceiveHistory(item, deleteFiles: deleteFiles) { [weak self] failedCount in
+            self?.onDeleteFailure?(failedCount)
+        }
+        swipeCompletion(true)
+    }
+}
+
+private final class NativeReceiveHostingCell: UITableViewCell {
+    private var host: UIHostingController<AnyView>?
+
+    func configure(rootView: AnyView, parent: UIViewController) {
+        detachHost()
+        selectionStyle = .none
+        backgroundColor = PikoPalette.pageBackgroundUIColor
+        contentView.backgroundColor = PikoPalette.pageBackgroundUIColor
+        preservesSuperviewLayoutMargins = false
+        contentView.preservesSuperviewLayoutMargins = false
+        contentView.layoutMargins = .zero
+
+        let controller = UIHostingController(rootView: rootView)
+        controller.view.backgroundColor = PikoPalette.pageBackgroundUIColor
+        controller.view.translatesAutoresizingMaskIntoConstraints = false
+        parent.addChild(controller)
+        contentView.addSubview(controller.view)
+        NSLayoutConstraint.activate([
+            controller.view.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            controller.view.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            controller.view.topAnchor.constraint(equalTo: contentView.topAnchor),
+            controller.view.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
+        ])
+        controller.didMove(toParent: parent)
+        host = controller
+    }
+
+    func detachHost() {
+        guard let host else {
+            return
+        }
+        host.willMove(toParent: nil)
+        host.view.removeFromSuperview()
+        host.removeFromParent()
+        self.host = nil
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        detachHost()
+    }
+
+    deinit {
+        detachHost()
+    }
+}
+
+private func rowView<Content: View>(
+    top: CGFloat = 0,
+    leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
+    trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
+    bottom: CGFloat = 0,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    content()
+        .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
+        .frame(maxWidth: .infinity)
+        .background(PikoPalette.pageBackground)
+}
+
+private func emptyStateCardView<Content: View>(
+    top: CGFloat = 0,
+    leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
+    trailing: CGFloat = NativeReceiveLayout.contentTrailingInset,
+    bottom: CGFloat = 0,
+    @ViewBuilder content: () -> Content
+) -> some View {
+    content()
+        .padding(.horizontal, 22)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: NativeReceiveLayout.emptyStateMinimumContentHeight)
+        .padding(EdgeInsets(top: top, leading: leading, bottom: bottom, trailing: trailing))
+        .frame(maxWidth: .infinity)
+        .background(PikoPalette.pageBackground)
 }
 
 private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
+    static let fileRowTrailingInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
     static let bottomSpacerHeight: CGFloat = 112
     static let deviceNicknameBottomSpacing: CGFloat = 8
@@ -232,6 +408,7 @@ private struct NativeReceiveEmptyStateContent: View {
         .frame(maxWidth: .infinity)
     }
 }
+
 private struct NativeActiveReceiveRow: View {
     let transfer: NativeReceiveTransferState
     let onCancel: () -> Void
@@ -250,9 +427,6 @@ private struct NativeActiveReceiveRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                ProgressView(value: transfer.progress)
-                    .progressViewStyle(.linear)
-                    .tint(PikoPalette.accent)
             }
             Button(action: onCancel) {
                 Image(uiImage: LucideTabIcon.x.image)
@@ -400,7 +574,7 @@ private struct NativeMultiFilePreview: View {
                 .frame(width: 44, height: 44)
                 .offset(x: -8, y: 8)
             NativeLayeredPreviewCard(label: fileType.previewLabel)
-            .frame(width: 47, height: 47)
+                .frame(width: 47, height: 47)
             Text("+\(count - 1)")
                 .font(PikoFont.badge)
                 .padding(.horizontal, 6)
