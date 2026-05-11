@@ -4,6 +4,7 @@ import UIKit
 enum PikoPalette {
     static let surfaceUIColor = UIColor.systemBackground
     static let surfaceVariantUIColor = UIColor.secondarySystemBackground
+    static let pageBackgroundUIColor = surfaceUIColor
     static let accentUIColor = UIColor.systemBlue
 
     static var surface: Color {

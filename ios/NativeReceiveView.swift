@@ -95,7 +95,8 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        tableView.backgroundColor = PikoPalette.surfaceUIColor
+        view.backgroundColor = PikoPalette.pageBackgroundUIColor
+        tableView.backgroundColor = PikoPalette.pageBackgroundUIColor
         tableView.separatorStyle = .none
         tableView.showsVerticalScrollIndicator = false
         tableView.estimatedRowHeight = 96
@@ -148,22 +149,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
         return cell
     }
 
-    override func tableView(
-        _ tableView: UITableView,
-        trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
-    ) -> UISwipeActionsConfiguration? {
-        guard case let .history(item) = rows[indexPath.row] else {
-            return nil
-        }
-        let action = UIContextualAction(style: .destructive, title: "删除") { [weak self] _, _, completion in
-            self?.presentDeleteConfirmation(for: item, swipeCompletion: completion) ?? completion(false)
-        }
-        action.backgroundColor = .systemRed
-        let configuration = UISwipeActionsConfiguration(actions: [action])
-        configuration.performsFirstActionWithFullSwipe = false
-        return configuration
-    }
-
     private func viewForRow(_ row: NativeReceiveTableRow) -> AnyView {
         switch row {
         case let .hero(count):
@@ -193,8 +178,13 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .history(item):
-            return rowView(trailing: 0, bottom: 12) {
-                NativeReceiveHistoryCard(item: item)
+            return rowView(bottom: 12) {
+                NativeSwipeToDeleteReceiveHistoryCard(
+                    item: item,
+                    onDeleteClick: { [weak self] in
+                        self?.presentDeleteConfirmation(for: item)
+                    }
+                )
             }
         case .spacer:
             return AnyView(
@@ -220,37 +210,32 @@ private final class NativeReceiveTableViewController: UITableViewController {
     }
 
     private func presentDeleteConfirmation(
-        for item: NativeReceiveHistoryItem,
-        swipeCompletion: @escaping (Bool) -> Void
+        for item: NativeReceiveHistoryItem
     ) {
         let alert = UIAlertController(
             title: item.deleteConfirmationTitle,
             message: item.deleteConfirmationBody,
             preferredStyle: .alert
         )
-        alert.addAction(UIAlertAction(title: "算了", style: .default) { _ in
-            swipeCompletion(false)
-        })
+        alert.addAction(UIAlertAction(title: "算了", style: .default))
         alert.addAction(UIAlertAction(title: "仅删除记录", style: .destructive) { [weak self] _ in
-            self?.confirmDelete(item, deleteFiles: false, swipeCompletion: swipeCompletion)
+            self?.confirmDelete(item, deleteFiles: false)
         })
         alert.addAction(UIAlertAction(title: "删除记录与文件", style: .destructive) { [weak self] _ in
-            self?.confirmDelete(item, deleteFiles: true, swipeCompletion: swipeCompletion)
+            self?.confirmDelete(item, deleteFiles: true)
         })
         present(alert, animated: true)
     }
 
     private func confirmDelete(
         _ item: NativeReceiveHistoryItem,
-        deleteFiles: Bool,
-        swipeCompletion: @escaping (Bool) -> Void
+        deleteFiles: Bool
     ) {
         onDeleteReceiveHistory?(item, deleteFiles) { [weak self] failedCount in
             if failedCount > 0 {
                 self?.onDeleteFailure?(failedCount)
             }
         }
-        swipeCompletion(true)
     }
 }
 
@@ -419,6 +404,73 @@ private struct NativeActiveReceiveProgressIcon: View {
                 .frame(width: 60, height: 60)
         }
         .frame(width: 60, height: 60)
+    }
+}
+
+private struct NativeSwipeToDeleteReceiveHistoryCard: View {
+    let item: NativeReceiveHistoryItem
+    let onDeleteClick: () -> Void
+    private let deleteWidth: CGFloat = 96
+    @State private var settledOffset: CGFloat = 0
+    @GestureState private var dragTranslation: CGFloat = 0
+
+    private var currentOffset: CGFloat {
+        min(max(settledOffset + dragTranslation, -deleteWidth), 0)
+    }
+
+    private var revealFraction: CGFloat {
+        min(max(-currentOffset / deleteWidth, 0), 1)
+    }
+
+    private var deleteButtonOffset: CGFloat {
+        min(max(deleteWidth + currentOffset, 0), deleteWidth)
+    }
+
+    var body: some View {
+        NativeReceiveHistoryCard(item: item)
+            .opacity(0)
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
+            .overlay(alignment: .trailing) {
+                Button(action: onDeleteClick) {
+                    Text("删除")
+                        .font(PikoFont.sectionTitle)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.white.opacity(Double(revealFraction)))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .buttonStyle(.plain)
+                .allowsHitTesting(revealFraction >= 0.96)
+                .frame(width: deleteWidth)
+                .background(
+                    Color(uiColor: .systemRed).opacity(0.92),
+                    in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+                )
+                .offset(x: deleteButtonOffset)
+            }
+            .overlay {
+                NativeReceiveHistoryCard(item: item)
+                    .offset(x: currentOffset)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if settledOffset < 0 {
+                            settledOffset = 0
+                        }
+                    }
+                    .gesture(
+                        DragGesture(minimumDistance: 8)
+                            .updating($dragTranslation) { value, state, _ in
+                                let nextOffset = min(max(settledOffset + value.translation.width, -deleteWidth), 0)
+                                state = nextOffset - settledOffset
+                            }
+                            .onEnded { value in
+                                let nextOffset = min(max(settledOffset + value.translation.width, -deleteWidth), 0)
+                                settledOffset = nextOffset <= -deleteWidth * 0.42 ? -deleteWidth : 0
+                            }
+                    )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .animation(.easeOut(duration: 0.18), value: settledOffset)
     }
 }
 

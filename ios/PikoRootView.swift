@@ -71,7 +71,7 @@ struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> ImmersiveHostingController<Content> {
         let controller = ImmersiveHostingController(rootView: content)
-        controller.view.backgroundColor = PikoPalette.surfaceUIColor
+        controller.view.backgroundColor = PikoPalette.pageBackgroundUIColor
         controller.view.isOpaque = true
         controller.edgesForExtendedLayout = .all
         controller.extendedLayoutIncludesOpaqueBars = true
@@ -80,7 +80,7 @@ struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: ImmersiveHostingController<Content>, context: Context) {
         controller.rootView = content
-        controller.view.backgroundColor = PikoPalette.surfaceUIColor
+        controller.view.backgroundColor = PikoPalette.pageBackgroundUIColor
         controller.setNeedsStatusBarAppearanceUpdate()
         controller.setNeedsUpdateOfHomeIndicatorAutoHidden()
         controller.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
@@ -88,11 +88,32 @@ struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 }
 
 final class ImmersiveHostingController<Content: View>: UIHostingController<Content> {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        applyImmersiveBackground()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        applyImmersiveBackground()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        applyImmersiveBackground()
+    }
+
     override var prefersHomeIndicatorAutoHidden: Bool {
         true
     }
 
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
         .all
+    }
+
+    private func applyImmersiveBackground() {
+        view.backgroundColor = PikoPalette.pageBackgroundUIColor
+        view.superview?.backgroundColor = PikoPalette.pageBackgroundUIColor
+        view.window?.backgroundColor = PikoPalette.pageBackgroundUIColor
     }
 }

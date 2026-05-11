@@ -266,16 +266,19 @@ class IosAndroidUiParityTest {
 
         assertTrue("UIViewControllerRepresentable" in iosReceive)
         assertTrue("UITableViewController" in iosReceive)
-        assertTrue("UIContextualAction(style: .destructive, title: \"删除\")" in iosReceive)
-        assertTrue("UISwipeActionsConfiguration(actions: [action])" in iosReceive)
-        assertTrue("configuration.performsFirstActionWithFullSwipe = false" in iosReceive)
+        assertTrue("NativeSwipeToDeleteReceiveHistoryCard" in iosReceive)
+        assertTrue("let deleteWidth: CGFloat = 96" in iosReceive)
+        assertTrue("DragGesture(minimumDistance: 8)" in iosReceive)
+        assertTrue(".frame(width: deleteWidth)" in iosReceive)
+        assertTrue("revealFraction >= 0.96" in iosReceive)
+        assertFalse("UIContextualAction(" in iosReceive)
+        assertFalse("UISwipeActionsConfiguration" in iosReceive)
         assertTrue("UIAlertController(" in iosReceive)
-        assertTrue("swipeCompletion(false)" in iosReceive)
-        assertTrue("swipeCompletion(true)" in iosReceive)
         assertTrue("UIHostingController(rootView: rootView)" in iosReceive)
         assertTrue("NativeReceiveTableView" in iosReceive)
-        assertTrue("confirmDelete(item, deleteFiles: false, swipeCompletion: swipeCompletion)" in iosReceive)
-        assertTrue("confirmDelete(item, deleteFiles: true, swipeCompletion: swipeCompletion)" in iosReceive)
+        assertTrue("presentDeleteConfirmation(for: item)" in iosReceive)
+        assertTrue("confirmDelete(item, deleteFiles: false)" in iosReceive)
+        assertTrue("confirmDelete(item, deleteFiles: true)" in iosReceive)
         assertTrue("仅删除记录" in iosReceive)
         assertTrue("删除记录与文件" in iosReceive)
         assertInOrder(iosReceive, "title: \"算了\"", "title: \"仅删除记录\"", "title: \"删除记录与文件\"")
@@ -285,8 +288,6 @@ class IosAndroidUiParityTest {
         assertFalse("pendingDeleteItem" in iosReceive)
         assertFalse("UIImage(systemName:" in iosReceive)
         assertFalse("action.image" in iosReceive)
-        assertFalse("NativeSwipeToDeleteReceiveHistoryCard" in iosReceive)
-        assertFalse("DragGesture(minimumDistance:" in iosReceive)
         assertFalse("NativeDeleteReceiveHistoryDialog" in iosReceive)
         assertFalse("deleteReceivedFiles" in iosReceive)
         assertFalse("同时删除文件" in iosReceive)
@@ -297,6 +298,21 @@ class IosAndroidUiParityTest {
         assertTrue("FileManager.default.removeItem(atPath: path)" in iosModel)
         assertTrue("真的要删除" in iosModel)
         assertTrue("将会删除：" in iosModel)
+    }
+
+    @Test
+    fun iosReceiveRootUsesPageBackgroundThroughSystemBars() {
+        val iosRoot = readIos("PikoRootView.swift")
+        val iosReceive = readIos("NativeReceiveView.swift")
+        val iosStyle = readIos("PikoStyle.swift")
+
+        assertTrue("static let pageBackgroundUIColor = surfaceUIColor" in iosStyle)
+        assertTrue("PikoPalette.pageBackgroundUIColor" in iosRoot)
+        assertTrue("view.window?.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosRoot)
+        assertTrue("view.superview?.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosRoot)
+        assertTrue("tableView.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosReceive)
+        assertTrue("view.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosReceive)
+        assertTrue("tableView.contentInsetAdjustmentBehavior = .never" in iosReceive)
     }
 
     @Test
