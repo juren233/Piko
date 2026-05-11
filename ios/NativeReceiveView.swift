@@ -282,7 +282,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
         let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] willDisplay row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
-        logTableGeometry(reason: "willDisplay-\(indexPath.row)")
     }
 
     override func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {

@@ -238,6 +238,11 @@ class IosAndroidUiParityTest {
             ?.value
             ?: error("didEndDisplaying must remain inspectable")
         assertFalse("detachHost()" in didEndDisplayingBlock)
+        val willDisplayBlock = Regex("""override func tableView\(_ tableView: UITableView, willDisplay[\s\S]*?\n    }\n""")
+            .find(iosReceive)
+            ?.value
+            ?: error("willDisplay must remain inspectable")
+        assertFalse("logTableGeometry(" in willDisplayBlock)
         assertTrue("scrollViewDidScroll" in iosReceive)
         assertTrue("postReloadAsync" in iosReceive)
         assertTrue("receiveListInsetsDescription" in iosReceive)
