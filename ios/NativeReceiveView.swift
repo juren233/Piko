@@ -20,7 +20,6 @@ struct NativeReceiveView: View {
             }
         )
         .background(PikoPalette.pageBackground.ignoresSafeArea())
-        .ignoresSafeArea()
         .systemBarBackgrounds()
         .alert(deleteFailureMessage ?? "", isPresented: Binding(
             get: { deleteFailureMessage != nil },
@@ -59,6 +58,7 @@ private enum NativeReceiveTableRow {
     case empty
     case active(NativeReceiveTransferState)
     case history(NativeReceiveHistoryItem)
+    case gap(CGFloat)
     case spacer
 
     var reuseIdentifier: String {
@@ -96,9 +96,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        edgesForExtendedLayout = .all
-        extendedLayoutIncludesOpaqueBars = true
-        additionalSafeAreaInsets = .zero
         view.backgroundColor = PikoPalette.pageBackgroundUIColor
         view.insetsLayoutMarginsFromSafeArea = false
         tableView.backgroundColor = PikoPalette.pageBackgroundUIColor
@@ -106,9 +103,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.showsVerticalScrollIndicator = false
         tableView.estimatedRowHeight = 96
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.contentInsetAdjustmentBehavior = .never
-        tableView.contentInset = .zero
-        tableView.scrollIndicatorInsets = .zero
+        tableView.contentInsetAdjustmentBehavior = .automatic
         tableView.insetsLayoutMarginsFromSafeArea = false
         tableView.insetsContentViewsToSafeArea = false
         tableView.layoutMargins = .zero
@@ -145,7 +140,12 @@ private final class NativeReceiveTableViewController: UITableViewController {
             if let activeReceive = model.activeReceive {
                 nextRows.append(.active(activeReceive))
             }
-            nextRows.append(contentsOf: model.receiveHistory.map(NativeReceiveTableRow.history))
+            for (index, item) in model.receiveHistory.enumerated() {
+                nextRows.append(.history(item))
+                if index < model.receiveHistory.count - 1 {
+                    nextRows.append(.gap(12))
+                }
+            }
             nextRows.append(.spacer)
         }
         return nextRows
@@ -160,12 +160,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath) as! NativeHostingTableCell
         cell.configure(rootView: viewForRow(row), parent: self)
         return cell
-    }
-
-    override func viewSafeAreaInsetsDidChange() {
-        super.viewSafeAreaInsetsDidChange()
-        tableView.contentInset = .zero
-        tableView.scrollIndicatorInsets = .zero
     }
 
     override func tableView(
@@ -193,7 +187,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
     private func viewForRow(_ row: NativeReceiveTableRow) -> AnyView {
         switch row {
         case let .hero(count):
-            return rowView(top: 32, bottom: 24) {
+            return rowView(top: 28, bottom: 8) {
                 PikoHeroPanel(
                     title: "Piko",
                     subtitle: "接收记录和本机收件箱",
@@ -201,7 +195,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .deviceName(nickname):
-            return rowView(bottom: 24) {
+            return rowView(bottom: 12) {
                 NativeDeviceNicknameBanner(
                     nickname: nickname,
                     onReset: { [weak self] in self?.onResetDeviceName?() }
@@ -219,9 +213,14 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .history(item):
-            return rowView(bottom: 12) {
+            return rowView(trailing: 12) {
                 NativeReceiveHistoryCard(item: item)
             }
+        case let .gap(height):
+            return AnyView(
+                Color.clear
+                    .frame(height: height)
+            )
         case .spacer:
             return AnyView(
                 Color.clear
