@@ -231,6 +231,13 @@ class IosAndroidUiParityTest {
         assertTrue("swiftUILayout event=" in iosReceive)
         assertTrue("hostingCell layout item=" in iosReceive)
         assertTrue("spacerCell layout expected=" in iosReceive)
+        assertFalse("tableView.cellForRow(at:" in iosReceive)
+        assertTrue("tableView.visibleCells" in iosReceive)
+        val didEndDisplayingBlock = Regex("""override func tableView\(_ tableView: UITableView, didEndDisplaying[\s\S]*?\n    }\n""")
+            .find(iosReceive)
+            ?.value
+            ?: error("didEndDisplaying must remain inspectable")
+        assertFalse("detachHost()" in didEndDisplayingBlock)
         assertTrue("scrollViewDidScroll" in iosReceive)
         assertTrue("postReloadAsync" in iosReceive)
         assertTrue("receiveListInsetsDescription" in iosReceive)

@@ -320,7 +320,6 @@ private final class NativeReceiveTableViewController: UITableViewController {
         let description = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
         let cellLayout = receiveListLayoutDescription(for: cell)
         receiveListLog("[ReceiveList] didEndDisplaying row=\(indexPath.row) item=\(description) layout=\(cellLayout)")
-        (cell as? NativeReceiveHostingCell)?.detachHost()
     }
 
     override func scrollViewDidScroll(_ scrollView: UIScrollView) {
@@ -448,12 +447,22 @@ private final class NativeReceiveTableViewController: UITableViewController {
     }
 
     private var visibleCellsDiagnosticDescription: String {
-        var previousMaxY: CGFloat?
-        return (tableView.indexPathsForVisibleRows ?? []).sorted { $0.row < $1.row }.map { indexPath in
-            let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
-            guard let cell = tableView.cellForRow(at: indexPath) else {
-                return "row:\(indexPath.row),item:\(item),cell:none"
+        let indexedCells: [(indexPath: IndexPath, cell: UITableViewCell)] = tableView.visibleCells.compactMap { cell in
+            guard let indexPath = tableView.indexPath(for: cell) else {
+                return nil
             }
+            return (indexPath, cell)
+        }.sorted { lhs, rhs in
+            if lhs.indexPath.section != rhs.indexPath.section {
+                return lhs.indexPath.section < rhs.indexPath.section
+            }
+            return lhs.indexPath.row < rhs.indexPath.row
+        }
+        var previousMaxY: CGFloat?
+        return indexedCells.map { entry in
+            let indexPath = entry.indexPath
+            let cell = entry.cell
+            let item = rows.indices.contains(indexPath.row) ? rows[indexPath.row].diagnosticDescription : "outOfRange"
             let gap = previousMaxY.map { cell.frame.minY - $0 } ?? 0
             previousMaxY = cell.frame.maxY
             return "row:\(indexPath.row),item:\(item),gap:\(Int(gap.rounded())),layout:\(receiveListLayoutDescription(for: cell))"
