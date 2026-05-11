@@ -359,9 +359,9 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
                 if failedCount > 0 {
                     self?.onDeleteFailure?(failedCount)
                 }
-                swipeCompletion(true)
             }
         }
+        swipeCompletion(true)
     }
 }
 
@@ -450,7 +450,7 @@ private struct NativeDeviceNicknameBanner: View {
         .background(PikoPalette.surface.opacity(0.58), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
         )
     }
 }
@@ -504,7 +504,7 @@ private struct NativeActiveReceiveCard: View {
         .background(PikoPalette.surface.opacity(0.56), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
         )
     }
 }
@@ -562,7 +562,7 @@ private struct NativeReceiveHistoryCard: View {
         .background(PikoPalette.surface.opacity(0.56), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.secondary.opacity(0.16), lineWidth: 1)
+                .strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)
         )
     }
 }

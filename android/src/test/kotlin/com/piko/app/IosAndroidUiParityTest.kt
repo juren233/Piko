@@ -232,6 +232,7 @@ class IosAndroidUiParityTest {
         val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/LocalSendHttpServer.kt").readText()
         val androidLegacyReceiver = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
         val iosReceive = readIos("NativeReceiveView.swift")
+        val normalizedIosReceive = iosReceive.replace("\r\n", "\n")
         val iosModel = readIos("NativePikoModel.swift")
 
         assertTrue("detectHorizontalDragGestures" in androidReceive)
@@ -296,6 +297,8 @@ class IosAndroidUiParityTest {
         assertTrue("presentDeleteConfirmation(for: item, swipeCompletion: completion)" in iosReceive)
         assertTrue("confirmDelete(item, deleteFiles: false, swipeCompletion: swipeCompletion)" in iosReceive)
         assertTrue("confirmDelete(item, deleteFiles: true, swipeCompletion: swipeCompletion)" in iosReceive)
+        assertTrue("            }\n        }\n        swipeCompletion(true)" in normalizedIosReceive)
+        assertFalse("                }\n                swipeCompletion(true)\n            }\n        }" in normalizedIosReceive)
         assertTrue("仅删除记录" in iosReceive)
         assertTrue("删除记录与文件" in iosReceive)
         assertInOrder(iosReceive, "title: \"算了\"", "title: \"仅删除记录\"", "title: \"删除记录与文件\"")
@@ -334,6 +337,8 @@ class IosAndroidUiParityTest {
         assertTrue("tableView.contentInsetAdjustmentBehavior = .never" in iosReceive)
         assertTrue("static let deviceNicknameBottomSpacing: CGFloat = 8" in iosReceive)
         assertTrue("static let deviceNicknameVerticalPadding: CGFloat = 9" in iosReceive)
+        assertTrue(".strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)" in iosReceive)
+        assertFalse(".stroke(Color.secondary.opacity(0.16), lineWidth: 1)" in iosReceive)
     }
 
     @Test
