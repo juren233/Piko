@@ -133,6 +133,7 @@ private enum NativeReceiveLayout {
     static let pageHorizontalInset: CGFloat = 24
     static let contentTrailingInset: CGFloat = 0
     static let historyRowSpacing: CGFloat = 12
+    static let historyRowHeight: CGFloat = 84
     static let deviceNicknameBottomSpacing: CGFloat = 8
     static let deviceNicknameVerticalPadding: CGFloat = 9
     static let emptyStateTopSpacing: CGFloat = 24
@@ -444,6 +445,8 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             return emptyStateRowHeight()
         case .spacer:
             return NativeReceiveLayout.bottomSpacerHeight
+        case .history:
+            return NativeReceiveLayout.historyRowHeight
         default:
             return UITableView.automaticDimension
         }
@@ -461,8 +464,10 @@ private final class NativeReceiveTableViewController: UIViewController, UITableV
             return NativeReceiveLayout.deviceNameEstimatedHeight
         case .empty:
             return emptyStateRowHeight()
-        case .active, .history:
+        case .active:
             return 84
+        case .history:
+            return NativeReceiveLayout.historyRowHeight
         }
     }
 
