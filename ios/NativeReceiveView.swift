@@ -79,8 +79,16 @@ private enum NativeReceiveTableRow {
     }
 }
 
+private enum NativeReceiveLayout {
+    static let pageHorizontalInset: CGFloat = 24
+    static let historySwipeTrailingInset: CGFloat = 8
+    static let deviceNicknameBottomSpacing: CGFloat = 8
+    static let deviceNicknameVerticalPadding: CGFloat = 9
+}
+
 private final class NativeReceiveTableViewController: UITableViewController {
     private var rows: [NativeReceiveTableRow] = []
+    private var swipeEditingIndexPath: IndexPath?
     private var onResetDeviceName: (() -> Void)?
     private var onCancelReceive: (() -> Void)?
     private var onDeleteReceiveHistory: ((NativeReceiveHistoryItem, Bool, @escaping (Int) -> Void) -> Void)?
@@ -128,6 +136,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
         self.onCancelReceive = onCancelReceive
         self.onDeleteReceiveHistory = onDeleteReceiveHistory
         self.onDeleteFailure = onDeleteFailure
+        swipeEditingIndexPath = nil
         rows = Self.makeRows(model: model)
         tableView.reloadData()
     }
@@ -161,8 +170,21 @@ private final class NativeReceiveTableViewController: UITableViewController {
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let row = rows[indexPath.row]
         let cell = tableView.dequeueReusableCell(withIdentifier: row.reuseIdentifier, for: indexPath) as! NativeHostingTableCell
-        cell.configure(rootView: viewForRow(row), parent: self)
+        cell.configure(rootView: viewForRow(row, isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
         return cell
+    }
+
+    override func tableView(_ tableView: UITableView, willBeginEditingRowAt indexPath: IndexPath) {
+        swipeEditingIndexPath = indexPath
+        updateVisibleCell(at: indexPath)
+    }
+
+    override func tableView(_ tableView: UITableView, didEndEditingRowAt indexPath: IndexPath?) {
+        let previousIndexPath = swipeEditingIndexPath
+        swipeEditingIndexPath = nil
+        if let previousIndexPath {
+            updateVisibleCell(at: previousIndexPath)
+        }
     }
 
     override func tableView(
@@ -187,7 +209,17 @@ private final class NativeReceiveTableViewController: UITableViewController {
         return configuration
     }
 
-    private func viewForRow(_ row: NativeReceiveTableRow) -> AnyView {
+    private func updateVisibleCell(at indexPath: IndexPath) {
+        guard
+            rows.indices.contains(indexPath.row),
+            let cell = tableView.cellForRow(at: indexPath) as? NativeHostingTableCell
+        else {
+            return
+        }
+        cell.configure(rootView: viewForRow(rows[indexPath.row], isSwipeEditing: swipeEditingIndexPath == indexPath), parent: self)
+    }
+
+    private func viewForRow(_ row: NativeReceiveTableRow, isSwipeEditing: Bool = false) -> AnyView {
         switch row {
         case let .hero(count):
             return rowView(top: 28, bottom: 8) {
@@ -198,7 +230,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .deviceName(nickname):
-            return rowView(bottom: 12) {
+            return rowView(bottom: NativeReceiveLayout.deviceNicknameBottomSpacing) {
                 NativeDeviceNicknameBanner(
                     nickname: nickname,
                     onReset: { [weak self] in self?.onResetDeviceName?() }
@@ -216,7 +248,11 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .history(item):
-            return rowView(trailing: 4) {
+            return rowView(
+                trailing: isSwipeEditing
+                    ? NativeReceiveLayout.historySwipeTrailingInset
+                    : NativeReceiveLayout.pageHorizontalInset
+            ) {
                 NativeReceiveHistoryCard(item: item)
             }
         case let .gap(height):
@@ -234,8 +270,8 @@ private final class NativeReceiveTableViewController: UITableViewController {
 
     private func rowView<Content: View>(
         top: CGFloat = 0,
-        leading: CGFloat = 24,
-        trailing: CGFloat = 24,
+        leading: CGFloat = NativeReceiveLayout.pageHorizontalInset,
+        trailing: CGFloat = NativeReceiveLayout.pageHorizontalInset,
         bottom: CGFloat = 0,
         @ViewBuilder content: () -> Content
     ) -> AnyView {
@@ -377,7 +413,7 @@ private struct NativeDeviceNicknameBanner: View {
             .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.vertical, NativeReceiveLayout.deviceNicknameVerticalPadding)
         .background(PikoPalette.surface.opacity(0.58), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 20, style: .continuous)

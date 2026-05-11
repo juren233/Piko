@@ -269,7 +269,12 @@ class IosAndroidUiParityTest {
         assertTrue("UIContextualAction(" in iosReceive)
         assertTrue("UISwipeActionsConfiguration" in iosReceive)
         assertTrue("configuration.performsFirstActionWithFullSwipe = false" in iosReceive)
-        assertTrue("rowView(trailing: 4)" in iosReceive)
+        assertTrue("static let pageHorizontalInset: CGFloat = 24" in iosReceive)
+        assertTrue("static let historySwipeTrailingInset: CGFloat = 8" in iosReceive)
+        assertTrue("swipeEditingIndexPath == indexPath" in iosReceive)
+        assertTrue("willBeginEditingRowAt" in iosReceive)
+        assertTrue("didEndEditingRowAt" in iosReceive)
+        assertFalse("rowView(trailing: 4)" in iosReceive)
         assertFalse("NativeSwipeToDeleteReceiveHistoryCard" in iosReceive)
         assertFalse("let deleteWidth: CGFloat = 96" in iosReceive)
         assertFalse("DragGesture(minimumDistance: 12)" in iosReceive)
@@ -316,6 +321,8 @@ class IosAndroidUiParityTest {
         assertTrue("tableView.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosReceive)
         assertTrue("view.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosReceive)
         assertTrue("tableView.contentInsetAdjustmentBehavior = .never" in iosReceive)
+        assertTrue("static let deviceNicknameBottomSpacing: CGFloat = 8" in iosReceive)
+        assertTrue("static let deviceNicknameVerticalPadding: CGFloat = 9" in iosReceive)
     }
 
     @Test
