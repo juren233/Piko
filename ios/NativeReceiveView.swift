@@ -19,6 +19,7 @@ struct NativeReceiveView: View {
                 }
             }
         )
+        .ignoresSafeArea(.container, edges: [.top, .bottom])
         .background(PikoPalette.pageBackground.ignoresSafeArea())
         .systemBarBackgrounds()
         .alert(deleteFailureMessage ?? "", isPresented: Binding(
@@ -103,10 +104,12 @@ private final class NativeReceiveTableViewController: UITableViewController {
         tableView.showsVerticalScrollIndicator = false
         tableView.estimatedRowHeight = 96
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.contentInsetAdjustmentBehavior = .automatic
+        tableView.contentInsetAdjustmentBehavior = .never
         tableView.insetsLayoutMarginsFromSafeArea = false
         tableView.insetsContentViewsToSafeArea = false
         tableView.layoutMargins = .zero
+        tableView.contentInset = .zero
+        tableView.scrollIndicatorInsets = .zero
         if #available(iOS 15.0, *) {
             tableView.sectionHeaderTopPadding = 0
         }
@@ -213,7 +216,7 @@ private final class NativeReceiveTableViewController: UITableViewController {
                 )
             }
         case let .history(item):
-            return rowView(trailing: 12) {
+            return rowView(trailing: 4) {
                 NativeReceiveHistoryCard(item: item)
             }
         case let .gap(height):

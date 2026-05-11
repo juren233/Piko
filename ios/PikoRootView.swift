@@ -71,16 +71,13 @@ struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> ImmersiveHostingController<Content> {
         let controller = ImmersiveHostingController(rootView: content)
-        controller.view.backgroundColor = PikoPalette.pageBackgroundUIColor
-        controller.view.isOpaque = true
-        controller.edgesForExtendedLayout = .all
-        controller.extendedLayoutIncludesOpaqueBars = true
+        controller.applyImmersiveConfiguration()
         return controller
     }
 
     func updateUIViewController(_ controller: ImmersiveHostingController<Content>, context: Context) {
         controller.rootView = content
-        controller.view.backgroundColor = PikoPalette.pageBackgroundUIColor
+        controller.applyImmersiveConfiguration()
         controller.setNeedsStatusBarAppearanceUpdate()
         controller.setNeedsUpdateOfHomeIndicatorAutoHidden()
         controller.setNeedsUpdateOfScreenEdgesDeferringSystemGestures()
@@ -90,12 +87,12 @@ struct ImmersiveRootView<Content: View>: UIViewControllerRepresentable {
 final class ImmersiveHostingController<Content: View>: UIHostingController<Content> {
     override func viewDidLoad() {
         super.viewDidLoad()
-        applyImmersiveBackground()
+        applyImmersiveConfiguration()
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        applyImmersiveBackground()
+        applyImmersiveConfiguration()
     }
 
     override func viewDidLayoutSubviews() {
@@ -109,6 +106,16 @@ final class ImmersiveHostingController<Content: View>: UIHostingController<Conte
 
     override var preferredScreenEdgesDeferringSystemGestures: UIRectEdge {
         .all
+    }
+
+    func applyImmersiveConfiguration() {
+        if #available(iOS 16.4, *) {
+            safeAreaRegions = []
+        }
+        view.isOpaque = true
+        edgesForExtendedLayout = .all
+        extendedLayoutIncludesOpaqueBars = true
+        applyImmersiveBackground()
     }
 
     private func applyImmersiveBackground() {
