@@ -32,9 +32,9 @@ class IosAndroidUiParityTest {
 
     @Test
     fun androidUsesFixedIosPaletteInsteadOfDynamicSystemColors() {
-        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoTheme.kt").readText()
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
-        val sharedApp = File(rootDir, "android/src/main/kotlin/com/piko/app/App.kt").readText()
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/PikoTheme.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val sharedApp = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/App.kt").readText()
         val bottomTabs = File(rootDir, "android/src/main/kotlin/com/piko/app/glass/LiquidBottomTabs.kt").readText()
         val iosStyle = readIos("PikoStyle.swift")
 
@@ -88,7 +88,7 @@ class IosAndroidUiParityTest {
 
     @Test
     fun iosSendDeviceSubtitleKeepsAndroidOptionalContract() {
-        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/SendPageState.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
         val iosDeviceSection = readIos("NativeSendDeviceSection.swift")
 
@@ -137,10 +137,10 @@ class IosAndroidUiParityTest {
 
     @Test
     fun sendPagesDoNotExposeCurrentDeviceAndUseRandomNicknameBanner() {
-        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/SendPageState.kt").readText()
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
-        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/SendPageState.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidSendPlatformActions.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
         val iosLanDiscovery = readIos("NativeLanDiscoveryService.swift")
         val iosReceive = readIos("NativeReceiveView.swift")
@@ -180,10 +180,10 @@ class IosAndroidUiParityTest {
 
     @Test
     fun receivePagesUseCompactActiveProgressAndMediaPreview() {
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
-        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
-        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
-        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/LocalSendHttpServer.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
+        val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidSendPlatformActions.kt").readText()
+        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/transport/LocalSendHttpServer.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
         val iosReceive = readIos("NativeReceiveView.swift")
         val iosReceiveFileStore = readIos("NativeReceiveFileStore.swift")
@@ -217,7 +217,7 @@ class IosAndroidUiParityTest {
 
     @Test
     fun iosReceiveFileListUsesNativeTableAndKeepsRequiredControls() {
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
         val iosReceive = readIos("NativeReceiveView.swift")
 
         assertTrue("modifier = Modifier.weight(1f)" in androidReceive)
@@ -298,9 +298,9 @@ class IosAndroidUiParityTest {
 
     @Test
     fun receiveHistoryPersistsAndIosSavesInDocumentsRoot() {
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
-        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
-        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveHistoryStore.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
+        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/data/ReceiveHistoryStore.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
         val iosReceiveHistoryStore = readIos("NativeReceiveHistoryStore.swift")
 
@@ -391,13 +391,74 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun iosTransferClientUsesAsyncAwaitWithoutBlockingWait() {
+        val iosModel = readIos("NativePikoModel.swift")
+        val iosTransferClient = readIos("NativeTransferClient.swift")
+        val transferSources = iosModel + iosTransferClient
+
+        assertTrue(") async -> Int?" in iosTransferClient)
+        assertTrue("await self.transferClient.send(" in iosModel)
+        assertTrue("withCheckedContinuation" in iosTransferClient)
+        assertTrue("withTaskCancellationHandler" in iosTransferClient)
+        assertTrue("NativeConnectionReadyWaiter" in iosTransferClient)
+        assertFalse("DispatchSemaphore" in transferSources)
+        assertFalse(".wait()" in transferSources)
+        assertFalse(".wait(" in transferSources)
+        assertFalse("queue.async" in transferSources)
+    }
+
+    @Test
+    fun androidCoreFilesUseArchitecturePackages() {
+        val expectedPackages = mapOf(
+            "domain/SendPageState.kt" to "package com.piko.app.domain",
+            "domain/PikoHomeState.kt" to "package com.piko.app.domain",
+            "domain/SendTransferProtocol.kt" to "package com.piko.app.domain",
+            "data/ReceiveHistoryStore.kt" to "package com.piko.app.data",
+            "data/ReceiveMediaSaveLocation.kt" to "package com.piko.app.data",
+            "data/LocalSendSessionStore.kt" to "package com.piko.app.data",
+            "transport/LocalSendProtocol.kt" to "package com.piko.app.transport",
+            "transport/LocalSendHttpRoute.kt" to "package com.piko.app.transport",
+            "transport/AndroidLocalSendMulticast.kt" to "package com.piko.app.transport",
+            "transport/LocalSendHttpUploadClient.kt" to "package com.piko.app.transport",
+            "transport/LocalSendHttpServer.kt" to "package com.piko.app.transport",
+            "ui/App.kt" to "package com.piko.app.ui",
+            "ui/PikoTheme.kt" to "package com.piko.app.ui",
+            "ui/PikoIcons.kt" to "package com.piko.app.ui",
+            "ui/PikoUiChrome.kt" to "package com.piko.app.ui",
+            "ui/ReceiveScreen.kt" to "package com.piko.app.ui",
+            "ui/SendDeviceComponents.kt" to "package com.piko.app.ui",
+            "ui/SendFileComponents.kt" to "package com.piko.app.ui",
+            "ui/SendImageComponents.kt" to "package com.piko.app.ui",
+            "ui/SendPlatformImageThumbnail.kt" to "package com.piko.app.ui",
+            "ui/SendScreen.kt" to "package com.piko.app.ui",
+            "ui/SendSelectionComponents.kt" to "package com.piko.app.ui",
+            "ui/SendTransferComponents.kt" to "package com.piko.app.ui",
+            "ui/SettingsScreen.kt" to "package com.piko.app.ui",
+            "ui/UiLabels.kt" to "package com.piko.app.ui",
+            "platform/DeviceNickname.kt" to "package com.piko.app.platform",
+            "platform/SendPlatformActions.kt" to "package com.piko.app.platform",
+            "platform/AndroidReceivePreferences.kt" to "package com.piko.app.platform",
+            "platform/AndroidSendPlatformActions.kt" to "package com.piko.app.platform",
+            "platform/AndroidPikoApp.kt" to "package com.piko.app.platform",
+        )
+
+        expectedPackages.forEach { (fileName, packageLine) ->
+            val source = File(rootDir, "android/src/main/kotlin/com/piko/app/$fileName").readText()
+            assertTrue(source.startsWith(packageLine), "$fileName should start with $packageLine")
+        }
+
+        val mainActivity = File(rootDir, "android/src/main/kotlin/com/piko/app/MainActivity.kt").readText()
+        assertTrue("import com.piko.app.platform.AndroidPikoApp" in mainActivity)
+    }
+
+    @Test
     fun receiveHistoryDeletionUsesSwipeConfirmationAndSavedFileReferencesOnBothPlatforms() {
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveScreen.kt").readText()
-        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoHomeState.kt").readText()
-        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/ReceiveHistoryStore.kt").readText()
-        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/LocalSendHttpServer.kt").readText()
-        val androidLegacyReceiver = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidSendPlatformActions.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
+        val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/data/ReceiveHistoryStore.kt").readText()
+        val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/transport/LocalSendHttpServer.kt").readText()
+        val androidLegacyReceiver = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidSendPlatformActions.kt").readText()
         val iosReceive = readIos("NativeReceiveView.swift")
         val normalizedIosReceive = iosReceive.replace("\r\n", "\n")
         val iosModel = readIos("NativePikoModel.swift")
@@ -526,9 +587,9 @@ class IosAndroidUiParityTest {
 
     @Test
     fun appTextUsesAdaptiveTypographyForSmallAndLargeScreens() {
-        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/PikoTheme.kt").readText()
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/AndroidPikoApp.kt").readText()
-        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/SettingsScreen.kt").readText()
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/PikoTheme.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/SettingsScreen.kt").readText()
         val iosStyle = readIos("PikoStyle.swift")
         val iosRoot = readIos("PikoRootView.swift")
         val iosReceive = readIos("NativeReceiveView.swift")

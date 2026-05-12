@@ -1,5 +1,7 @@
 package com.piko.app
 
+import com.piko.app.data.ReceiveMediaSaveLocation
+import com.piko.app.data.ReceiveSaveDestination
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

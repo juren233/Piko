@@ -1,5 +1,9 @@
 package com.piko.app
 
+import com.piko.app.platform.DeviceNicknameGenerator
+import com.piko.app.platform.DeviceNicknameRandom
+import com.piko.app.platform.DeviceNicknameRepository
+import com.piko.app.platform.DeviceNicknameStorage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals

@@ -218,12 +218,12 @@ final class NativePikoModel: ObservableObject {
 
         transferStateMachine.beginSend(title: transferTitle)
 
-        queue.async {
+        Task {
             let totalBytes = max(payloadItems.reduce(0) { $0 + $1.sizeBytes } * targets.count, 1)
             var sentBytes = 0
 
             for target in targets {
-                guard let sentTargetBytes = self.transferClient.send(
+                guard let sentTargetBytes = await self.transferClient.send(
                     payloadItems,
                     to: target,
                     sender: self.nickname,

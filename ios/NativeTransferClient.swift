@@ -14,8 +14,8 @@ final class NativeTransferClient {
         totalBytes: Int,
         progressUpdate: @escaping ProgressUpdate,
         activeConnectionUpdate: @escaping ActiveConnectionUpdate
-    ) -> Int? {
-        if let localSendBytes = sendLocalSendItems(
+    ) async -> Int? {
+        if let localSendBytes = await sendLocalSendItems(
             payloadItems,
             to: target,
             localInfo: localInfo,
@@ -26,7 +26,7 @@ final class NativeTransferClient {
             return localSendBytes
         }
 
-        return sendLegacyItems(
+        return await sendLegacyItems(
             payloadItems,
             to: target,
             senderName: sender.title,
@@ -44,7 +44,7 @@ final class NativeTransferClient {
         totalCompletedBeforeTarget: Int,
         totalBytes: Int,
         progressUpdate: @escaping ProgressUpdate
-    ) -> Int? {
+    ) async -> Int? {
         let indexedItems = payloadItems.enumerated().map { index, item in
             NativeLocalSendIndexedItem(
                 fileId: "file-\(index)",
@@ -64,7 +64,7 @@ final class NativeTransferClient {
             info: localInfo,
             files: indexedItems.map(\.metadata)
         )
-        guard let prepareResponse = sendHttpRequest(
+        guard let prepareResponse = await sendHttpRequest(
             to: target.endpoint,
             method: "POST",
             path: "/api/localsend/v2/prepare-upload",
@@ -76,14 +76,14 @@ final class NativeTransferClient {
 
         var sentBytes = 0
         for indexed in indexedItems {
-            guard let token = session.fileTokens[indexed.fileId] else {
+            guard !Task.isCancelled, let token = session.fileTokens[indexed.fileId] else {
                 return nil
             }
             let path = "/api/localsend/v2/upload" +
                 "?sessionId=\(session.sessionId.urlEncoded)" +
                 "&fileId=\(indexed.fileId.urlEncoded)" +
                 "&token=\(token.urlEncoded)"
-            guard let uploadResponse = sendHttpFileRequest(
+            guard let uploadResponse = await sendHttpFileRequest(
                 to: target.endpoint,
                 method: "POST",
                 path: path,
@@ -107,77 +107,72 @@ final class NativeTransferClient {
         totalBytes: Int,
         progressUpdate: @escaping ProgressUpdate,
         activeConnectionUpdate: @escaping ActiveConnectionUpdate
-    ) -> Int? {
+    ) async -> Int? {
         let connection = NWConnection(to: target.endpoint, using: .tcp)
         DispatchQueue.main.async {
             activeConnectionUpdate(connection)
         }
-        let ready = DispatchSemaphore(value: 0)
-        var failed = false
-
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed, .cancelled:
-                failed = true
-                ready.signal()
-            default:
-                break
-            }
-        }
-        let connectionQueue = DispatchQueue(label: "piko.native.connection.\(UUID().uuidString)")
-        connection.start(queue: connectionQueue)
-        ready.wait()
-
-        guard !failed else {
+        defer {
             connection.cancel()
             DispatchQueue.main.async {
                 activeConnectionUpdate(nil)
             }
+        }
+
+        guard await waitUntilReady(connection, queueLabel: "piko.native.connection.\(UUID().uuidString)") else {
             return nil
         }
 
         let header = NativeTransferProtocol.encodeHeader(items: payloadItems, senderName: senderName)
-        guard send(header, over: connection) else {
-            connection.cancel()
-            DispatchQueue.main.async {
-                activeConnectionUpdate(nil)
-            }
+        guard await send(header, over: connection) else {
             return nil
         }
 
         var sentBytes = 0
         for item in payloadItems {
-            guard sendFile(item.fileURL, over: connection) else {
-                connection.cancel()
-                DispatchQueue.main.async {
-                    activeConnectionUpdate(nil)
-                }
+            guard !Task.isCancelled, await sendFile(item.fileURL, over: connection) else {
                 return nil
             }
             sentBytes += item.sizeBytes
             progressUpdate(Double(totalCompletedBeforeTarget + sentBytes) / Double(totalBytes))
         }
-        connection.cancel()
-        DispatchQueue.main.async {
-            activeConnectionUpdate(nil)
-        }
         return sentBytes
     }
 
-    private func send(_ data: Data, over connection: NWConnection) -> Bool {
-        let finished = DispatchSemaphore(value: 0)
-        var succeeded = true
-        connection.send(content: data, completion: .contentProcessed { error in
-            succeeded = error == nil
-            finished.signal()
-        })
-        finished.wait()
-        return succeeded
+    private func waitUntilReady(_ connection: NWConnection, queueLabel: String) async -> Bool {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let waiter = NativeConnectionReadyWaiter(continuation)
+                connection.stateUpdateHandler = { state in
+                    switch state {
+                    case .ready:
+                        waiter.resume(true)
+                    case .failed, .cancelled:
+                        waiter.resume(false)
+                    default:
+                        break
+                    }
+                }
+                connection.start(queue: DispatchQueue(label: queueLabel))
+            }
+        } onCancel: {
+            connection.cancel()
+        }
     }
 
-    private func sendFile(_ fileURL: URL, over connection: NWConnection) -> Bool {
+    private func send(_ data: Data, over connection: NWConnection) async -> Bool {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                connection.send(content: data, completion: .contentProcessed { error in
+                    continuation.resume(returning: error == nil)
+                })
+            }
+        } onCancel: {
+            connection.cancel()
+        }
+    }
+
+    private func sendFile(_ fileURL: URL, over connection: NWConnection) async -> Bool {
         guard let stream = InputStream(url: fileURL) else {
             return false
         }
@@ -189,6 +184,10 @@ final class NativeTransferClient {
         let bufferSize = 64 * 1024
         var buffer = [UInt8](repeating: 0, count: bufferSize)
         while stream.hasBytesAvailable {
+            if Task.isCancelled {
+                connection.cancel()
+                return false
+            }
             let count = stream.read(&buffer, maxLength: bufferSize)
             if count < 0 {
                 return false
@@ -196,7 +195,7 @@ final class NativeTransferClient {
             if count == 0 {
                 break
             }
-            guard send(Data(buffer[0..<count]), over: connection) else {
+            guard await send(Data(buffer[0..<count]), over: connection) else {
                 return false
             }
         }
@@ -209,26 +208,12 @@ final class NativeTransferClient {
         path: String,
         body: Data,
         contentType: String = "application/json; charset=utf-8"
-    ) -> NativeHttpResponse? {
+    ) async -> NativeHttpResponse? {
         let connection = NWConnection(to: endpoint, using: .tcp)
-        let ready = DispatchSemaphore(value: 0)
-        var failed = false
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed, .cancelled:
-                failed = true
-                ready.signal()
-            default:
-                break
-            }
-        }
-        let connectionQueue = DispatchQueue(label: "piko.native.http.\(UUID().uuidString)")
-        connection.start(queue: connectionQueue)
-        ready.wait()
-        guard !failed else {
+        defer {
             connection.cancel()
+        }
+        guard await waitUntilReady(connection, queueLabel: "piko.native.http.\(UUID().uuidString)") else {
             return nil
         }
 
@@ -241,28 +226,10 @@ final class NativeTransferClient {
         request.append("\r\n")
         request.append(body)
 
-        guard send(request, over: connection) else {
-            connection.cancel()
+        guard await send(request, over: connection),
+              let response = await receiveResponse(over: connection) else {
             return nil
         }
-
-        let finished = DispatchSemaphore(value: 0)
-        var response = Data()
-        func receiveNext() {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
-                if let data {
-                    response.append(data)
-                }
-                if isComplete {
-                    finished.signal()
-                } else {
-                    receiveNext()
-                }
-            }
-        }
-        receiveNext()
-        finished.wait()
-        connection.cancel()
         return NativeHttpResponse.parse(response)
     }
 
@@ -273,26 +240,12 @@ final class NativeTransferClient {
         fileURL: URL,
         contentLength: Int,
         contentType: String
-    ) -> NativeHttpResponse? {
+    ) async -> NativeHttpResponse? {
         let connection = NWConnection(to: endpoint, using: .tcp)
-        let ready = DispatchSemaphore(value: 0)
-        var failed = false
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed, .cancelled:
-                failed = true
-                ready.signal()
-            default:
-                break
-            }
-        }
-        let connectionQueue = DispatchQueue(label: "piko.native.http.\(UUID().uuidString)")
-        connection.start(queue: connectionQueue)
-        ready.wait()
-        guard !failed else {
+        defer {
             connection.cancel()
+        }
+        guard await waitUntilReady(connection, queueLabel: "piko.native.http.\(UUID().uuidString)") else {
             return nil
         }
 
@@ -304,28 +257,55 @@ final class NativeTransferClient {
         request.append("Connection: close\r\n")
         request.append("\r\n")
 
-        guard send(request, over: connection), sendFile(fileURL, over: connection) else {
-            connection.cancel()
+        guard await send(request, over: connection),
+              await sendFile(fileURL, over: connection),
+              let response = await receiveResponse(over: connection) else {
             return nil
         }
+        return NativeHttpResponse.parse(response)
+    }
 
-        let finished = DispatchSemaphore(value: 0)
+    private func receiveResponse(over connection: NWConnection) async -> Data? {
         var response = Data()
-        func receiveNext() {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
-                if let data {
-                    response.append(data)
-                }
-                if isComplete {
-                    finished.signal()
-                } else {
-                    receiveNext()
-                }
+        while !Task.isCancelled {
+            let chunk = await receiveChunk(over: connection)
+            if let data = chunk.data {
+                response.append(data)
+            }
+            if chunk.isComplete {
+                return response
             }
         }
-        receiveNext()
-        finished.wait()
         connection.cancel()
-        return NativeHttpResponse.parse(response)
+        return nil
+    }
+
+    private func receiveChunk(over connection: NWConnection) async -> (data: Data?, isComplete: Bool) {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
+                    continuation.resume(returning: (data, isComplete))
+                }
+            }
+        } onCancel: {
+            connection.cancel()
+        }
+    }
+}
+
+private final class NativeConnectionReadyWaiter {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    init(_ continuation: CheckedContinuation<Bool, Never>) {
+        self.continuation = continuation
+    }
+
+    func resume(_ value: Bool) {
+        lock.lock()
+        let continuation = self.continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(returning: value)
     }
 }

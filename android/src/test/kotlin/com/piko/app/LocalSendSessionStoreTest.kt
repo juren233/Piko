@@ -1,5 +1,9 @@
 package com.piko.app
 
+import com.piko.app.data.LocalSendSessionStore
+import com.piko.app.transport.LocalSendDeviceInfo
+import com.piko.app.transport.LocalSendFileMetadata
+import com.piko.app.transport.LocalSendPrepareUploadRequest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

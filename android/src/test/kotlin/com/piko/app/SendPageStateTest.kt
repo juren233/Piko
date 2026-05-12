@@ -1,5 +1,13 @@
 package com.piko.app
 
+import com.piko.app.domain.SendDevice
+import com.piko.app.domain.SendDeviceGroup
+import com.piko.app.domain.SendFileItem
+import com.piko.app.domain.SendFileType
+import com.piko.app.domain.SendImageItem
+import com.piko.app.domain.SendPageState
+import com.piko.app.domain.SendTransferEvent
+import com.piko.app.domain.SendTransferStatus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

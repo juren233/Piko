@@ -1,5 +1,8 @@
 package com.piko.app
 
+import com.piko.app.domain.SendFileType
+import com.piko.app.domain.SendTransferItem
+import com.piko.app.domain.SendTransferProtocol
 import kotlin.test.Test
 import kotlin.test.assertEquals
 

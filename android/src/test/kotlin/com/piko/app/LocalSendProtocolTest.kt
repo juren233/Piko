@@ -1,5 +1,9 @@
 package com.piko.app
 
+import com.piko.app.transport.LocalSendDeviceInfo
+import com.piko.app.transport.LocalSendFileMetadata
+import com.piko.app.transport.LocalSendProtocol
+import com.piko.app.transport.TransferTransportKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
