@@ -1,10 +1,7 @@
 import CryptoKit
-import AVFoundation
 import Foundation
 import Network
 import OSLog
-import Photos
-import UIKit
 
 private let nativeReceiveModelLogger = Logger(subsystem: "com.juren233.piko", category: "receive-list")
 
@@ -54,12 +51,20 @@ final class NativePikoModel: ObservableObject {
     @Published private(set) var nickname: NativeDeviceNickname
 
     private let queue = DispatchQueue(label: "piko.native.network")
-    private var listener: NWListener?
-    private var multicastDiscovery: NativeLocalSendMulticast?
-    private var browser: NWBrowser?
-    private var activeSendConnection: NWConnection?
-    private var activeReceiveConnection: NWConnection?
-    private var localSendSessions: [String: NativeLocalSendSession] = [:]
+    private let transferClient = NativeTransferClient()
+    private let receiveFileStore = NativeReceiveFileStore()
+    private let localSendSessionStore = NativeLocalSendSessionStore()
+    private lazy var lanDiscovery = NativeLanDiscoveryService(
+        queue: queue,
+        nickname: { [unowned self] in self.nickname },
+        localInfo: { [unowned self] port in self.localSendDeviceInfo(port: port) },
+        onIncomingConnection: { [weak self] connection in self?.receiveIncoming(connection) },
+        onDevicesChanged: { [weak self] devices in self?.applyDiscoveredDevices(devices) },
+        onDiscoveryFailed: { [weak self] in self?.discoveryLabel = "搜索失败" }
+    )
+    private lazy var transferStateMachine = NativeTransferStateMachine { [weak self] snapshot in
+        self?.applyTransferState(snapshot)
+    }
 
     init() {
         self.nickname = NativeDeviceNicknameStore.loadOrCreate()
@@ -72,10 +77,6 @@ final class NativePikoModel: ObservableObject {
 
     var currentDeviceName: String {
         nickname.fullName
-    }
-
-    private var currentServiceName: String {
-        "Piko-\(nickname.fullName)"
     }
 
     var canSend: Bool {
@@ -133,94 +134,39 @@ final class NativePikoModel: ObservableObject {
     }
 
     var transferSubtitle: String {
-        ByteCountFormatter.string(fromByteCount: Int64(selectedItems.reduce(0) { $0 + $1.data.count }), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(selectedItems.reduce(0) { $0 + $1.sizeBytes }), countStyle: .file)
     }
 
     var transferPrimaryFileType: NativeFileType {
         selectedItems.first?.fileType ?? .other
     }
 
-    func startPresence() {
-        guard listener == nil else {
-            return
-        }
+    private func applyDiscoveredDevices(_ devices: [NativeSendDevice]) {
+        lanDevices = devices
+        selectedDeviceIds = selectedDeviceIds.intersection(Set(devices.map(\.id)))
+        discoveryLabel = devices.isEmpty ? "暂无设备" : "已发现 \(devices.count) 台"
+    }
 
-        do {
-            let listener = try NativeLocalSendListenerFactory.makeListener()
-            listener.service = NWListener.Service(
-                name: currentServiceName,
-                type: "_piko-share._tcp",
-                domain: nil,
-                txtRecord: Self.txtRecordData(for: nickname)
-            )
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.receiveIncoming(connection)
-            }
-            listener.start(queue: queue)
-            self.listener = listener
-            self.startLocalSendMulticast()
-        } catch {
-            DispatchQueue.main.async {
-                self.transferLabel = "接收服务启动失败"
-            }
+    private func applyTransferState(_ snapshot: NativeTransferStateSnapshot) {
+        transferLabel = snapshot.transferLabel
+        transferProgress = snapshot.transferProgress
+        activeReceive = snapshot.activeReceive
+    }
+
+    func startPresence() {
+        if !lanDiscovery.startPresence() {
+            transferLabel = "接收服务启动失败"
         }
     }
 
     func startDiscovery() {
-        browser?.cancel()
         discoveryLabel = "正在搜索"
-
-        let browser = NWBrowser(for: .bonjourWithTXTRecord(type: "_piko-share._tcp", domain: "local."), using: .tcp)
-        browser.browseResultsChangedHandler = { [weak self] results, _ in
-            guard let self else {
-                return
-            }
-
-            let devices = results.compactMap { result -> NativeSendDevice? in
-                guard case let .service(name, type, domain, _) = result.endpoint else {
-                    return nil
-                }
-                let nickname = Self.nickname(fromServiceName: name, metadata: result.metadata)
-                guard name != self.currentServiceName, nickname.fingerprint != self.nickname.fingerprint else {
-                    return nil
-                }
-                return NativeSendDevice(
-                    id: "\(name).\(type).\(domain)",
-                    name: nickname.title,
-                    subtitle: nickname.code,
-                    endpoint: result.endpoint
-                )
-            }
-
-            DispatchQueue.main.async {
-                self.lanDevices = devices.sorted { $0.name < $1.name }
-                self.selectedDeviceIds = self.selectedDeviceIds.intersection(Set(devices.map(\.id)))
-                self.discoveryLabel = devices.isEmpty ? "暂无设备" : "已发现 \(devices.count) 台"
-            }
-        }
-        browser.stateUpdateHandler = { [weak self] state in
-            DispatchQueue.main.async {
-                if case .failed = state {
-                    self?.discoveryLabel = "搜索失败"
-                }
-            }
-        }
-        browser.start(queue: queue)
-        self.browser = browser
-        multicastDiscovery?.announce()
+        lanDiscovery.startDiscovery()
     }
 
     func resetDeviceNickname() {
         nickname = NativeDeviceNicknameStore.regenerate(keeping: nickname.fingerprint)
-        let hadListener = listener != nil
-        listener?.cancel()
-        listener = nil
-        if hadListener {
-            startPresence()
-        }
-        if browser != nil {
-            startDiscovery()
-        }
+        lanDiscovery.restartAfterNicknameChange()
     }
 
     func toggleDevice(_ id: String) {
@@ -247,6 +193,9 @@ final class NativePikoModel: ObservableObject {
     }
 
     func removeItem(_ id: String) {
+        if let item = items.first(where: { $0.id == id }) {
+            try? FileManager.default.removeItem(at: item.fileURL)
+        }
         items.removeAll { $0.id == id }
         selectedItemIds.remove(id)
     }
@@ -267,196 +216,47 @@ final class NativePikoModel: ObservableObject {
             return
         }
 
-        transferLabel = transferTitle
-        transferProgress = 0
+        transferStateMachine.beginSend(title: transferTitle)
 
         queue.async {
-            let totalBytes = max(payloadItems.reduce(0) { $0 + $1.data.count } * targets.count, 1)
+            let totalBytes = max(payloadItems.reduce(0) { $0 + $1.sizeBytes } * targets.count, 1)
             var sentBytes = 0
 
             for target in targets {
-                if let localSendBytes = self.sendLocalSendItems(
+                guard let sentTargetBytes = self.transferClient.send(
                     payloadItems,
                     to: target,
+                    sender: self.nickname,
+                    localInfo: self.localSendDeviceInfo(port: 0),
                     totalCompletedBeforeTarget: sentBytes,
-                    totalBytes: totalBytes
-                ) {
-                    sentBytes += localSendBytes
-                    continue
-                }
-
-                guard let legacyBytes = self.sendLegacyItems(
-                    payloadItems,
-                    to: target,
-                    totalCompletedBeforeTarget: sentBytes,
-                    totalBytes: totalBytes
-                ) else {
-                    DispatchQueue.main.async {
-                        self.transferLabel = "等待发送"
-                        self.transferProgress = nil
-                        self.activeSendConnection = nil
+                    totalBytes: totalBytes,
+                    progressUpdate: { progress in
+                        self.transferStateMachine.updateSendProgress(progress)
+                    },
+                    activeConnectionUpdate: { connection in
+                        self.transferStateMachine.setActiveSendConnection(connection)
                     }
+                ) else {
+                    self.transferStateMachine.finishSend()
                     return
                 }
-                sentBytes += legacyBytes
+                sentBytes += sentTargetBytes
             }
 
-            DispatchQueue.main.async {
-                self.transferLabel = "等待发送"
-                self.transferProgress = nil
-                self.activeSendConnection = nil
-            }
+            self.transferStateMachine.finishSend()
         }
-    }
-
-    private func sendLocalSendItems(
-        _ payloadItems: [NativeTransferItem],
-        to target: NativeSendDevice,
-        totalCompletedBeforeTarget: Int,
-        totalBytes: Int
-    ) -> Int? {
-        let indexedItems = payloadItems.enumerated().map { index, item in
-            NativeLocalSendIndexedItem(
-                fileId: "file-\(index)",
-                item: item,
-                metadata: NativeLocalSendFileMetadata(
-                    id: "file-\(index)",
-                    fileName: item.displayName,
-                    size: item.data.count,
-                    fileType: item.fileType.mimeType,
-                    sha256: nil,
-                    preview: item.fileType == .image ? item.data.base64EncodedString() : nil,
-                    relativePath: item.displayName
-                )
-            )
-        }
-        let prepareBody = NativeLocalSendProtocol.prepareUploadRequest(
-            info: localSendDeviceInfo(port: 0),
-            files: indexedItems.map(\.metadata)
-        )
-        guard let prepareResponse = sendHttpRequest(
-            to: target.endpoint,
-            method: "POST",
-            path: "/api/localsend/v2/prepare-upload",
-            body: prepareBody
-        ), prepareResponse.statusCode == 200,
-            let session = NativeLocalSendProtocol.decodePrepareUploadResponse(prepareResponse.body) else {
-            return nil
-        }
-
-        var sentBytes = 0
-        for indexed in indexedItems {
-            guard let token = session.fileTokens[indexed.fileId] else {
-                return nil
-            }
-            let path = "/api/localsend/v2/upload" +
-                "?sessionId=\(session.sessionId.urlEncoded)" +
-                "&fileId=\(indexed.fileId.urlEncoded)" +
-                "&token=\(token.urlEncoded)"
-            guard let uploadResponse = sendHttpRequest(
-                to: target.endpoint,
-                method: "POST",
-                path: path,
-                body: indexed.item.data,
-                contentType: indexed.metadata.fileType
-            ), (200..<300).contains(uploadResponse.statusCode) else {
-                return nil
-            }
-            sentBytes += indexed.item.data.count
-            DispatchQueue.main.async {
-                self.transferProgress = Double(totalCompletedBeforeTarget + sentBytes) / Double(totalBytes)
-            }
-        }
-        return sentBytes
-    }
-
-    private func sendLegacyItems(
-        _ payloadItems: [NativeTransferItem],
-        to target: NativeSendDevice,
-        totalCompletedBeforeTarget: Int,
-        totalBytes: Int
-    ) -> Int? {
-                let connection = NWConnection(to: target.endpoint, using: .tcp)
-                DispatchQueue.main.async {
-                    self.activeSendConnection = connection
-                }
-                let ready = DispatchSemaphore(value: 0)
-                var failed = false
-
-                connection.stateUpdateHandler = { state in
-                    switch state {
-                    case .ready:
-                        ready.signal()
-                    case .failed, .cancelled:
-                        failed = true
-                        ready.signal()
-                    default:
-                        break
-                    }
-                }
-                let connectionQueue = DispatchQueue(label: "piko.native.connection.\(UUID().uuidString)")
-                connection.start(queue: connectionQueue)
-                ready.wait()
-
-                guard !failed else {
-                    connection.cancel()
-                    DispatchQueue.main.async {
-                        self.transferLabel = "等待发送"
-                        self.transferProgress = nil
-                        self.activeSendConnection = nil
-                    }
-                    return nil
-                }
-
-                let header = NativeTransferProtocol.encodeHeader(items: payloadItems, senderName: self.nickname.title)
-                if !self.send(header, over: connection) {
-                    connection.cancel()
-                    DispatchQueue.main.async {
-                        self.transferLabel = "等待发送"
-                        self.transferProgress = nil
-                        self.activeSendConnection = nil
-                    }
-                    return nil
-                }
-
-                var sentBytes = 0
-                for item in payloadItems {
-                    guard self.send(item.data, over: connection) else {
-                        connection.cancel()
-                        DispatchQueue.main.async {
-                            self.transferLabel = "等待发送"
-                            self.transferProgress = nil
-                            self.activeSendConnection = nil
-                        }
-                        return nil
-                    }
-                    sentBytes += item.data.count
-                    DispatchQueue.main.async {
-                        self.transferProgress = Double(totalCompletedBeforeTarget + sentBytes) / Double(totalBytes)
-                    }
-                }
-                connection.cancel()
-        return sentBytes
     }
 
     func pauseTransfer() {
-        activeSendConnection?.cancel()
-        transferLabel = "等待发送"
-        transferProgress = nil
-        activeSendConnection = nil
+        transferStateMachine.pauseSend()
     }
 
     func cancelTransfer() {
-        activeSendConnection?.cancel()
-        transferLabel = "等待发送"
-        transferProgress = nil
-        activeSendConnection = nil
+        transferStateMachine.cancelSend()
     }
 
     func cancelReceiveTransfer() {
-        activeReceiveConnection?.cancel()
-        activeReceiveConnection = nil
-        activeReceive = nil
+        transferStateMachine.cancelReceive()
     }
 
     func deleteReceiveHistory(_ item: NativeReceiveHistoryItem, deleteFiles: Bool, completion: @escaping (Int) -> Void) {
@@ -469,137 +269,7 @@ final class NativePikoModel: ObservableObject {
             completion(0)
             return
         }
-        deleteReceivedFiles(item.files, completion: completion)
-    }
-
-    private func deleteReceivedFiles(_ files: [NativeReceiveHistoryFile], completion: @escaping (Int) -> Void) {
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var failedCount = 0
-
-        func markFailed() {
-            lock.lock()
-            failedCount += 1
-            lock.unlock()
-        }
-
-        for file in files {
-            if let path = file.savedURLPath {
-                do {
-                    try FileManager.default.removeItem(atPath: path)
-                } catch {
-                    markFailed()
-                }
-                continue
-            }
-
-            guard let assetIdentifier = file.photoAssetIdentifier else {
-                continue
-            }
-
-            group.enter()
-            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
-                guard status == .authorized || status == .limited else {
-                    markFailed()
-                    group.leave()
-                    return
-                }
-
-                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [assetIdentifier], options: nil)
-                guard assets.count > 0 else {
-                    markFailed()
-                    group.leave()
-                    return
-                }
-
-                PHPhotoLibrary.shared().performChanges {
-                    PHAssetChangeRequest.deleteAssets(assets)
-                } completionHandler: { deleted, _ in
-                    if !deleted {
-                        markFailed()
-                    }
-                    group.leave()
-                }
-            }
-        }
-
-        group.notify(queue: .main) {
-            completion(failedCount)
-        }
-    }
-
-    private func send(_ data: Data, over connection: NWConnection) -> Bool {
-        let finished = DispatchSemaphore(value: 0)
-        var succeeded = true
-        connection.send(content: data, completion: .contentProcessed { error in
-            succeeded = error == nil
-            finished.signal()
-        })
-        finished.wait()
-        return succeeded
-    }
-
-    private func sendHttpRequest(
-        to endpoint: NWEndpoint,
-        method: String,
-        path: String,
-        body: Data,
-        contentType: String = "application/json; charset=utf-8"
-    ) -> NativeHttpResponse? {
-        let connection = NWConnection(to: endpoint, using: .tcp)
-        let ready = DispatchSemaphore(value: 0)
-        var failed = false
-        connection.stateUpdateHandler = { state in
-            switch state {
-            case .ready:
-                ready.signal()
-            case .failed, .cancelled:
-                failed = true
-                ready.signal()
-            default:
-                break
-            }
-        }
-        let connectionQueue = DispatchQueue(label: "piko.native.http.\(UUID().uuidString)")
-        connection.start(queue: connectionQueue)
-        ready.wait()
-        guard !failed else {
-            connection.cancel()
-            return nil
-        }
-
-        var request = Data()
-        request.append("\(method) \(path) HTTP/1.1\r\n")
-        request.append("Host: piko.local\r\n")
-        request.append("Content-Type: \(contentType)\r\n")
-        request.append("Content-Length: \(body.count)\r\n")
-        request.append("Connection: close\r\n")
-        request.append("\r\n")
-        request.append(body)
-
-        guard send(request, over: connection) else {
-            connection.cancel()
-            return nil
-        }
-
-        let finished = DispatchSemaphore(value: 0)
-        var response = Data()
-        func receiveNext() {
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 64 * 1024) { data, _, isComplete, _ in
-                if let data {
-                    response.append(data)
-                }
-                if isComplete {
-                    finished.signal()
-                } else {
-                    receiveNext()
-                }
-            }
-        }
-        receiveNext()
-        finished.wait()
-        connection.cancel()
-        return NativeHttpResponse.parse(response)
+        receiveFileStore.deleteFiles(item.files, completion: completion)
     }
 
     private func receiveIncoming(_ connection: NWConnection) {
@@ -619,9 +289,7 @@ final class NativePikoModel: ObservableObject {
             }
             if nextBuffer.starts(with: NativeTransferProtocol.magic) {
                 let transferId = UUID().uuidString
-                DispatchQueue.main.async {
-                    self.activeReceiveConnection = connection
-                }
+                self.transferStateMachine.setActiveReceiveConnection(connection)
                 self.receiveNextChunk(from: connection, transferId: transferId, buffer: nextBuffer)
                 return
             }
@@ -644,9 +312,7 @@ final class NativePikoModel: ObservableObject {
         let transferId = UUID().uuidString
         connection.stateUpdateHandler = { state in
             if case .ready = state {
-                DispatchQueue.main.async {
-                    self.activeReceiveConnection = connection
-                }
+                self.transferStateMachine.setActiveReceiveConnection(connection)
                 self.receiveNextChunk(from: connection, transferId: transferId, buffer: Data())
             }
         }
@@ -675,7 +341,8 @@ final class NativePikoModel: ObservableObject {
                     self.sendHttpResponse(connection, statusCode: 400, body: Data(#"{"error":"invalid prepare-upload"}"#.utf8))
                     return
                 }
-                let response = self.prepareLocalSendSession(request)
+                let response = self.localSendSessionStore.prepare(request)
+                self.updateActiveReceiveForLocalSendPrepare(request, sessionId: response.sessionId)
                 self.sendHttpResponse(connection, statusCode: 200, body: response.jsonData)
             }
         case ("POST", "/api/localsend/v2/upload"):
@@ -683,7 +350,7 @@ final class NativePikoModel: ObservableObject {
         case ("POST", "/api/localsend/v2/cancel"):
             receiveHttpBody(connection: connection, initialBody: bodyPrefix, expectedLength: request.contentLength) { _ in
                 if let sessionId = request.query["sessionId"] {
-                    self.localSendSessions.removeValue(forKey: sessionId)
+                    self.localSendSessionStore.cancel(sessionId)
                 }
                 self.sendHttpResponse(connection, statusCode: 200, body: Data(#"{"success":true}"#.utf8))
             }
@@ -695,7 +362,7 @@ final class NativePikoModel: ObservableObject {
     }
 
     private var listenerPort: Int {
-        Int(listener?.port?.rawValue ?? 53317)
+        lanDiscovery.listenerPort
     }
 
     private func localSendDeviceInfo(port: Int) -> NativeLocalSendDeviceInfo {
@@ -711,16 +378,7 @@ final class NativePikoModel: ObservableObject {
         )
     }
 
-    private func prepareLocalSendSession(_ request: NativeLocalSendPrepareUploadRequest) -> NativeLocalSendPrepareUploadResponse {
-        let sessionId = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        var fileTokens: [String: String] = [:]
-        var files: [String: NativeLocalSendSessionFile] = [:]
-        for file in request.files {
-            let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-            fileTokens[file.id] = token
-            files[file.id] = NativeLocalSendSessionFile(metadata: file, token: token)
-        }
-        localSendSessions[sessionId] = NativeLocalSendSession(sender: request.info, files: files)
+    private func updateActiveReceiveForLocalSendPrepare(_ request: NativeLocalSendPrepareUploadRequest, sessionId: String) {
         let transferFiles = request.files.map {
             NativeTransferFileMetadata(
                 displayName: $0.fileName,
@@ -728,16 +386,15 @@ final class NativePikoModel: ObservableObject {
                 sizeBytes: $0.size
             )
         }
-        DispatchQueue.main.async {
-            self.activeReceive = NativeReceiveTransferState(
+        transferStateMachine.updateActiveReceive(
+            NativeReceiveTransferState(
                 id: sessionId,
                 senderName: request.info.alias,
                 files: transferFiles,
                 totalBytes: request.files.reduce(0) { $0 + $1.size },
                 receivedBytes: 0
             )
-        }
-        return NativeLocalSendPrepareUploadResponse(sessionId: sessionId, fileTokens: fileTokens)
+        )
     }
 
     private func handleLocalSendUpload(
@@ -748,20 +405,15 @@ final class NativePikoModel: ObservableObject {
         guard let sessionId = request.query["sessionId"],
               let fileId = request.query["fileId"],
               let token = request.query["token"],
-              let file = localSendSessions[sessionId]?.files[fileId],
-              file.token == token else {
+              let file = localSendSessionStore.sessionFile(sessionId: sessionId, fileId: fileId, token: token) else {
             receiveHttpBody(connection: connection, initialBody: bodyPrefix, expectedLength: request.contentLength) { _ in
                 self.sendHttpResponse(connection, statusCode: 403, body: Data(#"{"error":"invalid upload token"}"#.utf8))
             }
             return
         }
 
-        let directory = receivedDirectory()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let finalURL = directory.appendingPathComponent(file.metadata.fileName.sanitizedFileName)
-        let temporaryURL = temporaryReceivedURL(fileName: file.metadata.fileName, directory: directory)
-        FileManager.default.createFile(atPath: temporaryURL.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: temporaryURL) else {
+        guard let preparedFile = receiveFileStore.prepareTemporaryFile(fileName: file.metadata.fileName),
+              let handle = try? FileHandle(forWritingTo: preparedFile.temporaryURL) else {
             sendHttpResponse(connection, statusCode: 500, body: Data(#"{"error":"cannot create file"}"#.utf8))
             return
         }
@@ -780,17 +432,7 @@ final class NativePikoModel: ObservableObject {
             handle.write(Data(writable))
             hasher.update(data: writable)
             remaining -= writableCount
-            DispatchQueue.main.async {
-                if let active = self.activeReceive, active.id == sessionId {
-                    self.activeReceive = NativeReceiveTransferState(
-                        id: active.id,
-                        senderName: active.senderName,
-                        files: active.files,
-                        totalBytes: active.totalBytes,
-                        receivedBytes: min(active.receivedBytes + writableCount, active.totalBytes)
-                    )
-                }
-            }
+            self.transferStateMachine.incrementActiveReceive(id: sessionId, receivedBytes: writableCount)
         }
 
         func finishUpload() {
@@ -798,38 +440,24 @@ final class NativePikoModel: ObservableObject {
             if let expectedHash = file.metadata.sha256 {
                 let actualHash = hasher.finalize().hexString
                 guard actualHash.caseInsensitiveCompare(expectedHash) == .orderedSame else {
-                    try? FileManager.default.removeItem(at: temporaryURL)
+                    try? FileManager.default.removeItem(at: preparedFile.temporaryURL)
                     sendHttpResponse(connection, statusCode: 400, body: Data(#"{"error":"sha256 mismatch"}"#.utf8))
                     return
                 }
             }
             let fileType = NativeFileType(mimeType: file.metadata.fileType)
-            let mediaPreviewData = self.mediaPreviewData(
-                for: temporaryURL,
-                fileType: fileType,
-                fallbackData: try? Data(contentsOf: temporaryURL)
-            )
             let saveDestination = mediaSaveLocation.destination(for: fileType)
-            saveReceivedTemporaryFile(
-                temporaryURL,
-                finalURL: finalURL,
+            receiveFileStore.saveUploadedFile(
+                preparedFile,
+                displayName: file.metadata.fileName,
                 fileType: fileType,
+                sizeBytes: file.metadata.size,
                 destination: saveDestination
-            ) { saved, assetIdentifier in
-                guard saved else {
-                    try? FileManager.default.removeItem(at: temporaryURL)
+            ) { received in
+                guard let received else {
                     self.sendHttpResponse(connection, statusCode: 500, body: Data(#"{"error":"cannot save file"}"#.utf8))
                     return
                 }
-                let received = NativeReceivedFile(
-                    displayName: file.metadata.fileName,
-                    fileType: fileType,
-                    sizeBytes: file.metadata.size,
-                    data: (try? Data(contentsOf: finalURL)) ?? Data(),
-                    mediaPreviewData: mediaPreviewData,
-                    savedURLPath: saveDestination == .folder ? finalURL.path : nil,
-                    photoAssetIdentifier: assetIdentifier
-                )
                 DispatchQueue.main.async {
                     self.prependReceiveHistory(
                         NativeReceiveHistoryItem(
@@ -841,7 +469,7 @@ final class NativePikoModel: ObservableObject {
                             files: [NativeReceiveHistoryFile(file: received)]
                         )
                     )
-                    self.activeReceive = nil
+                    self.transferStateMachine.clearActiveReceive(id: sessionId)
                 }
                 self.sendHttpResponse(connection, statusCode: 200, body: Data(#"{"success":true}"#.utf8))
             }
@@ -933,200 +561,41 @@ final class NativePikoModel: ObservableObject {
             }
 
             if let envelope = NativeTransferProtocol.inspectTransfer(nextBuffer) {
-                DispatchQueue.main.async {
-                    self.activeReceive = NativeReceiveTransferState(
+                self.transferStateMachine.updateActiveReceive(
+                    NativeReceiveTransferState(
                         id: transferId,
                         senderName: envelope.senderName,
                         files: envelope.files,
                         totalBytes: envelope.totalBytes,
                         receivedBytes: envelope.receivedBytes
                     )
-                }
+                )
                 if let transfer = envelope.transfer {
-                    DispatchQueue.main.async {
-                        if self.activeReceiveConnection === connection {
-                            self.activeReceiveConnection = nil
+                    self.transferStateMachine.clearActiveReceiveConnection(ifSame: connection)
+                    self.receiveFileStore.save(
+                        transfer,
+                        destinationFor: { self.mediaSaveLocation.destination(for: $0) }
+                    ) { item in
+                        guard let item else {
+                            self.transferStateMachine.clearActiveReceive(id: transferId)
+                            return
                         }
+                        self.prependReceiveHistory(item)
+                        self.transferStateMachine.clearActiveReceive(id: transferId)
                     }
-                    self.saveReceivedTransfer(transfer)
                     connection.cancel()
                     return
                 }
             }
 
             if isComplete {
-                DispatchQueue.main.async {
-                    if self.activeReceive?.id == transferId {
-                        self.activeReceive = nil
-                    }
-                    if self.activeReceiveConnection === connection {
-                        self.activeReceiveConnection = nil
-                    }
-                }
+                self.transferStateMachine.clearActiveReceive(id: transferId)
+                self.transferStateMachine.clearActiveReceiveConnection(ifSame: connection)
                 connection.cancel()
             } else {
                 self.receiveNextChunk(from: connection, transferId: transferId, buffer: nextBuffer)
             }
         }
-    }
-
-    private func saveReceivedTransfer(_ transfer: NativeReceivedTransfer) {
-        let directory = receivedDirectory()
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-
-        let group = DispatchGroup()
-        let lock = NSLock()
-        var savedFiles: [NativeReceivedFile] = []
-        for file in transfer.files {
-            let finalURL = directory.appendingPathComponent(file.displayName.sanitizedFileName)
-            let temporaryURL = temporaryReceivedURL(fileName: file.displayName, directory: directory)
-            guard (try? file.data.write(to: temporaryURL, options: .atomic)) != nil else {
-                continue
-            }
-            let mediaPreviewData = mediaPreviewData(
-                for: temporaryURL,
-                fileType: file.fileType,
-                fallbackData: file.data
-            )
-            let saveDestination = self.mediaSaveLocation.destination(for: file.fileType)
-            group.enter()
-            saveReceivedTemporaryFile(
-                temporaryURL,
-                finalURL: finalURL,
-                fileType: file.fileType,
-                destination: saveDestination
-            ) { saved, assetIdentifier in
-                if saved {
-                    lock.lock()
-                    savedFiles.append(
-                        NativeReceivedFile(
-                            displayName: file.displayName,
-                            fileType: file.fileType,
-                            sizeBytes: file.data.count,
-                            data: file.data,
-                            mediaPreviewData: mediaPreviewData,
-                            savedURLPath: saveDestination == .folder ? finalURL.path : nil,
-                            photoAssetIdentifier: assetIdentifier
-                        )
-                    )
-                    lock.unlock()
-                }
-                group.leave()
-            }
-        }
-
-        group.notify(queue: .main) {
-            guard let firstFile = savedFiles.first else {
-                self.activeReceive = nil
-                return
-            }
-            let names = savedFiles.map(\.displayName)
-            self.prependReceiveHistory(
-                NativeReceiveHistoryItem(
-                    title: names.count == 1 ? names[0] : "\(names[0]) + \(names.count - 1) 个文件",
-                    subtitle: ByteCountFormatter.string(
-                        fromByteCount: Int64(savedFiles.reduce(0) { $0 + $1.data.count }),
-                        countStyle: .file
-                    ),
-                    fileCount: savedFiles.count,
-                    primaryFileType: firstFile.fileType,
-                    mediaPreviewData: firstFile.mediaPreviewData,
-                    files: savedFiles.map(NativeReceiveHistoryFile.init(file:))
-                )
-            )
-            self.activeReceive = nil
-        }
-    }
-
-    private func saveReceivedTemporaryFile(
-        _ temporaryURL: URL,
-        finalURL: URL,
-        fileType: NativeFileType,
-        destination: NativeReceiveSaveDestination,
-        completion: @escaping (Bool, String?) -> Void
-    ) {
-        switch destination {
-        case .folder:
-            try? FileManager.default.removeItem(at: finalURL)
-            do {
-                try FileManager.default.moveItem(at: temporaryURL, to: finalURL)
-                completion(true, nil)
-            } catch {
-                try? FileManager.default.removeItem(at: temporaryURL)
-                completion(false, nil)
-            }
-        case .album:
-            saveMediaToPhotoLibrary(fileURL: temporaryURL, fileType: fileType) { saved, assetIdentifier in
-                try? FileManager.default.removeItem(at: temporaryURL)
-                completion(saved, assetIdentifier)
-            }
-        }
-    }
-
-    private func mediaPreviewData(
-        for fileURL: URL,
-        fileType: NativeFileType,
-        fallbackData: Data?
-    ) -> Data? {
-        switch fileType {
-        case .image:
-            return mediaPreviewImageData(for: fileURL, fallbackData: fallbackData)
-        case .video:
-            let asset = AVAsset(url: fileURL)
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.maximumSize = NativeReceivePreviewThumbnail.targetSize
-            guard let image = try? generator.copyCGImage(
-                at: CMTime(seconds: 0, preferredTimescale: 600),
-                actualTime: nil
-            ) else {
-                return nil
-            }
-            return NativeReceivePreviewThumbnail.jpegData(from: UIImage(cgImage: image))
-        case .document, .spreadsheet, .archive, .other:
-            return nil
-        }
-    }
-
-    private func mediaPreviewImageData(for fileURL: URL, fallbackData: Data?) -> Data? {
-        let imageData = (try? Data(contentsOf: fileURL)) ?? fallbackData
-        guard let imageData, let image = UIImage(data: imageData) else {
-            return nil
-        }
-        return NativeReceivePreviewThumbnail.jpegData(from: image)
-    }
-
-    private func saveMediaToPhotoLibrary(
-        fileURL: URL,
-        fileType: NativeFileType,
-        completion: @escaping (Bool, String?) -> Void
-    ) {
-        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-            guard status == .authorized || status == .limited else {
-                completion(false, nil)
-                return
-            }
-            var createdAssetIdentifier: String?
-            PHPhotoLibrary.shared().performChanges {
-                if fileType == .video {
-                    let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: fileURL)
-                    createdAssetIdentifier = request?.placeholderForCreatedAsset?.localIdentifier
-                } else {
-                    let request = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: fileURL)
-                    createdAssetIdentifier = request?.placeholderForCreatedAsset?.localIdentifier
-                }
-            } completionHandler: { saved, _ in
-                completion(saved, saved ? createdAssetIdentifier : nil)
-            }
-        }
-    }
-
-    private func receivedDirectory() -> URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-    }
-
-    private func temporaryReceivedURL(fileName: String, directory: URL) -> URL {
-        directory.appendingPathComponent(".\(UUID().uuidString)-\(fileName.sanitizedFileName)")
     }
 
     private func prependReceiveHistory(_ item: NativeReceiveHistoryItem) {
@@ -1137,87 +606,8 @@ final class NativePikoModel: ObservableObject {
         nativeReceiveModelLogger.notice("[ReceiveList] model prepend saved id=\(String(item.id.uuidString.prefix(8)), privacy: .public) before=\(beforeCount, privacy: .public) after=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
     }
 
-    private func startLocalSendMulticast() {
-        guard multicastDiscovery == nil else {
-            return
-        }
-        let discovery = NativeLocalSendMulticast(
-            queue: queue,
-            localInfo: { [weak self] in
-                guard let self else {
-                    return NativeLocalSendDeviceInfo(
-                        alias: "Piko",
-                        version: "2.0",
-                        deviceModel: "iPhone",
-                        deviceType: "mobile",
-                        fingerprint: "",
-                        port: 53317,
-                        protocolName: "http",
-                        download: false
-                    )
-                }
-                return self.localSendDeviceInfo(port: self.listenerPort)
-            },
-            onDevice: { [weak self] host, info in
-                guard let self, info.fingerprint != self.nickname.fingerprint, info.port > 0 else {
-                    return
-                }
-                let port = NWEndpoint.Port(rawValue: UInt16(info.port)) ?? NWEndpoint.Port(rawValue: 53317)!
-                let endpoint = NWEndpoint.hostPort(
-                    host: NWEndpoint.Host(host),
-                    port: port
-                )
-                let device = NativeSendDevice(
-                    id: "localsend-\(info.fingerprint)-\(host)-\(info.port)",
-                    name: info.alias,
-                    subtitle: "LocalSend",
-                    endpoint: endpoint
-                )
-                DispatchQueue.main.async {
-                    var devicesById = Dictionary(uniqueKeysWithValues: self.lanDevices.map { ($0.id, $0) })
-                    devicesById[device.id] = device
-                    self.lanDevices = devicesById.values.sorted { $0.name < $1.name }
-                    self.selectedDeviceIds = self.selectedDeviceIds.intersection(Set(self.lanDevices.map(\.id)))
-                    self.discoveryLabel = self.lanDevices.isEmpty ? "暂无设备" : "已发现 \(self.lanDevices.count) 台"
-                }
-            }
-        )
-        discovery.start()
-        multicastDiscovery = discovery
-    }
-
     private static var placeholderEndpoint: NWEndpoint {
         .hostPort(host: NWEndpoint.Host("127.0.0.1"), port: NWEndpoint.Port(rawValue: 9)!)
-    }
-
-    private static func nickname(fromServiceName serviceName: String, metadata: NWBrowser.Result.Metadata) -> NativeDeviceNickname {
-        let fallback = NativeDeviceNickname.from(serviceName: serviceName)
-        guard case let .bonjour(txtRecord) = metadata else {
-            return fallback
-        }
-        let dictionary = txtRecord.dictionary
-        return NativeDeviceNickname(
-            title: dictionary["title"]?.nilIfBlank ?? fallback.title,
-            code: dictionary["code"]?.fourDigitCode ?? fallback.code,
-            fingerprint: dictionary["fp"]?.nilIfBlank ?? ""
-        )
-    }
-
-    private static func txtRecordData(for nickname: NativeDeviceNickname) -> Data {
-        var data = Data()
-        [
-            "title": nickname.title,
-            "code": nickname.code,
-            "fp": nickname.fingerprint,
-        ].forEach { key, value in
-            let entry = "\(key)=\(value)"
-            guard let entryData = entry.data(using: .utf8), entryData.count <= 255 else {
-                return
-            }
-            data.append(contentsOf: [UInt8(entryData.count)])
-            data.append(entryData)
-        }
-        return data
     }
 }
 
@@ -1307,278 +697,6 @@ struct NativeSendDevice: Identifiable {
     let name: String
     let subtitle: String?
     let endpoint: NWEndpoint
-}
-
-struct NativeTransferItem: Identifiable {
-    let id: String
-    let displayName: String
-    let fileType: NativeFileType
-    let data: Data
-
-    var sizeLabel: String {
-        ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
-    }
-
-    var systemImage: String {
-        fileType == .image ? "photo" : "doc"
-    }
-}
-
-private enum NativeReceiveHistoryStore {
-    private static let fileName = "receive_history.json"
-
-    static func load() -> [NativeReceiveHistoryItem] {
-        guard let data = try? Data(contentsOf: storeURL()) else {
-            return []
-        }
-        return (try? JSONDecoder().decode([NativeReceiveHistoryItem].self, from: data)) ?? []
-    }
-
-    static func save(_ receiveHistory: [NativeReceiveHistoryItem]) {
-        let url = storeURL()
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        guard let data = try? JSONEncoder().encode(receiveHistory) else {
-            return
-        }
-        try? data.write(to: url, options: .atomic)
-    }
-
-    private static func storeURL() -> URL {
-        let baseURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        return baseURL.appendingPathComponent(fileName, isDirectory: false)
-    }
-}
-
-struct NativeReceiveHistoryItem: Identifiable, Codable {
-    let id: UUID
-    let title: String
-    let subtitle: String
-    let fileCount: Int
-    let primaryFileType: NativeFileType
-    let mediaPreviewData: Data?
-    let files: [NativeReceiveHistoryFile]
-
-    init(
-        id: UUID = UUID(),
-        title: String,
-        subtitle: String,
-        fileCount: Int,
-        primaryFileType: NativeFileType,
-        mediaPreviewData: Data?,
-        files: [NativeReceiveHistoryFile]
-    ) {
-        self.id = id
-        self.title = title
-        self.subtitle = subtitle
-        self.fileCount = fileCount
-        self.primaryFileType = primaryFileType
-        self.mediaPreviewData = mediaPreviewData
-        self.files = files
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        title = try container.decode(String.self, forKey: .title)
-        subtitle = try container.decode(String.self, forKey: .subtitle)
-        fileCount = try container.decode(Int.self, forKey: .fileCount)
-        primaryFileType = try container.decode(NativeFileType.self, forKey: .primaryFileType)
-        mediaPreviewData = try container.decodeIfPresent(Data.self, forKey: .mediaPreviewData)
-        files = try container.decodeIfPresent([NativeReceiveHistoryFile].self, forKey: .files) ?? [
-            NativeReceiveHistoryFile(
-                displayName: title,
-                fileType: primaryFileType,
-                sizeBytes: 0,
-                savedURLPath: nil,
-                photoAssetIdentifier: nil
-            )
-        ]
-    }
-
-    var deleteConfirmationTitle: String {
-        if fileCount == 1 {
-            return "真的要删除\(files.first?.displayName ?? title)吗？"
-        }
-        return "真的要删除这\(fileCount)个吗？"
-    }
-
-    var deleteConfirmationBody: String {
-        if fileCount == 1 {
-            return "此操作不可逆！"
-        }
-        return "将会删除：\(files.map(\.displayName).joined(separator: "、")) 此操作不可逆！"
-    }
-}
-
-struct NativeReceiveHistoryFile: Codable {
-    let displayName: String
-    let fileType: NativeFileType
-    let sizeBytes: Int
-    let savedURLPath: String?
-    let photoAssetIdentifier: String?
-
-    init(
-        displayName: String,
-        fileType: NativeFileType,
-        sizeBytes: Int,
-        savedURLPath: String?,
-        photoAssetIdentifier: String?
-    ) {
-        self.displayName = displayName
-        self.fileType = fileType
-        self.sizeBytes = sizeBytes
-        self.savedURLPath = savedURLPath
-        self.photoAssetIdentifier = photoAssetIdentifier
-    }
-
-    init(file: NativeReceivedFile) {
-        self.displayName = file.displayName
-        self.fileType = file.fileType
-        self.sizeBytes = file.sizeBytes
-        self.savedURLPath = file.savedURLPath
-        self.photoAssetIdentifier = file.photoAssetIdentifier
-    }
-}
-
-struct NativeReceiveTransferState: Identifiable {
-    let id: String
-    let senderName: String
-    let files: [NativeTransferFileMetadata]
-    let totalBytes: Int
-    let receivedBytes: Int
-
-    var title: String {
-        "正在从\(senderName.visibleDeviceName)接收\(files.count)个文件"
-    }
-
-    var subtitle: String {
-        "\(ByteCountFormatter.string(fromByteCount: Int64(receivedBytes), countStyle: .file))/\(ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))"
-    }
-
-    var progress: Double {
-        guard totalBytes > 0 else {
-            return 0
-        }
-        return min(max(Double(receivedBytes) / Double(totalBytes), 0), 1)
-    }
-
-    var primaryFileType: NativeFileType {
-        files.first?.fileType ?? .other
-    }
-}
-
-enum NativeFileType: Int, Codable {
-    case document = 0
-    case spreadsheet = 1
-    case image = 2
-    case video = 3
-    case archive = 4
-    case other = 5
-
-    init(mimeType: String) {
-        if mimeType.hasPrefix("image/") {
-            self = .image
-        } else if mimeType.hasPrefix("video/") {
-            self = .video
-        } else if mimeType.contains("zip") || mimeType.contains("archive") {
-            self = .archive
-        } else if mimeType.contains("spreadsheet") || mimeType.contains("excel") {
-            self = .spreadsheet
-        } else if mimeType.contains("pdf") || mimeType.contains("document") || mimeType.hasPrefix("text/") {
-            self = .document
-        } else {
-            self = .other
-        }
-    }
-
-    var mimeType: String {
-        switch self {
-        case .image:
-            return "image/*"
-        case .video:
-            return "video/*"
-        case .archive:
-            return "application/zip"
-        case .document, .spreadsheet, .other:
-            return "application/octet-stream"
-        }
-    }
-
-    var previewLabel: String {
-        switch self {
-        case .document:
-            return "DOC"
-        case .spreadsheet:
-            return "XLS"
-        case .image:
-            return "IMG"
-        case .video:
-            return "VID"
-        case .archive:
-            return "ZIP"
-        case .other:
-            return "FILE"
-        }
-    }
-}
-
-private enum NativeReceivePreviewThumbnail {
-    static let targetSize = CGSize(width: 240, height: 240)
-
-    static func jpegData(from image: UIImage) -> Data? {
-        guard image.size.width > 0, image.size.height > 0 else {
-            return nil
-        }
-        let scale = max(targetSize.width / image.size.width, targetSize.height / image.size.height)
-        let scaledSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let origin = CGPoint(
-            x: (targetSize.width - scaledSize.width) / 2,
-            y: (targetSize.height - scaledSize.height) / 2
-        )
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        format.opaque = true
-        let thumbnail = UIGraphicsImageRenderer(size: targetSize, format: format).image { context in
-            UIColor.white.setFill()
-            context.cgContext.fill(CGRect(origin: .zero, size: targetSize))
-            image.draw(in: CGRect(origin: origin, size: scaledSize))
-        }
-        return thumbnail.jpegData(compressionQuality: 0.82)
-    }
-}
-
-struct NativeReceivedFile {
-    let displayName: String
-    let fileType: NativeFileType
-    let sizeBytes: Int
-    let data: Data
-    let mediaPreviewData: Data?
-    let savedURLPath: String?
-    let photoAssetIdentifier: String?
-
-    init(
-        displayName: String,
-        fileType: NativeFileType,
-        sizeBytes: Int,
-        data: Data,
-        mediaPreviewData: Data? = nil,
-        savedURLPath: String? = nil,
-        photoAssetIdentifier: String? = nil
-    ) {
-        self.displayName = displayName
-        self.fileType = fileType
-        self.sizeBytes = sizeBytes
-        self.data = data
-        self.mediaPreviewData = mediaPreviewData
-        self.savedURLPath = savedURLPath
-        self.photoAssetIdentifier = photoAssetIdentifier
-    }
-}
-
-struct NativeReceivedTransfer {
-    let senderName: String
-    let files: [NativeReceivedFile]
 }
 
 extension String {

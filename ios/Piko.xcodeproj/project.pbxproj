@@ -23,6 +23,13 @@
 		8F2E59DC2C00000100A10001 /* NativeHttpMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */; };
 		8F2E59DD2C00000100A10001 /* NativeLocalSendMulticast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */; };
 		8F2E59DE2C00000100A10001 /* NativeLocalSendListenerFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */; };
+		8F2E59DF2C00000100A10001 /* NativeTransferModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CF2C00000100A10001 /* NativeTransferModels.swift */; };
+		8F2E59E02C00000100A10001 /* NativeReceiveHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59D02C00000100A10001 /* NativeReceiveHistoryStore.swift */; };
+		8F2E59E12C00000100A10001 /* NativeTransferClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E42C00000100A10001 /* NativeTransferClient.swift */; };
+		8F2E59E22C00000100A10001 /* NativeReceiveFileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E52C00000100A10001 /* NativeReceiveFileStore.swift */; };
+		8F2E59E32C00000100A10001 /* NativeLocalSendSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E62C00000100A10001 /* NativeLocalSendSessionStore.swift */; };
+		8F2E59E72C00000100A10001 /* NativeLanDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E92C00000100A10001 /* NativeLanDiscoveryService.swift */; };
+		8F2E59E82C00000100A10001 /* NativeTransferStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59EA2C00000100A10001 /* NativeTransferStateMachine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +51,13 @@
 		8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHttpMessage.swift; sourceTree = "<group>"; };
 		8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendMulticast.swift; sourceTree = "<group>"; };
 		8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendListenerFactory.swift; sourceTree = "<group>"; };
+		8F2E59CF2C00000100A10001 /* NativeTransferModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferModels.swift; sourceTree = "<group>"; };
+		8F2E59D02C00000100A10001 /* NativeReceiveHistoryStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeReceiveHistoryStore.swift; sourceTree = "<group>"; };
+		8F2E59E42C00000100A10001 /* NativeTransferClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferClient.swift; sourceTree = "<group>"; };
+		8F2E59E52C00000100A10001 /* NativeReceiveFileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeReceiveFileStore.swift; sourceTree = "<group>"; };
+		8F2E59E62C00000100A10001 /* NativeLocalSendSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendSessionStore.swift; sourceTree = "<group>"; };
+		8F2E59E92C00000100A10001 /* NativeLanDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLanDiscoveryService.swift; sourceTree = "<group>"; };
+		8F2E59EA2C00000100A10001 /* NativeTransferStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferStateMachine.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +100,13 @@
 				8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */,
 				8F2E59C32C00000100A10001 /* NativeSettingsView.swift */,
 				8F2E59C42C00000100A10001 /* NativePikoModel.swift */,
+				8F2E59CF2C00000100A10001 /* NativeTransferModels.swift */,
+				8F2E59D02C00000100A10001 /* NativeReceiveHistoryStore.swift */,
+				8F2E59E42C00000100A10001 /* NativeTransferClient.swift */,
+				8F2E59E52C00000100A10001 /* NativeReceiveFileStore.swift */,
+				8F2E59E62C00000100A10001 /* NativeLocalSendSessionStore.swift */,
+				8F2E59E92C00000100A10001 /* NativeLanDiscoveryService.swift */,
+				8F2E59EA2C00000100A10001 /* NativeTransferStateMachine.swift */,
 				8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */,
 				8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */,
 				8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */,
@@ -174,6 +195,13 @@
 				8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */,
 				8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */,
 				8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */,
+				8F2E59DF2C00000100A10001 /* NativeTransferModels.swift in Sources */,
+				8F2E59E02C00000100A10001 /* NativeReceiveHistoryStore.swift in Sources */,
+				8F2E59E12C00000100A10001 /* NativeTransferClient.swift in Sources */,
+				8F2E59E22C00000100A10001 /* NativeReceiveFileStore.swift in Sources */,
+				8F2E59E32C00000100A10001 /* NativeLocalSendSessionStore.swift in Sources */,
+				8F2E59E72C00000100A10001 /* NativeLanDiscoveryService.swift in Sources */,
+				8F2E59E82C00000100A10001 /* NativeTransferStateMachine.swift in Sources */,
 				8F2E59DB2C00000100A10001 /* NativeLocalSendProtocol.swift in Sources */,
 				8F2E59DC2C00000100A10001 /* NativeHttpMessage.swift in Sources */,
 				8F2E59DD2C00000100A10001 /* NativeLocalSendMulticast.swift in Sources */,

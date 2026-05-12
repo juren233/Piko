@@ -45,20 +45,22 @@ struct NativePhotoPicker: UIViewControllerRepresentable {
                 }
 
                 group.enter()
-                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
                     defer {
                         group.leave()
                     }
-                    guard let data else {
+                    guard let url else {
                         return
                     }
                     let name = provider.suggestedName.map { "\($0).jpg" } ?? "image-\(UUID().uuidString).jpg"
-                    let item = NativeTransferItem(
+                    guard let item = copyTransferItem(
+                        from: url,
                         id: "photo-\(UUID().uuidString)",
                         displayName: name,
-                        fileType: .image,
-                        data: data
-                    )
+                        fileType: .image
+                    ) else {
+                        return
+                    }
                     lock.lock()
                     items.append(item)
                     lock.unlock()
@@ -103,19 +105,42 @@ struct NativeDocumentPicker: UIViewControllerRepresentable {
                         url.stopAccessingSecurityScopedResource()
                     }
                 }
-                guard let data = try? Data(contentsOf: url) else {
-                    return nil
-                }
-                return NativeTransferItem(
+                return copyTransferItem(
+                    from: url,
                     id: url.absoluteString,
                     displayName: url.lastPathComponent,
-                    fileType: NativeFileType(url: url),
-                    data: data
+                    fileType: NativeFileType(url: url)
                 )
             }
             onSelect(items)
         }
     }
+}
+
+private func copyTransferItem(
+    from sourceURL: URL,
+    id: String,
+    displayName: String,
+    fileType: NativeFileType
+) -> NativeTransferItem? {
+    let fileManager = FileManager.default
+    let directory = fileManager.temporaryDirectory.appendingPathComponent("PikoTransfers", isDirectory: true)
+    guard (try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+        return nil
+    }
+    let destination = directory.appendingPathComponent("\(UUID().uuidString)-\(displayName.sanitizedFileName)")
+    try? fileManager.removeItem(at: destination)
+    guard (try? fileManager.copyItem(at: sourceURL, to: destination)) != nil else {
+        return nil
+    }
+    let sizeBytes = (try? destination.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    return NativeTransferItem(
+        id: id,
+        displayName: displayName,
+        fileType: fileType,
+        fileURL: destination,
+        sizeBytes: sizeBytes
+    )
 }
 
 extension NativeFileType {

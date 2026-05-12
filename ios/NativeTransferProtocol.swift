@@ -17,7 +17,7 @@ enum NativeTransferProtocol {
             data.appendInt32(nameBytes.count)
             data.append(nameBytes)
             data.appendInt32(item.fileType.rawValue)
-            data.appendInt64(item.data.count)
+            data.appendInt64(item.sizeBytes)
         }
         return data
     }
@@ -88,12 +88,19 @@ enum NativeTransferProtocol {
             )
         }
 
-        var files: [NativeReceivedFile] = []
+        var files: [NativeReceivedPayloadFile] = []
         for file in metadata {
             guard let bytes = data.readData(count: file.sizeBytes, offset: &offset) else {
                 return nil
             }
-            files.append(NativeReceivedFile(displayName: file.displayName, fileType: file.fileType, sizeBytes: file.sizeBytes, data: bytes))
+            files.append(
+                NativeReceivedPayloadFile(
+                    displayName: file.displayName,
+                    fileType: file.fileType,
+                    sizeBytes: file.sizeBytes,
+                    payloadData: bytes
+                )
+            )
         }
 
         return NativeTransferEnvelope(
@@ -110,6 +117,13 @@ struct NativeTransferFileMetadata {
     let displayName: String
     let fileType: NativeFileType
     let sizeBytes: Int
+}
+
+struct NativeReceivedPayloadFile {
+    let displayName: String
+    let fileType: NativeFileType
+    let sizeBytes: Int
+    let payloadData: Data
 }
 
 struct NativeTransferEnvelope {
