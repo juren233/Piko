@@ -35,13 +35,14 @@ describe("password hashing", () => {
     expect(ok).toBe(false);
   });
 
-  it("uses 600,000 iterations and PBKDF2-SHA256", async () => {
-    expect(PBKDF2_ITER).toBe(600_000);
+  it("uses Cloudflare-compatible iterations and PBKDF2-SHA256", async () => {
+    expect(PBKDF2_ITER).toBe(100_000);
     expect(PBKDF2_ALGO).toBe("pbkdf2-sha256");
     const hash = await hashPassword("any-password-ok");
     const record = JSON.parse(hash);
     expect(record.algo).toBe("pbkdf2-sha256");
-    expect(record.iter).toBe(600_000);
+    expect(record.iter).toBe(100_000);
+    expect(record.iter).toBeLessThanOrEqual(100_000);
     expect(typeof record.salt).toBe("string");
     expect(typeof record.hash).toBe("string");
   });

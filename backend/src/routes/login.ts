@@ -3,7 +3,7 @@ import type { AppVariables, Env } from "../env.js";
 import { AppError, appErrorResponse } from "../errors.js";
 import { parseLogin } from "../validation/schemas.js";
 import { findUserByEmailNormalized } from "../db/users.js";
-import { verifyPassword } from "../auth/passwords.js";
+import { PBKDF2_ITER, verifyPassword } from "../auth/passwords.js";
 import { createSession } from "../auth/session.js";
 
 export const loginRoute = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -26,7 +26,12 @@ loginRoute.post("/", async (c) => {
 
   const row = await findUserByEmailNormalized(c.env, input.emailNormalized);
   // 不区分用户不存在 vs 密码错（防枚举）；即使没用户也要走一次 verifyPassword 抗时序侧信道
-  const dummy = '{"algo":"pbkdf2-sha256","iter":600000,"salt":"AAAA","hash":"AAAA"}';
+  const dummy = JSON.stringify({
+    algo: "pbkdf2-sha256",
+    iter: PBKDF2_ITER,
+    salt: "AAAA",
+    hash: "AAAA",
+  });
   const ok = await verifyPassword(input.password, row?.password_hash ?? dummy);
   if (!row || !ok) {
     return appErrorResponse(c, new AppError("INVALID_CREDENTIALS"));

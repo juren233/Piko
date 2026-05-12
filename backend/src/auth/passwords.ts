@@ -1,9 +1,9 @@
-// PBKDF2-SHA256, 600_000 iter, 32-byte salt, 32-byte derived key.
-// OWASP 2024 minimum baseline. WebCrypto subtle native — no WASM bloat.
+// PBKDF2-SHA256, 100_000 iter, 32-byte salt, 32-byte derived key.
+// Cloudflare Workers WebCrypto 当前限制 PBKDF2 迭代次数不能超过 100_000。
 
 import { bytesToBase64Url } from "./tokens.js";
 
-const ITER = 600_000;
+const ITER = 100_000;
 const HASH_LEN = 32;
 const SALT_LEN = 32;
 const ALGO = "pbkdf2-sha256";
