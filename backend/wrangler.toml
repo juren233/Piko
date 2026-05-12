@@ -1,0 +1,17 @@
+name = "piko-api"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "piko-db"
+database_id = "8943ecbf-7ec8-4829-8210-699b87cc2baa"
+migrations_dir = "migrations"
+
+[[kv_namespaces]]
+binding = "SESSIONS"
+id = "37b56f38e5804f22b75dc64a558aaf3c"
+
+[observability]
+enabled = true

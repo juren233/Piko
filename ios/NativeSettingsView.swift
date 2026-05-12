@@ -38,8 +38,8 @@ struct NativeSettingsView: View {
                     .padding(.vertical, 6)
                     NativeSettingsRow(title: "传输策略", value: "局域网优先")
                 }
-                PikoSectionPanel(title: "账号") {
-                    NativeSettingsRow(title: "登录方式", value: "邮箱账号")
+                PikoSectionPanel(title: NativeAuthLabels.accountSectionTitle) {
+                    NativeAuthSection(authStore: model.authStore)
                 }
             }
             .padding(.horizontal, 24)
@@ -55,6 +55,79 @@ struct NativeSettingsView: View {
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
+    }
+}
+
+private enum NativeAuthMode: Identifiable {
+    case login
+    case register
+
+    var id: String {
+        switch self {
+        case .login:
+            return "login"
+        case .register:
+            return "register"
+        }
+    }
+}
+
+private struct NativeAuthSection: View {
+    @ObservedObject var authStore: NativeAuthStore
+    @State private var mode: NativeAuthMode?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            NativeSettingsRow(title: "登录方式", value: "邮箱账号")
+            switch authStore.state {
+            case .authenticated(let user):
+                NativeSettingsRow(title: NativeAuthLabels.email, value: user.email)
+                NativeSettingsRow(title: NativeAuthLabels.username, value: "@\(user.username)")
+                NativeSettingsRow(
+                    title: NativeAuthLabels.nickname,
+                    value: user.nickname ?? NativeAuthLabels.unsetNicknamePlaceholder
+                )
+                Button(role: .destructive) {
+                    Task { await authStore.logout() }
+                } label: {
+                    Text(NativeAuthLabels.signOut)
+                        .font(PikoFont.button)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .padding(.top, 2)
+            case .loading, .unauthenticated:
+                Button {
+                    mode = .login
+                } label: {
+                    Text(NativeAuthLabels.signInOrSignUp)
+                        .font(PikoFont.rowTitle)
+                        .foregroundStyle(PikoPalette.accent)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.88)
+                        .truncationMode(.tail)
+                        .padding(.vertical, 6)
+                }
+                .disabled(authStore.state == .loading)
+            }
+        }
+        .sheet(item: $mode) { currentMode in
+            switch currentMode {
+            case .login:
+                NativeLoginView(authStore: authStore) {
+                    mode = .register
+                }
+            case .register:
+                NativeRegisterView(authStore: authStore) {
+                    mode = .login
+                }
+            }
+        }
+        .onChange(of: authStore.state) { state in
+            if case .authenticated = state {
+                mode = nil
+            }
+        }
     }
 }
 

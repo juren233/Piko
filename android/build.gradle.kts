@@ -33,6 +33,10 @@ val hasReleaseSigning =
         !releaseKeyAlias.isNullOrBlank() &&
         !releaseKeyPassword.isNullOrBlank()
 
+val pikoApiBaseUrl = providers.gradleProperty("piko.apiBaseUrl")
+    .orElse("https://piko-api.juren233.top")
+    .get()
+
 android {
     namespace = "com.juren233.piko"
     compileSdk = 36
@@ -44,9 +48,15 @@ android {
         versionCode = pikoVersionCode
         versionName = pikoVersionName
 
+        buildConfigField("String", "PIKO_API_BASE_URL", "\"$pikoApiBaseUrl\"")
+
         ndk {
             abiFilters += androidAbis
         }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     signingConfigs {
@@ -77,12 +87,15 @@ android {
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.security.crypto)
     implementation(libs.backdrop)
     implementation(libs.compose.foundation)
     implementation(libs.compose.material3)
     implementation(libs.compose.runtime)
     implementation(libs.compose.ui)
+    implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kyant.shapes)
-    testImplementation("org.json:json:20250517")
+    implementation(libs.org.json)
+    testImplementation(libs.org.json)
     testImplementation(kotlin("test-junit"))
 }

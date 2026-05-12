@@ -66,6 +66,7 @@ fun PikoTabScreen(
     onMediaSaveLocationChange: (ReceiveMediaSaveLocation) -> Unit = {},
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     onDeleteReceiveHistory: (ReceiveHistoryItem, Boolean) -> Unit = { _, _ -> },
+    authSection: AuthSection = AuthSection.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -91,6 +92,7 @@ fun PikoTabScreen(
         PikoTab.Settings -> PikoSettingsScreen(
             mediaSaveLocation = mediaSaveLocation,
             onMediaSaveLocationChange = onMediaSaveLocationChange,
+            authSection = authSection,
             bottomContentPadding = bottomContentPadding,
             modifier = modifier,
         )

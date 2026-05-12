@@ -19,6 +19,13 @@ DerivedData/
 *.xcuserstate
 *.moved-aside
 
+# Backend (CloudFlare Workers)
+backend/node_modules/
+backend/.wrangler/
+backend/dist/
+backend/readme.md
+backend/migrations
+
 # System
 .DS_Store
 Thumbs.db

@@ -5,16 +5,22 @@ composeBom = "2026.05.00"
 activityCompose = "1.13.0"
 backdrop = "1.0.6"
 kyantShapes = "1.2.0"
+androidxSecurityCrypto = "1.1.0-alpha06"
+kotlinxCoroutinesAndroid = "1.10.1"
+orgJson = "20250517"
 
 [libraries]
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
+androidx-security-crypto = { module = "androidx.security:security-crypto", version.ref = "androidxSecurityCrypto" }
 backdrop = { module = "io.github.kyant0:backdrop", version.ref = "backdrop" }
 compose-foundation = { module = "androidx.compose.foundation:foundation" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-runtime = { module = "androidx.compose.runtime:runtime" }
 compose-ui = { module = "androidx.compose.ui:ui" }
+kotlinx-coroutines-android = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-android", version.ref = "kotlinxCoroutinesAndroid" }
 kyant-shapes = { module = "io.github.kyant0:shapes", version.ref = "kyantShapes" }
+org-json = { module = "org.json:json", version.ref = "orgJson" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

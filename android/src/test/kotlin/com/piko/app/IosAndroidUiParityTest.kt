@@ -25,9 +25,49 @@ class IosAndroidUiParityTest {
         assertFalse("LinearGradient(" in style)
 
         assertInOrder(sendView, "我的设备", "局域网设备", "我的好友", "NativeImageSection", "NativeFileSection")
-        assertInOrder(settingsView, "传输", "自动接收", "传输策略", "账号", "登录方式")
+        assertInOrder(
+            settingsView,
+            "传输",
+            "自动接收",
+            "传输策略",
+            "NativeAuthLabels.accountSectionTitle",
+            "登录方式",
+            "NativeAuthLabels.username",
+            "NativeAuthLabels.nickname",
+        )
         assertFalse("最近接收" in receiveView)
         assertTrue("NativeReceiveHistoryRow" in receiveView)
+    }
+
+    @Test
+    fun authLabelsParityAcrossPlatforms() {
+        val androidLabels = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/UiLabels.kt").readText()
+        val iosLabels = readIos("NativeAuthLabels.swift")
+        val expectedLabels = listOf(
+            "账号",
+            "邮箱",
+            "密码",
+            "用户名",
+            "昵称（可选）",
+            "登录",
+            "注册",
+            "登录 / 注册",
+            "退出登录",
+            "未设置",
+            "邮箱已被注册",
+            "用户名已被占用",
+            "邮箱或密码错误",
+            "网络不可用，请稍后重试",
+            "密码至少 8 位",
+            "邮箱格式有误",
+            "用户名格式不合法",
+            "昵称格式不合法",
+        )
+
+        expectedLabels.forEach { label ->
+            assertTrue(label in androidLabels, "Android auth label missing: $label")
+            assertTrue(label in iosLabels, "iOS auth label missing: $label")
+        }
     }
 
     @Test

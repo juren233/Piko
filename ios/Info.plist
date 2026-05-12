@@ -14,6 +14,8 @@
 	<array>
 		<string>_piko-share._tcp</string>
 	</array>
+	<key>PikoApiBaseURL</key>
+	<string>$(PIKO_API_BASE_URL)</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

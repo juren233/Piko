@@ -30,6 +30,14 @@
 		8F2E59E32C00000100A10001 /* NativeLocalSendSessionStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E62C00000100A10001 /* NativeLocalSendSessionStore.swift */; };
 		8F2E59E72C00000100A10001 /* NativeLanDiscoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59E92C00000100A10001 /* NativeLanDiscoveryService.swift */; };
 		8F2E59E82C00000100A10001 /* NativeTransferStateMachine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59EA2C00000100A10001 /* NativeTransferStateMachine.swift */; };
+		8F2E59F02C00000100A10001 /* NativeAuthModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59F82C00000100A10001 /* NativeAuthModels.swift */; };
+		8F2E59F12C00000100A10001 /* NativeAccountApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59F92C00000100A10001 /* NativeAccountApiClient.swift */; };
+		8F2E59F22C00000100A10001 /* NativeAuthTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FA2C00000100A10001 /* NativeAuthTokenStore.swift */; };
+		8F2E59F32C00000100A10001 /* NativeAuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FB2C00000100A10001 /* NativeAuthStore.swift */; };
+		8F2E59F42C00000100A10001 /* NativeAuthLabels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FC2C00000100A10001 /* NativeAuthLabels.swift */; };
+		8F2E59F52C00000100A10001 /* NativeAppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */; };
+		8F2E59F62C00000100A10001 /* NativeLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FE2C00000100A10001 /* NativeLoginView.swift */; };
+		8F2E59F72C00000100A10001 /* NativeRegisterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -58,6 +66,14 @@
 		8F2E59E62C00000100A10001 /* NativeLocalSendSessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendSessionStore.swift; sourceTree = "<group>"; };
 		8F2E59E92C00000100A10001 /* NativeLanDiscoveryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLanDiscoveryService.swift; sourceTree = "<group>"; };
 		8F2E59EA2C00000100A10001 /* NativeTransferStateMachine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferStateMachine.swift; sourceTree = "<group>"; };
+		8F2E59F82C00000100A10001 /* NativeAuthModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthModels.swift; sourceTree = "<group>"; };
+		8F2E59F92C00000100A10001 /* NativeAccountApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAccountApiClient.swift; sourceTree = "<group>"; };
+		8F2E59FA2C00000100A10001 /* NativeAuthTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthTokenStore.swift; sourceTree = "<group>"; };
+		8F2E59FB2C00000100A10001 /* NativeAuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthStore.swift; sourceTree = "<group>"; };
+		8F2E59FC2C00000100A10001 /* NativeAuthLabels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthLabels.swift; sourceTree = "<group>"; };
+		8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAppConfig.swift; sourceTree = "<group>"; };
+		8F2E59FE2C00000100A10001 /* NativeLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLoginView.swift; sourceTree = "<group>"; };
+		8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRegisterView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -99,6 +115,14 @@
 				8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */,
 				8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */,
 				8F2E59C32C00000100A10001 /* NativeSettingsView.swift */,
+				8F2E59F82C00000100A10001 /* NativeAuthModels.swift */,
+				8F2E59F92C00000100A10001 /* NativeAccountApiClient.swift */,
+				8F2E59FA2C00000100A10001 /* NativeAuthTokenStore.swift */,
+				8F2E59FB2C00000100A10001 /* NativeAuthStore.swift */,
+				8F2E59FC2C00000100A10001 /* NativeAuthLabels.swift */,
+				8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */,
+				8F2E59FE2C00000100A10001 /* NativeLoginView.swift */,
+				8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */,
 				8F2E59C42C00000100A10001 /* NativePikoModel.swift */,
 				8F2E59CF2C00000100A10001 /* NativeTransferModels.swift */,
 				8F2E59D02C00000100A10001 /* NativeReceiveHistoryStore.swift */,
@@ -194,6 +218,14 @@
 				8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */,
 				8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */,
 				8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */,
+				8F2E59F02C00000100A10001 /* NativeAuthModels.swift in Sources */,
+				8F2E59F12C00000100A10001 /* NativeAccountApiClient.swift in Sources */,
+				8F2E59F22C00000100A10001 /* NativeAuthTokenStore.swift in Sources */,
+				8F2E59F32C00000100A10001 /* NativeAuthStore.swift in Sources */,
+				8F2E59F42C00000100A10001 /* NativeAuthLabels.swift in Sources */,
+				8F2E59F52C00000100A10001 /* NativeAppConfig.swift in Sources */,
+				8F2E59F62C00000100A10001 /* NativeLoginView.swift in Sources */,
+				8F2E59F72C00000100A10001 /* NativeRegisterView.swift in Sources */,
 				8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */,
 				8F2E59DF2C00000100A10001 /* NativeTransferModels.swift in Sources */,
 				8F2E59E02C00000100A10001 /* NativeReceiveHistoryStore.swift in Sources */,
@@ -241,6 +273,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
+				PIKO_API_BASE_URL = "https://piko-api.juren233.top";
 				PRODUCT_BUNDLE_IDENTIFIER = com.juren233.piko;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -277,6 +310,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0.0;
+				PIKO_API_BASE_URL = "https://piko-api.juren233.top";
 				PRODUCT_BUNDLE_IDENTIFIER = com.juren233.piko;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";

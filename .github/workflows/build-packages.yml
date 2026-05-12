@@ -57,6 +57,31 @@ jobs:
           "release_tag=v$versionName" >> $env:GITHUB_OUTPUT
           "release_title=Piko v$versionName" >> $env:GITHUB_OUTPUT
 
+  backend-test:
+    name: Backend tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install backend dependencies
+        run: pnpm -C backend install --frozen-lockfile
+
+      - name: Run backend tests
+        run: pnpm -C backend test
+
   android-signed:
     name: Android signed APK
     runs-on: windows-2025-vs2026

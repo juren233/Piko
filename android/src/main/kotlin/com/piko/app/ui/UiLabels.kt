@@ -52,3 +52,28 @@ internal val ReceiveFileType.previewLabel: String
         ReceiveFileType.Archive -> "ZIP"
         ReceiveFileType.Other -> "FILE"
     }
+
+/**
+ * 账号体系中文字符串集中地。iOS 端 NativeAuthLabels.swift key 集与此 1:1 对齐，
+ * 由 IosAndroidUiParityTest.authLabelsParityAcrossPlatforms 守护。
+ */
+internal object AuthLabels {
+    const val accountSectionTitle = "账号"
+    const val email = "邮箱"
+    const val password = "密码"
+    const val username = "用户名"
+    const val nickname = "昵称（可选）"
+    const val signIn = "登录"
+    const val signUp = "注册"
+    const val signInOrSignUp = "登录 / 注册"
+    const val signOut = "退出登录"
+    const val unsetNicknamePlaceholder = "未设置"
+    const val emailTaken = "邮箱已被注册"
+    const val usernameTaken = "用户名已被占用"
+    const val invalidCredentials = "邮箱或密码错误"
+    const val networkUnavailable = "网络不可用，请稍后重试"
+    const val weakPassword = "密码至少 8 位"
+    const val invalidEmail = "邮箱格式有误"
+    const val invalidUsername = "用户名格式不合法"
+    const val invalidNickname = "昵称格式不合法"
+}

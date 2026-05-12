@@ -33,18 +33,29 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.rememberCoroutineScope
+import com.juren233.piko.BuildConfig
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.juren233.piko.R
+import com.piko.app.data.AuthRepository
+import com.piko.app.data.AuthTokenStore
 import com.piko.app.data.ReceiveHistoryStore
 import com.piko.app.data.ReceiveMediaSaveLocation
+import com.piko.app.domain.AccountError
+import com.piko.app.domain.AccountResult
+import com.piko.app.domain.AuthState
 import com.piko.app.domain.PikoHomeState
 import com.piko.app.domain.ReceiveHistoryItem
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.glass.LiquidBottomTab
 import com.piko.app.glass.LiquidBottomTabs
 import com.piko.app.glass.LiquidSendFloatingButton
+import com.piko.app.transport.AccountApiClient
 import com.piko.app.ui.App
+import com.piko.app.ui.AuthSection
 import com.piko.app.ui.IOS_SYSTEM_BACKGROUND_DARK
 import com.piko.app.ui.IOS_SYSTEM_BACKGROUND_LIGHT
 import com.piko.app.ui.PikoColors
@@ -52,6 +63,7 @@ import com.piko.app.ui.PikoTab
 import com.piko.app.ui.PikoTabScreen
 import com.piko.app.ui.PikoTheme
 import com.piko.app.ui.startSendTransfer
+import kotlinx.coroutines.launch
 
 @Composable
 fun AndroidPikoApp() {
@@ -94,6 +106,44 @@ fun AndroidPikoApp() {
     )
     val backdrop = rememberLayerBackdrop()
 
+    val authRepository = remember(appContext) {
+        AuthRepository(
+            api = AccountApiClient(baseUrl = BuildConfig.PIKO_API_BASE_URL),
+            tokenStore = AuthTokenStore.fromContext(appContext),
+        )
+    }
+    val authState by authRepository.state.collectAsState()
+    var lastAuthError by remember(authRepository) { mutableStateOf<AccountError?>(null) }
+    val authScope = rememberCoroutineScope()
+
+    LaunchedEffect(authRepository) {
+        authRepository.bootstrap()
+    }
+
+    val authSection = AuthSection(
+        state = authState,
+        lastError = lastAuthError,
+        onLogin = { email, password ->
+            authScope.launch {
+                val res = authRepository.login(email, password)
+                lastAuthError = if (res is AccountResult.Err) res.error else null
+            }
+        },
+        onRegister = { email, password, username, nickname ->
+            authScope.launch {
+                val res = authRepository.register(email, password, username, nickname)
+                lastAuthError = if (res is AccountResult.Err) res.error else null
+            }
+        },
+        onSignOut = {
+            authScope.launch {
+                authRepository.logout()
+                lastAuthError = null
+            }
+        },
+        onErrorConsumed = { lastAuthError = null },
+    )
+
     PikoTheme {
         Box(
             modifier = Modifier
@@ -120,6 +170,7 @@ fun AndroidPikoApp() {
                         receivePreferences.saveMediaSaveLocation(location)
                     },
                     sendPlatformActions = sendPlatformActions,
+                    authSection = authSection,
                     onDeleteReceiveHistory = { item, deleteFiles ->
                         if (deleteFiles) {
                             val failedCount = item.files

@@ -50,6 +50,8 @@ final class NativePikoModel: ObservableObject {
 
     @Published private(set) var nickname: NativeDeviceNickname
 
+    let authStore: NativeAuthStore
+
     private let queue = DispatchQueue(label: "piko.native.network")
     private let transferClient = NativeTransferClient()
     private let receiveFileStore = NativeReceiveFileStore()
@@ -67,12 +69,14 @@ final class NativePikoModel: ObservableObject {
     }
 
     init() {
+        self.authStore = NativeAuthStore()
         self.nickname = NativeDeviceNicknameStore.loadOrCreate()
         self.mediaSaveLocation = NativeMediaSaveLocation(
             rawValue: UserDefaults.standard.string(forKey: NativeMediaSaveLocation.userDefaultsKey) ?? ""
         ) ?? .folder
         self.receiveHistory = NativeReceiveHistoryStore.load()
         nativeReceiveModelLogger.notice("[ReceiveList] model init history=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
+        Task { await authStore.bootstrap() }
     }
 
     var currentDeviceName: String {

@@ -27,6 +27,7 @@ import com.piko.app.data.ReceiveMediaSaveLocation
 internal fun PikoSettingsScreen(
     mediaSaveLocation: ReceiveMediaSaveLocation,
     onMediaSaveLocationChange: (ReceiveMediaSaveLocation) -> Unit,
+    authSection: AuthSection = AuthSection.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -60,8 +61,8 @@ internal fun PikoSettingsScreen(
                 }
             }
             item {
-                PikoSectionPanel(title = "账号") {
-                    MetricRow(title = "登录方式", value = "邮箱账号")
+                PikoSectionPanel(title = AuthLabels.accountSectionTitle) {
+                    AuthSectionContent(section = authSection)
                 }
             }
         }
