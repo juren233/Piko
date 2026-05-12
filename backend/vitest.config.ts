@@ -1,10 +1,7 @@
-import path from "node:path";
-import { defineWorkersProject, readD1Migrations } from "@cloudflare/vitest-pool-workers/config";
+import { defineWorkersProject } from "@cloudflare/vitest-pool-workers/config";
+import { testAccountMigrations } from "./test/helpers/accountMigrations";
 
-export default defineWorkersProject(async () => {
-  const migrationsPath = path.join(__dirname, "migrations");
-  const migrations = await readD1Migrations(migrationsPath);
-
+export default defineWorkersProject(() => {
   return {
     test: {
       setupFiles: ["./test/helpers/applyMigrations.ts"],
@@ -18,7 +15,7 @@ export default defineWorkersProject(async () => {
             d1Databases: ["DB"],
             kvNamespaces: ["SESSIONS"],
             bindings: {
-              TEST_MIGRATIONS: migrations,
+              TEST_MIGRATIONS: testAccountMigrations,
             },
           },
         },

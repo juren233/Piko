@@ -71,6 +71,20 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun iosAuthStoreIsCreatedFromMainActorIsolatedModelInit() {
+        val iosModel = readIos("NativePikoModel.swift").replace("\r\n", "\n")
+        val iosAuthStore = readIos("NativeAuthStore.swift")
+
+        assertTrue("@MainActor\nfinal class NativeAuthStore" in iosAuthStore)
+        assertInOrder(
+            iosModel,
+            "let authStore: NativeAuthStore",
+            "@MainActor\n    init()",
+            "self.authStore = NativeAuthStore()",
+        )
+    }
+
+    @Test
     fun androidUsesFixedIosPaletteInsteadOfDynamicSystemColors() {
         val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/PikoTheme.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()

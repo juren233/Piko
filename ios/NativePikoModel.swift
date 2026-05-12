@@ -68,6 +68,7 @@ final class NativePikoModel: ObservableObject {
         self?.applyTransferState(snapshot)
     }
 
+    @MainActor
     init() {
         self.authStore = NativeAuthStore()
         self.nickname = NativeDeviceNicknameStore.loadOrCreate()

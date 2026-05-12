@@ -1,5 +1,4 @@
-// Augment cloudflare:test's ProvidedEnv so test helpers get our bindings + the
-// auto-injected TEST_MIGRATIONS array (set up by vitest.config.ts).
+// 增强 cloudflare:test 的 ProvidedEnv，让测试 helper 读取 vitest.config.ts 注入的绑定。
 import type { Env } from "../src/env.js";
 import type { D1Migration } from "cloudflare:test";
 
