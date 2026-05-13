@@ -4,6 +4,7 @@ import com.piko.app.domain.SendDevice
 import com.piko.app.domain.SendDeviceGroup
 import com.piko.app.domain.SendFileItem
 import com.piko.app.domain.SendFileType
+import com.piko.app.domain.FriendUser
 import com.piko.app.domain.SendImageItem
 import com.piko.app.domain.SendPageState
 import com.piko.app.domain.SendTransferEvent
@@ -19,7 +20,42 @@ class SendPageStateTest {
         val state = SendPageState.initial(currentDeviceName = "Pixel")
 
         assertEquals(emptyList(), state.myDevices)
+        assertEquals(emptyList(), state.friendDevices)
         assertFalse(state.selectedDeviceIds.contains("current-device"))
+    }
+
+    @Test
+    fun replaceFriendDevicesMapsRealFriendsAndDropsStaleSelection() {
+        val friend = FriendUser(
+            userId = "user-cavan",
+            username = "cavan",
+            nickname = "Cavan",
+            online = true,
+            lastSeenAt = 1_746_000_000,
+            since = 1_745_000_000,
+        )
+
+        val state = SendPageState.initial(currentDeviceName = "Pixel")
+            .copy(selectedDeviceIds = setOf("friend-user-cavan", "missing-device"))
+            .replaceFriendDevices(listOf(friend))
+
+        assertEquals(
+            listOf(
+                SendDevice(
+                    id = "friend-user-cavan",
+                    name = "Cavan",
+                    group = SendDeviceGroup.Friend,
+                    subtitle = "在线",
+                    isSample = false,
+                    host = null,
+                    port = null,
+                    platformHint = "friend",
+                ),
+            ),
+            state.friendDevices,
+        )
+        assertEquals(setOf("friend-user-cavan"), state.selectedDeviceIds)
+        assertFalse(state.canSend)
     }
 
     @Test

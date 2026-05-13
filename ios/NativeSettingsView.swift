@@ -39,6 +39,7 @@ struct NativeSettingsView: View {
                     NativeSettingsRow(title: "传输策略", value: "局域网优先")
                 }
                 PikoSectionPanel(title: NativeAuthLabels.accountSectionTitle) {
+                    NativeFriendSettingsEntry(authStore: model.authStore, friendStore: model.friendStore)
                     NativeAuthSection(authStore: model.authStore)
                 }
             }
@@ -55,6 +56,31 @@ struct NativeSettingsView: View {
         }
         .background(PikoPalette.pageBackground)
         .systemBarBackgrounds()
+    }
+}
+
+private struct NativeFriendSettingsEntry: View {
+    @ObservedObject var authStore: NativeAuthStore
+    @ObservedObject var friendStore: NativeFriendStore
+
+    var body: some View {
+        switch authStore.state {
+        case .authenticated:
+            NavigationLink {
+                NativeFriendsView(store: friendStore)
+            } label: {
+                NativeSettingsRow(
+                    title: NativeAuthLabels.friendsEntry,
+                    value: friendStore.incomingRequests.isEmpty
+                        ? "\(friendStore.friends.count) 人"
+                        : "\(friendStore.friends.count) 人 · \(friendStore.incomingRequests.count) 个申请"
+                )
+            }
+            .buttonStyle(.plain)
+        case .loading, .unauthenticated:
+            NativeSettingsRow(title: NativeAuthLabels.friendsEntry, value: NativeAuthLabels.friendsLoginHint)
+                .foregroundStyle(.secondary)
+        }
     }
 }
 

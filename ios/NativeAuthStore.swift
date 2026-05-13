@@ -70,6 +70,10 @@ final class NativeAuthStore: ObservableObject {
         state = .unauthenticated
     }
 
+    func currentToken() -> String? {
+        tokenStore.load()
+    }
+
     func consumeError() {
         lastError = nil
     }

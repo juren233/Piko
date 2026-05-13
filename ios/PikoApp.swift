@@ -5,19 +5,17 @@ import UIKit
 struct PikoApp: App {
     init() {
         let tabBarAppearance = UITabBarAppearance()
-        tabBarAppearance.configureWithDefaultBackground()
-        tabBarAppearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        tabBarAppearance.backgroundColor = PikoPalette.pageBackgroundUIColor.withAlphaComponent(0.28)
-        tabBarAppearance.shadowColor = UIColor.separator.withAlphaComponent(0.18)
+        tabBarAppearance.configureWithTransparentBackground()
+        tabBarAppearance.backgroundColor = .clear
+        tabBarAppearance.shadowColor = .clear
 
         UITabBar.appearance().standardAppearance = tabBarAppearance
         UITabBar.appearance().scrollEdgeAppearance = tabBarAppearance
         UITabBar.appearance().isTranslucent = true
 
         let navigationBarAppearance = UINavigationBarAppearance()
-        navigationBarAppearance.configureWithDefaultBackground()
-        navigationBarAppearance.backgroundEffect = UIBlurEffect(style: .systemUltraThinMaterial)
-        navigationBarAppearance.backgroundColor = PikoPalette.pageBackgroundUIColor.withAlphaComponent(0.18)
+        navigationBarAppearance.configureWithTransparentBackground()
+        navigationBarAppearance.backgroundColor = .clear
         navigationBarAppearance.shadowColor = .clear
 
         let navigationBarScrollEdgeAppearance = UINavigationBarAppearance()
@@ -46,8 +44,7 @@ extension View {
     @ViewBuilder
     func systemBarBackgrounds() -> some View {
         if #available(iOS 16.0, *) {
-            toolbarBackground(.ultraThinMaterial, for: .tabBar)
-                .toolbarBackground(.visible, for: .tabBar)
+            toolbarBackground(.hidden, for: .navigationBar, .tabBar)
         } else {
             self
         }

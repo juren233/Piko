@@ -38,6 +38,12 @@
 		8F2E59F52C00000100A10001 /* NativeAppConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */; };
 		8F2E59F62C00000100A10001 /* NativeLoginView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FE2C00000100A10001 /* NativeLoginView.swift */; };
 		8F2E59F72C00000100A10001 /* NativeRegisterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */; };
+		8F2E5A002C00000100A10001 /* NativeFriendModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A062C00000100A10001 /* NativeFriendModels.swift */; };
+		8F2E5A012C00000100A10001 /* NativeFriendApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A072C00000100A10001 /* NativeFriendApiClient.swift */; };
+		8F2E5A022C00000100A10001 /* NativeFriendStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A082C00000100A10001 /* NativeFriendStore.swift */; };
+		8F2E5A032C00000100A10001 /* NativePresenceTicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A092C00000100A10001 /* NativePresenceTicker.swift */; };
+		8F2E5A042C00000100A10001 /* NativeFriendsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A0A2C00000100A10001 /* NativeFriendsView.swift */; };
+		8F2E5A052C00000100A10001 /* NativeFriendRequestsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E5A0B2C00000100A10001 /* NativeFriendRequestsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -74,6 +80,12 @@
 		8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAppConfig.swift; sourceTree = "<group>"; };
 		8F2E59FE2C00000100A10001 /* NativeLoginView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLoginView.swift; sourceTree = "<group>"; };
 		8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeRegisterView.swift; sourceTree = "<group>"; };
+		8F2E5A062C00000100A10001 /* NativeFriendModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFriendModels.swift; sourceTree = "<group>"; };
+		8F2E5A072C00000100A10001 /* NativeFriendApiClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFriendApiClient.swift; sourceTree = "<group>"; };
+		8F2E5A082C00000100A10001 /* NativeFriendStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFriendStore.swift; sourceTree = "<group>"; };
+		8F2E5A092C00000100A10001 /* NativePresenceTicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePresenceTicker.swift; sourceTree = "<group>"; };
+		8F2E5A0A2C00000100A10001 /* NativeFriendsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFriendsView.swift; sourceTree = "<group>"; };
+		8F2E5A0B2C00000100A10001 /* NativeFriendRequestsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFriendRequestsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -123,6 +135,12 @@
 				8F2E59FD2C00000100A10001 /* NativeAppConfig.swift */,
 				8F2E59FE2C00000100A10001 /* NativeLoginView.swift */,
 				8F2E59FF2C00000100A10001 /* NativeRegisterView.swift */,
+				8F2E5A062C00000100A10001 /* NativeFriendModels.swift */,
+				8F2E5A072C00000100A10001 /* NativeFriendApiClient.swift */,
+				8F2E5A082C00000100A10001 /* NativeFriendStore.swift */,
+				8F2E5A092C00000100A10001 /* NativePresenceTicker.swift */,
+				8F2E5A0A2C00000100A10001 /* NativeFriendsView.swift */,
+				8F2E5A0B2C00000100A10001 /* NativeFriendRequestsView.swift */,
 				8F2E59C42C00000100A10001 /* NativePikoModel.swift */,
 				8F2E59CF2C00000100A10001 /* NativeTransferModels.swift */,
 				8F2E59D02C00000100A10001 /* NativeReceiveHistoryStore.swift */,
@@ -226,6 +244,12 @@
 				8F2E59F52C00000100A10001 /* NativeAppConfig.swift in Sources */,
 				8F2E59F62C00000100A10001 /* NativeLoginView.swift in Sources */,
 				8F2E59F72C00000100A10001 /* NativeRegisterView.swift in Sources */,
+				8F2E5A002C00000100A10001 /* NativeFriendModels.swift in Sources */,
+				8F2E5A012C00000100A10001 /* NativeFriendApiClient.swift in Sources */,
+				8F2E5A022C00000100A10001 /* NativeFriendStore.swift in Sources */,
+				8F2E5A032C00000100A10001 /* NativePresenceTicker.swift in Sources */,
+				8F2E5A042C00000100A10001 /* NativeFriendsView.swift in Sources */,
+				8F2E5A052C00000100A10001 /* NativeFriendRequestsView.swift in Sources */,
 				8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */,
 				8F2E59DF2C00000100A10001 /* NativeTransferModels.swift in Sources */,
 				8F2E59E02C00000100A10001 /* NativeReceiveHistoryStore.swift in Sources */,

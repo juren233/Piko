@@ -76,8 +76,10 @@ struct PikoRootView: View {
                     }
                     .tag(Tab.send)
 
-                NativeSettingsView(model: model) { progress in
-                    settingsTopBarProgress = progress
+                NavigationStack {
+                    NativeSettingsView(model: model) { progress in
+                        settingsTopBarProgress = progress
+                    }
                 }
                     .systemBarBackgrounds()
                     .tabItem {

@@ -28,6 +28,10 @@ export interface LoginInput {
   password: string;
 }
 
+export interface FriendRequestInput {
+  receiverUserId: string;
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -96,4 +100,28 @@ export function parseLogin(body: unknown): LoginInput {
   }
 
   return { email, emailNormalized, password };
+}
+
+export function parseSearchQuery(raw: string | undefined): string {
+  if (raw === undefined) throw new AppError("INVALID_SEARCH_QUERY");
+  const query = raw.normalize("NFKC").trim();
+  if (query.length < 2 || query.length > 254) {
+    throw new AppError("INVALID_SEARCH_QUERY");
+  }
+  if (query.includes("@")) {
+    const normalized = query.toLowerCase();
+    if (!EMAIL_REGEX.test(normalized)) throw new AppError("INVALID_SEARCH_QUERY");
+    return normalized;
+  }
+  if (!USERNAME_REGEX.test(query)) throw new AppError("INVALID_SEARCH_QUERY");
+  return query.toLowerCase();
+}
+
+export function parseFriendRequestBody(body: unknown): FriendRequestInput {
+  if (!isObject(body)) throw new AppError("INVALID_BODY");
+  const receiverUserId = requireString(body, "receiver_user_id");
+  if (receiverUserId === null || receiverUserId.length === 0 || receiverUserId.length > 64) {
+    throw new AppError("INVALID_BODY");
+  }
+  return { receiverUserId };
 }

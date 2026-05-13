@@ -121,6 +121,26 @@ data class SendPageState(
         )
     }
 
+    fun replaceFriendDevices(friends: List<FriendUser>): SendPageState {
+        val nextFriendDevices = friends.map { friend ->
+            SendDevice(
+                id = "friend-${friend.userId}",
+                name = friend.displayName,
+                group = SendDeviceGroup.Friend,
+                subtitle = friend.presenceLabel,
+                host = null,
+                port = null,
+                platformHint = "friend",
+            )
+        }
+        val deviceIds = allDevices().filterNot { it.group == SendDeviceGroup.Friend }.map { it.id }.toSet() +
+            nextFriendDevices.map { it.id }
+        return copy(
+            friendDevices = nextFriendDevices,
+            selectedDeviceIds = selectedDeviceIds.intersect(deviceIds),
+        )
+    }
+
     fun updatePhotoPermission(state: SendPermissionState): SendPageState {
         return copy(photoPermissionState = state)
     }
@@ -205,20 +225,7 @@ data class SendPageState(
             return SendPageState(
                 myDevices = emptyList(),
                 lanDevices = emptyList(),
-                friendDevices = listOf(
-                    SendDevice(
-                        id = "friend-demo-cavan",
-                        name = "Cavan",
-                        group = SendDeviceGroup.Friend,
-                        isSample = true,
-                    ),
-                    SendDevice(
-                        id = "friend-demo-piko",
-                        name = "Piko",
-                        group = SendDeviceGroup.Friend,
-                        isSample = true,
-                    ),
-                ),
+                friendDevices = emptyList(),
                 selectedDeviceIds = emptySet(),
                 recentImages = emptyList(),
                 selectedImageIds = emptySet(),

@@ -1,4 +1,5 @@
 import CryptoKit
+import Combine
 import Foundation
 import Network
 import OSLog
@@ -51,11 +52,14 @@ final class NativePikoModel: ObservableObject {
     @Published private(set) var nickname: NativeDeviceNickname
 
     let authStore: NativeAuthStore
+    let friendStore: NativeFriendStore
 
     private let queue = DispatchQueue(label: "piko.native.network")
     private let transferClient = NativeTransferClient()
     private let receiveFileStore = NativeReceiveFileStore()
     private let localSendSessionStore = NativeLocalSendSessionStore()
+    private let presenceTicker: NativePresenceTicker
+    private var friendStoreCancellable: AnyCancellable?
     private lazy var lanDiscovery = NativeLanDiscoveryService(
         queue: queue,
         nickname: { [unowned self] in self.nickname },
@@ -71,11 +75,16 @@ final class NativePikoModel: ObservableObject {
     @MainActor
     init() {
         self.authStore = NativeAuthStore()
+        self.friendStore = NativeFriendStore(api: NativeFriendApiClient(), authStore: authStore)
+        self.presenceTicker = NativePresenceTicker(authStore: authStore, api: NativeFriendApiClient())
         self.nickname = NativeDeviceNicknameStore.loadOrCreate()
         self.mediaSaveLocation = NativeMediaSaveLocation(
             rawValue: UserDefaults.standard.string(forKey: NativeMediaSaveLocation.userDefaultsKey) ?? ""
         ) ?? .folder
         self.receiveHistory = NativeReceiveHistoryStore.load()
+        self.friendStoreCancellable = friendStore.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         nativeReceiveModelLogger.notice("[ReceiveList] model init history=\(self.receiveHistory.count, privacy: .public) items=\(self.receiveHistory.receiveListDiagnosticDescription, privacy: .public)")
         Task { await authStore.bootstrap() }
     }
@@ -99,20 +108,14 @@ final class NativePikoModel: ObservableObject {
     var myDevices: [NativeSendDevice] { [] }
 
     var friendDevices: [NativeSendDevice] {
-        [
+        friendStore.friends.map { friend in
             NativeSendDevice(
-                id: "friend-laptop",
-                name: "Cavan 的 MacBook",
-                subtitle: "最近同步",
-                endpoint: Self.placeholderEndpoint
-            ),
-            NativeSendDevice(
-                id: "friend-tablet",
-                name: "客厅 iPad",
-                subtitle: "可信设备",
+                id: "friend-\(friend.userId)",
+                name: friend.displayName,
+                subtitle: friend.presence.subtitleLabel,
                 endpoint: Self.placeholderEndpoint
             )
-        ]
+        }
     }
 
     var imageItems: [NativeTransferItem] {
@@ -162,6 +165,7 @@ final class NativePikoModel: ObservableObject {
         if !lanDiscovery.startPresence() {
             transferLabel = "接收服务启动失败"
         }
+        presenceTicker.start(friendStore: friendStore)
     }
 
     func startDiscovery() {

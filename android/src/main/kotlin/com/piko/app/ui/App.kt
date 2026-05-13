@@ -24,6 +24,12 @@ enum class PikoTab(
     Settings("设置"),
 }
 
+enum class SettingsDestination {
+    Settings,
+    Friends,
+    FriendRequests,
+}
+
 @Composable
 fun App(
     tab: PikoTab = PikoTab.Receive,
@@ -67,6 +73,16 @@ fun PikoTabScreen(
     sendPlatformActions: SendPlatformActions = SendPlatformActions.Empty,
     onDeleteReceiveHistory: (ReceiveHistoryItem, Boolean) -> Unit = { _, _ -> },
     authSection: AuthSection = AuthSection.Empty,
+    friendsEntry: FriendsEntry = FriendsEntry.Empty,
+    settingsDestination: SettingsDestination = SettingsDestination.Settings,
+    friendSearchQuery: String = "",
+    onFriendSearchQueryChange: (String) -> Unit = {},
+    onFriendRequestsClick: () -> Unit = {},
+    onSendFriendRequest: (String) -> Unit = {},
+    onAcceptFriendRequest: (String) -> Unit = {},
+    onRejectFriendRequest: (String) -> Unit = {},
+    onCancelFriendRequest: (String) -> Unit = {},
+    onRemoveFriend: (String) -> Unit = {},
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -89,13 +105,34 @@ fun PikoTabScreen(
             modifier = modifier,
         )
 
-        PikoTab.Settings -> PikoSettingsScreen(
-            mediaSaveLocation = mediaSaveLocation,
-            onMediaSaveLocationChange = onMediaSaveLocationChange,
-            authSection = authSection,
-            bottomContentPadding = bottomContentPadding,
-            modifier = modifier,
-        )
+        PikoTab.Settings -> when (settingsDestination) {
+            SettingsDestination.Settings -> PikoSettingsScreen(
+                mediaSaveLocation = mediaSaveLocation,
+                onMediaSaveLocationChange = onMediaSaveLocationChange,
+                authSection = authSection,
+                friendsEntry = friendsEntry,
+                bottomContentPadding = bottomContentPadding,
+                modifier = modifier,
+            )
+            SettingsDestination.Friends -> FriendsScreen(
+                state = state.friendsState,
+                query = friendSearchQuery,
+                onQueryChange = onFriendSearchQueryChange,
+                onRequestsClick = onFriendRequestsClick,
+                onSendRequest = onSendFriendRequest,
+                onRemoveFriend = onRemoveFriend,
+                bottomContentPadding = bottomContentPadding,
+                modifier = modifier,
+            )
+            SettingsDestination.FriendRequests -> FriendRequestsScreen(
+                state = state.friendsState,
+                onAccept = onAcceptFriendRequest,
+                onReject = onRejectFriendRequest,
+                onCancel = onCancelFriendRequest,
+                bottomContentPadding = bottomContentPadding,
+                modifier = modifier,
+            )
+        }
     }
 }
 

@@ -42,6 +42,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.juren233.piko.R
 import com.piko.app.data.AuthRepository
 import com.piko.app.data.AuthTokenStore
+import com.piko.app.data.FriendsRepository
 import com.piko.app.data.ReceiveHistoryStore
 import com.piko.app.data.ReceiveMediaSaveLocation
 import com.piko.app.domain.AccountError
@@ -54,15 +55,19 @@ import com.piko.app.glass.LiquidBottomTab
 import com.piko.app.glass.LiquidBottomTabs
 import com.piko.app.glass.LiquidSendFloatingButton
 import com.piko.app.transport.AccountApiClient
+import com.piko.app.transport.FriendApiClient
 import com.piko.app.ui.App
 import com.piko.app.ui.AuthSection
+import com.piko.app.ui.FriendsEntry
 import com.piko.app.ui.IOS_SYSTEM_BACKGROUND_DARK
 import com.piko.app.ui.IOS_SYSTEM_BACKGROUND_LIGHT
 import com.piko.app.ui.PikoColors
 import com.piko.app.ui.PikoTab
 import com.piko.app.ui.PikoTabScreen
 import com.piko.app.ui.PikoTheme
+import com.piko.app.ui.SettingsDestination
 import com.piko.app.ui.startSendTransfer
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
@@ -90,6 +95,8 @@ fun AndroidPikoApp() {
     var mediaSaveLocation by remember {
         mutableStateOf(receivePreferences.loadMediaSaveLocation())
     }
+    var settingsDestination by remember { mutableStateOf(SettingsDestination.Settings) }
+    var friendSearchQuery by remember { mutableStateOf("") }
     val mutateState: (((PikoHomeState) -> PikoHomeState) -> Unit) = { transform ->
         val nextState = transform(state)
         if (nextState.receiveHistory != state.receiveHistory) {
@@ -106,18 +113,63 @@ fun AndroidPikoApp() {
     )
     val backdrop = rememberLayerBackdrop()
 
+    val tokenStore = remember(appContext) {
+        AuthTokenStore.fromContext(appContext)
+    }
     val authRepository = remember(appContext) {
         AuthRepository(
             api = AccountApiClient(baseUrl = BuildConfig.PIKO_API_BASE_URL),
-            tokenStore = AuthTokenStore.fromContext(appContext),
+            tokenStore = tokenStore,
+        )
+    }
+    val friendsRepository = remember(appContext) {
+        FriendsRepository(
+            api = FriendApiClient(baseUrl = BuildConfig.PIKO_API_BASE_URL),
+            tokenStore = tokenStore,
         )
     }
     val authState by authRepository.state.collectAsState()
+    val friendsState by friendsRepository.state.collectAsState()
     var lastAuthError by remember(authRepository) { mutableStateOf<AccountError?>(null) }
     val authScope = rememberCoroutineScope()
+    val friendsScope = rememberCoroutineScope()
+    val heartbeatScheduler = remember(friendsRepository, friendsScope) {
+        PresenceHeartbeatScheduler(friendsScope) { friendsRepository.heartbeat() }
+    }
 
     LaunchedEffect(authRepository) {
         authRepository.bootstrap()
+    }
+
+    LaunchedEffect(authState) {
+        if (authState is AuthState.Authenticated) {
+            friendsRepository.refreshAll()
+            heartbeatScheduler.start()
+        } else {
+            heartbeatScheduler.stop()
+            friendsRepository.clear()
+            settingsDestination = SettingsDestination.Settings
+        }
+    }
+
+    LaunchedEffect(friendsState.friends) {
+        mutateState { current ->
+            current.copy(
+                friendsState = friendsState,
+                sendPage = current.sendPage.replaceFriendDevices(friendsState.friends),
+            )
+        }
+    }
+
+    LaunchedEffect(friendsState.incoming, friendsState.outgoing, friendsState.searchResults, friendsState.error) {
+        mutateState { current -> current.copy(friendsState = friendsState) }
+    }
+
+    LaunchedEffect(friendSearchQuery) {
+        delay(300)
+        if (friendSearchQuery.length >= 2) {
+            friendsRepository.search(friendSearchQuery)
+        }
     }
 
     val authSection = AuthSection(
@@ -171,6 +223,24 @@ fun AndroidPikoApp() {
                     },
                     sendPlatformActions = sendPlatformActions,
                     authSection = authSection,
+                    friendsEntry = FriendsEntry(
+                        enabled = authState is AuthState.Authenticated,
+                        friendCount = friendsState.friends.size,
+                        pendingCount = friendsState.pendingIncomingCount,
+                        onClick = {
+                            selectedTab = PikoTab.Settings
+                            settingsDestination = SettingsDestination.Friends
+                        },
+                    ),
+                    settingsDestination = settingsDestination,
+                    friendSearchQuery = friendSearchQuery,
+                    onFriendSearchQueryChange = { friendSearchQuery = it },
+                    onFriendRequestsClick = { settingsDestination = SettingsDestination.FriendRequests },
+                    onSendFriendRequest = { userId -> friendsScope.launch { friendsRepository.sendRequest(userId) } },
+                    onAcceptFriendRequest = { requestId -> friendsScope.launch { friendsRepository.accept(requestId) } },
+                    onRejectFriendRequest = { requestId -> friendsScope.launch { friendsRepository.reject(requestId) } },
+                    onCancelFriendRequest = { requestId -> friendsScope.launch { friendsRepository.cancel(requestId) } },
+                    onRemoveFriend = { userId -> friendsScope.launch { friendsRepository.removeFriend(userId) } },
                     onDeleteReceiveHistory = { item, deleteFiles ->
                         if (deleteFiles) {
                             val failedCount = item.files

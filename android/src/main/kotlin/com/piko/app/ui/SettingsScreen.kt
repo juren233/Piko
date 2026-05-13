@@ -1,6 +1,7 @@
 package com.piko.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
@@ -23,11 +24,28 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.piko.app.data.ReceiveMediaSaveLocation
 
+data class FriendsEntry(
+    val enabled: Boolean,
+    val friendCount: Int,
+    val pendingCount: Int,
+    val onClick: () -> Unit,
+) {
+    companion object {
+        val Empty = FriendsEntry(
+            enabled = false,
+            friendCount = 0,
+            pendingCount = 0,
+            onClick = {},
+        )
+    }
+}
+
 @Composable
 internal fun PikoSettingsScreen(
     mediaSaveLocation: ReceiveMediaSaveLocation,
     onMediaSaveLocationChange: (ReceiveMediaSaveLocation) -> Unit,
     authSection: AuthSection = AuthSection.Empty,
+    friendsEntry: FriendsEntry = FriendsEntry.Empty,
     bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier,
 ) {
@@ -62,10 +80,48 @@ internal fun PikoSettingsScreen(
             }
             item {
                 PikoSectionPanel(title = AuthLabels.accountSectionTitle) {
+                    FriendsEntryRow(entry = friendsEntry)
                     AuthSectionContent(section = authSection)
                 }
             }
         }
+    }
+}
+
+@Composable
+internal fun FriendsEntryRow(
+    entry: FriendsEntry,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clickable(enabled = entry.enabled, onClick = entry.onClick),
+        horizontalArrangement = Arrangement.spacedBy(18.dp, Alignment.CenterHorizontally),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = AuthLabels.friendsEntry,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val value = if (entry.enabled) {
+            if (entry.pendingCount > 0) "${entry.friendCount} 人 · ${entry.pendingCount} 个申请" else "${entry.friendCount} 人"
+        } else {
+            AuthLabels.friendsLoginHint
+        }
+        Text(
+            text = value,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.End,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

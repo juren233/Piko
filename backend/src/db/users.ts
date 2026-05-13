@@ -41,6 +41,29 @@ export async function findUserById(env: Env, id: string): Promise<UserRow | null
     .first<UserRow>();
 }
 
+export async function searchUsers(
+  env: Env,
+  query: string,
+  currentUserId: string,
+  limit: number,
+): Promise<UserRow[]> {
+  const statement = query.includes("@")
+    ? env.DB.prepare(
+        `SELECT * FROM users
+         WHERE email_normalized = ?1 AND id <> ?2
+         ORDER BY username_normalized ASC
+         LIMIT ?3`,
+      ).bind(query, currentUserId, limit)
+    : env.DB.prepare(
+        `SELECT * FROM users
+         WHERE username_normalized LIKE ?1 AND id <> ?2
+         ORDER BY username_normalized ASC
+         LIMIT ?3`,
+      ).bind(`${query}%`, currentUserId, limit);
+  const result = await statement.all<UserRow>();
+  return result.results ?? [];
+}
+
 export interface InsertUserParams {
   id: string;
   email: string;

@@ -7,6 +7,7 @@ data class PikoHomeState(
     val receiveHistory: List<ReceiveHistoryItem>,
     val activeReceive: ReceiveTransferState,
     val sendPage: SendPageState,
+    val friendsState: FriendsState,
 ) {
     val receiveHistoryDescending: List<ReceiveHistoryItem>
         get() = receiveHistory.sortedByDescending { it.receivedAtEpochMillis }
@@ -81,6 +82,7 @@ data class PikoHomeState(
                 receiveHistory = receiveHistory,
                 activeReceive = ReceiveTransferState.Idle,
                 sendPage = SendPageState.initial(currentDeviceName = currentDeviceName),
+                friendsState = FriendsState.Empty,
             )
         }
 

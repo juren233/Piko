@@ -5,6 +5,10 @@ import { registerRoute } from "./routes/register.js";
 import { loginRoute } from "./routes/login.js";
 import { logoutRoute } from "./routes/logout.js";
 import { meRoute } from "./routes/me.js";
+import { usersSearchRoute } from "./routes/users-search.js";
+import { friendRequestsRoute } from "./routes/friend-requests.js";
+import { friendsRoute } from "./routes/friends.js";
+import { presenceRoute } from "./routes/presence.js";
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -28,5 +32,9 @@ app.route("/v1/auth/register", registerRoute);
 app.route("/v1/auth/login", loginRoute);
 app.route("/v1/auth/logout", logoutRoute);
 app.route("/v1/users/me", meRoute);
+app.route("/v1/users/search", usersSearchRoute);
+app.route("/v1/friends/requests", friendRequestsRoute);
+app.route("/v1/friends", friendsRoute);
+app.route("/v1/presence", presenceRoute);
 
 export default app;

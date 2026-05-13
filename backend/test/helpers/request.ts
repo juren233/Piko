@@ -10,7 +10,7 @@ export interface JsonResponse<T = unknown> {
 }
 
 export async function call<T = unknown>(
-  method: "GET" | "POST",
+  method: "DELETE" | "GET" | "POST",
   path: string,
   options: { body?: unknown; bearer?: string } = {},
 ): Promise<JsonResponse<T>> {

@@ -71,6 +71,64 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun friendSystemFilesAndEntryPointsAreWiredOnBothPlatforms() {
+        val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/SendPageState.kt").readText()
+        val androidHomeState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
+        val androidFriendModels = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/FriendModels.kt").readText()
+        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
+        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/SettingsScreen.kt").readText()
+        val androidLabels = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/UiLabels.kt").readText()
+        val iosModel = readIos("NativePikoModel.swift")
+        val iosSettings = readIos("NativeSettingsView.swift")
+        val iosRoot = readIos("PikoRootView.swift")
+        val iosLabels = readIos("NativeAuthLabels.swift")
+        val iosFriendModels = readIos("NativeFriendModels.swift")
+        val iosFriendApi = readIos("NativeFriendApiClient.swift")
+        val iosFriendStore = readIos("NativeFriendStore.swift")
+        val iosFriendsView = readIos("NativeFriendsView.swift")
+        val iosFriendRequestsView = readIos("NativeFriendRequestsView.swift")
+        val iosPresenceTicker = readIos("NativePresenceTicker.swift")
+        val iosProject = File(rootDir, "ios/Piko.xcodeproj/project.pbxproj").readText()
+
+        assertTrue("data class FriendsState" in androidFriendModels)
+        assertTrue("fun replaceFriendDevices(friends: List<FriendUser>)" in androidState)
+        assertFalse("friend-demo-cavan" in androidState)
+        assertTrue("friendsState = FriendsState.Empty" in androidHomeState)
+        assertTrue("friendsRepository.refreshAll()" in androidApp)
+        assertTrue("FriendsEntryRow" in androidSettings)
+        assertTrue("friendsEntry" in androidLabels)
+
+        assertTrue("let friendStore: NativeFriendStore" in iosModel)
+        assertTrue("NativeFriendApiClient()" in iosModel)
+        assertTrue("NativePresenceTicker" in iosModel)
+        assertTrue("friendStore.friends.map" in iosModel)
+        assertFalse("friend-laptop" in iosModel)
+        assertTrue("NavigationLink" in iosSettings)
+        assertTrue("NativeFriendsView" in iosSettings)
+        assertTrue("NavigationStack" in iosRoot)
+        assertTrue("friendsEntry" in iosLabels)
+
+        assertTrue("struct NativeFriendUser" in iosFriendModels)
+        assertTrue("enum NativeFriendRelationship" in iosFriendModels)
+        assertTrue("/v1/friends/requests" in iosFriendApi)
+        assertTrue("func refreshAll()" in iosFriendStore)
+        assertTrue("func search(query:" in iosFriendStore)
+        assertTrue("PikoCollapsingPageHeroHeader" in iosFriendsView)
+        assertTrue("NativeFriendRequestsView" in iosFriendRequestsView)
+        assertTrue("DispatchSourceTimer" in iosPresenceTicker)
+        listOf(
+            "NativeFriendModels.swift",
+            "NativeFriendApiClient.swift",
+            "NativeFriendStore.swift",
+            "NativePresenceTicker.swift",
+            "NativeFriendsView.swift",
+            "NativeFriendRequestsView.swift",
+        ).forEach { fileName ->
+            assertTrue(fileName in iosProject, "$fileName must be included in the Xcode project")
+        }
+    }
+
+    @Test
     fun iosAuthStoreIsCreatedFromMainActorIsolatedModelInit() {
         val iosModel = readIos("NativePikoModel.swift").replace("\r\n", "\n")
         val iosAuthStore = readIos("NativeAuthStore.swift")
