@@ -76,7 +76,7 @@ struct PikoRootView: View {
                     }
                     .tag(Tab.send)
 
-                NavigationStack {
+                PikoSettingsNavigationContainer {
                     NativeSettingsView(model: model) { progress in
                         settingsTopBarProgress = progress
                     }
@@ -104,6 +104,27 @@ struct PikoRootView: View {
         .onAppear {
             model.startPresence()
             model.startDiscovery()
+        }
+    }
+}
+
+private struct PikoSettingsNavigationContainer<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        if #available(iOS 16.0, *) {
+            NavigationStack {
+                content
+            }
+        } else {
+            NavigationView {
+                content
+            }
+            .navigationViewStyle(.stack)
         }
     }
 }

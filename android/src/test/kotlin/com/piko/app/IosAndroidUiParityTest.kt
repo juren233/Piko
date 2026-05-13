@@ -107,7 +107,11 @@ class IosAndroidUiParityTest {
         assertFalse("friend-laptop" in iosModel)
         assertTrue("NavigationLink" in iosSettings)
         assertTrue("NativeFriendsView" in iosSettings)
+        assertTrue("PikoSettingsNavigationContainer" in iosRoot)
+        assertTrue("if #available(iOS 16.0, *)" in iosRoot)
         assertTrue("NavigationStack" in iosRoot)
+        assertTrue("NavigationView" in iosRoot)
+        assertTrue(".navigationViewStyle(.stack)" in iosRoot)
         assertTrue("friendsEntry" in iosLabels)
 
         assertTrue("struct NativeFriendUser" in iosFriendModels)
