@@ -696,12 +696,15 @@ private class AndroidTransferClient(
         val sessionId = p2pFailure?.sessionId?.ifBlank { null } ?: "未创建/未知"
         val stage = p2pFailure?.stage ?: "unknown"
         val originalReason = p2pFailure?.originalReason ?: (cause.message ?: cause::class.java.simpleName)
+        val diagnostic = p2pFailure?.diagnostic
+        val userId = target.receiverUserId?.ifBlank { null } ?: "未知用户"
+        val deviceId = target.receiverDeviceId?.ifBlank { null } ?: "未知设备"
         val receiverPlatform = target.platformHint?.ifBlank { null } ?: "未知"
         val onlineSnapshot = if (target.online) "在线" else "离线"
         return listOf(
             "目标：${target.name}",
-            "用户：${target.receiverUserId ?: "未知用户"}",
-            "设备：${target.receiverDeviceId ?: "未知设备"}",
+            "用户：$userId",
+            "设备：$deviceId",
             "传输：$transferId",
             "会话：$sessionId",
             "路径：P2P",
@@ -710,6 +713,12 @@ private class AndroidTransferClient(
             "在线快照：$onlineSnapshot",
             "阶段：$stage",
             "原始原因：$originalReason",
+            "offer_sent：${diagnostic?.offerSent ?: false}",
+            "answer_received：${diagnostic?.answerReceived ?: false}",
+            "local_ice_count：${diagnostic?.localIceCount ?: 0}",
+            "remote_ice_count：${diagnostic?.remoteIceCount ?: 0}",
+            "ice_connection_state：${diagnostic?.iceConnectionState ?: "unknown"}",
+            "data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}",
         ).joinToString("\n")
     }
 

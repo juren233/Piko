@@ -40,6 +40,12 @@ private struct NativeP2PFailureDiagnostic {
     let stage: String
     let sessionId: String
     let originalReason: String
+    let offerSent: String
+    let answerReceived: String
+    let localIceCount: String
+    let remoteIceCount: String
+    let iceConnectionState: String
+    let dataChannelState: String
 }
 
 final class NativePikoModel: ObservableObject {
@@ -368,7 +374,13 @@ final class NativePikoModel: ObservableObject {
             "接收端：\(receiverPlatform)",
             "在线快照：\(onlineSnapshot)",
             "阶段：\(diagnostic.stage)",
-            "原始原因：\(diagnostic.originalReason)"
+            "原始原因：\(diagnostic.originalReason)",
+            "offer_sent：\(diagnostic.offerSent)",
+            "answer_received：\(diagnostic.answerReceived)",
+            "local_ice_count：\(diagnostic.localIceCount)",
+            "remote_ice_count：\(diagnostic.remoteIceCount)",
+            "ice_connection_state：\(diagnostic.iceConnectionState)",
+            "data_channel_state：\(diagnostic.dataChannelState)"
         ].joined(separator: "\n")
     }
 
@@ -383,13 +395,25 @@ final class NativePikoModel: ObservableObject {
             return NativeP2PFailureDiagnostic(
                 stage: fields["阶段"]?.nilIfBlank ?? "unknown",
                 sessionId: fields["会话"]?.nilIfBlank ?? "未创建/未知",
-                originalReason: fields["原始原因"]?.nilIfBlank ?? "\(message.nilIfBlank ?? "服务端错误")（\(code)）"
+                originalReason: fields["原始原因"]?.nilIfBlank ?? "\(message.nilIfBlank ?? "服务端错误")（\(code)）",
+                offerSent: fields["offer_sent"]?.nilIfBlank ?? "false",
+                answerReceived: fields["answer_received"]?.nilIfBlank ?? "false",
+                localIceCount: fields["local_ice_count"]?.nilIfBlank ?? "0",
+                remoteIceCount: fields["remote_ice_count"]?.nilIfBlank ?? "0",
+                iceConnectionState: fields["ice_connection_state"]?.nilIfBlank ?? "unknown",
+                dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown"
             )
         default:
             return NativeP2PFailureDiagnostic(
                 stage: "unknown",
                 sessionId: "未创建/未知",
-                originalReason: error.displayMessage
+                originalReason: error.displayMessage,
+                offerSent: "false",
+                answerReceived: "false",
+                localIceCount: "0",
+                remoteIceCount: "0",
+                iceConnectionState: "unknown",
+                dataChannelState: "unknown"
             )
         }
     }

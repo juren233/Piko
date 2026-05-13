@@ -1,6 +1,24 @@
 import Foundation
 @preconcurrency import WebKit
 
+struct NativeWebRTCDiagnostic {
+    let offerSent: Bool
+    let answerReceived: Bool
+    let localIceCount: Int
+    let remoteIceCount: Int
+    let iceConnectionState: String
+    let dataChannelState: String
+
+    static let empty = NativeWebRTCDiagnostic(
+        offerSent: false,
+        answerReceived: false,
+        localIceCount: 0,
+        remoteIceCount: 0,
+        iceConnectionState: "unknown",
+        dataChannelState: "unknown"
+    )
+}
+
 @MainActor
 final class NativeWebRTCSession: NSObject {
     private let sessionId: String
@@ -23,9 +41,26 @@ final class NativeWebRTCSession: NSObject {
     private var peerEphemeralContinuation: CheckedContinuation<String?, Never>?
     private var isReady = false
     private var isOpen = false
+    private var offerSent = false
+    private var answerReceived = false
+    private var localIceCount = 0
+    private var remoteIceCount = 0
+    private var iceConnectionState = "unknown"
+    private var dataChannelState = "unknown"
     private var peerEphemeralPublicB64: String?
     private(set) var peerAcceptSignatureB64: String?
     private(set) var peerCompletedBitmapB64: String?
+
+    var diagnosticSnapshot: NativeWebRTCDiagnostic {
+        NativeWebRTCDiagnostic(
+            offerSent: offerSent,
+            answerReceived: answerReceived,
+            localIceCount: localIceCount,
+            remoteIceCount: remoteIceCount,
+            iceConnectionState: iceConnectionState,
+            dataChannelState: dataChannelState
+        )
+    }
 
     init(
         sessionId: String,
@@ -52,7 +87,11 @@ final class NativeWebRTCSession: NSObject {
         guard await prepare() else {
             return false
         }
-        return await evaluate("createOfferer();")
+        let created = await evaluate("createOfferer();")
+        if created {
+            offerSent = true
+        }
+        return created
     }
 
     func acceptOffer(_ sdp: String) async -> Bool {
@@ -68,6 +107,7 @@ final class NativeWebRTCSession: NSObject {
         peerAcceptSignatureB64: String? = nil,
         peerCompletedBitmapB64: String? = nil
     ) async {
+        answerReceived = true
         if let peerEphemeralPublicB64 {
             self.peerEphemeralPublicB64 = peerEphemeralPublicB64
             peerEphemeralContinuation?.resume(returning: peerEphemeralPublicB64)
@@ -88,6 +128,7 @@ final class NativeWebRTCSession: NSObject {
         guard let candidate = message["candidate"] as? String else {
             return
         }
+        remoteIceCount += 1
         let sdpMid = message["sdp_mid"] as? String
         let sdpMLineIndex = message["sdp_m_line_index"] as? Int ?? 0
         _ = await evaluate(
@@ -237,9 +278,19 @@ final class NativeWebRTCSession: NSObject {
     function attachDataChannel(nextChannel) {
       channel = nextChannel;
       channel.binaryType = "arraybuffer";
-      channel.onopen = () => post({ kind: "open" });
-      channel.onclose = () => post({ kind: "close" });
-      channel.onerror = () => post({ kind: "close" });
+      post({ kind: "data_channel_state", value: channel.readyState });
+      channel.onopen = () => {
+        post({ kind: "data_channel_state", value: channel.readyState });
+        post({ kind: "open" });
+      };
+      channel.onclose = () => {
+        post({ kind: "data_channel_state", value: channel.readyState });
+        post({ kind: "close" });
+      };
+      channel.onerror = () => {
+        post({ kind: "data_channel_state", value: channel.readyState });
+        post({ kind: "close" });
+      };
       channel.onmessage = async (event) => {
         const buffer = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
         post({ kind: "binary", data: toBase64(buffer) });
@@ -248,6 +299,7 @@ final class NativeWebRTCSession: NSObject {
     function setupPeer(urls) {
       if (pc) { return true; }
       pc = new RTCPeerConnection({ iceServers: urls.map((url) => ({ urls: url })) });
+      pc.oniceconnectionstatechange = () => post({ kind: "ice_state", value: pc.iceConnectionState });
       pc.onicecandidate = (event) => {
         if (!event.candidate) { return; }
         post({
@@ -331,6 +383,14 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
         case "close":
             isOpen = false
             onClose()
+        case "ice_state":
+            if let value = body["value"] as? String {
+                iceConnectionState = value
+            }
+        case "data_channel_state":
+            if let value = body["value"] as? String {
+                dataChannelState = value
+            }
         case "binary":
             guard let base64 = body["data"] as? String,
                   let data = Data(base64Encoded: base64) else {
@@ -341,6 +401,9 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             var signal = body
             signal.removeValue(forKey: "kind")
             signal["session_id"] = sessionId
+            if signal["type"] as? String == "ice_candidate" {
+                localIceCount += 1
+            }
             if let peerKey = signal["receiver_x25519_eph_pub_b64"] as? String {
                 peerEphemeralPublicB64 = peerKey
                 peerEphemeralContinuation?.resume(returning: peerKey)

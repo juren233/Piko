@@ -266,9 +266,54 @@ class IosAndroidUiParityTest {
         assertTrue("p2pFailureMessage(target = target, transferId = transferId, cause = error)" in androidSendActions)
         assertTrue("class P2PTransferFailure(" in androidP2P)
         assertTrue("private func p2pError(" in iosP2P)
-        listOf("传输：", "会话：", "发送端：", "接收端：", "在线快照：", "阶段：", "原始原因：").forEach { field ->
+        val p2pFailureDialogFields = listOf(
+            "目标：",
+            "用户：",
+            "设备：",
+            "传输：",
+            "会话：",
+            "路径：",
+            "发送端：",
+            "接收端：",
+            "在线快照：",
+            "阶段：",
+            "原始原因：",
+            "offer_sent：",
+            "answer_received：",
+            "local_ice_count：",
+            "remote_ice_count：",
+            "ice_connection_state：",
+            "data_channel_state：",
+        )
+        p2pFailureDialogFields.forEach { field ->
             assertTrue(field in androidSendActions, "Android P2P failure dialog must include $field")
             assertTrue(field in iosModel, "iOS P2P failure dialog must include $field")
+        }
+        assertInOrder(androidSendActions, *p2pFailureDialogFields.map { "\"$it" }.toTypedArray())
+        assertInOrder(iosModel, *p2pFailureDialogFields.map { "\"$it" }.toTypedArray())
+        assertTrue("target.receiverUserId?.ifBlank { null } ?: \"未知用户\"" in androidSendActions)
+        assertTrue("target.receiverDeviceId?.ifBlank { null } ?: \"未知设备\"" in androidSendActions)
+        listOf(
+            "data class P2PTransferDiagnostic(",
+            "fun diagnosticSnapshot()",
+            "localIceCount += 1",
+            "remoteIceCount += 1",
+            "answerReceived = true",
+            "iceConnectionState = state.name",
+            "dataChannelState = channel.state().name",
+        ).forEach { marker ->
+            assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
+        }
+        listOf(
+            "struct NativeWebRTCDiagnostic",
+            "var diagnosticSnapshot",
+            "localIceCount += 1",
+            "remoteIceCount += 1",
+            "answerReceived = true",
+            "iceConnectionState = value",
+            "dataChannelState = value",
+        ).forEach { marker ->
+            assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }
         listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "send_chunk", "ack").forEach { stage ->
             assertTrue(stage in androidP2P, "Android P2P must keep failure stage $stage")

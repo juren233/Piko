@@ -42,11 +42,21 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+data class P2PTransferDiagnostic(
+    val offerSent: Boolean = false,
+    val answerReceived: Boolean = false,
+    val localIceCount: Int = 0,
+    val remoteIceCount: Int = 0,
+    val iceConnectionState: String = "unknown",
+    val dataChannelState: String = "unknown",
+)
+
 class P2PTransferFailure(
     val stage: String,
     val transferId: String,
     val sessionId: String?,
     val originalReason: String,
+    val diagnostic: P2PTransferDiagnostic = P2PTransferDiagnostic(),
     cause: Throwable? = null,
 ) : IllegalStateException(originalReason, cause)
 
@@ -143,6 +153,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = error.message ?: "WebRTC offer 创建失败",
+                diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
             )
         }
@@ -154,6 +165,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = "DATA_CHANNEL_TIMEOUT：跨网直连超时",
+                diagnostic = peer.diagnosticSnapshot(),
             )
         }
         val peerHandshake = runCatching {
@@ -166,6 +178,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = error.message ?: "接收方握手等待失败",
+                diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
             )
         }
@@ -187,6 +200,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = "接收方签名校验失败",
+                diagnostic = peer.diagnosticSnapshot(),
             )
         }
         val sessionKey = runCatching {
@@ -207,6 +221,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = error.message ?: "跨网密钥协商失败",
+                diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
             )
         }
@@ -229,6 +244,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = error.message ?: "传输清单编码失败",
+                diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
             )
         }
@@ -242,6 +258,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = error.message ?: "传输清单发送失败",
+                diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
             )
         }
@@ -288,6 +305,7 @@ class P2PTransferClient(
                                 transferId = transferId,
                                 sessionId = session.sessionId,
                                 originalReason = error.message ?: "文件分片编码失败",
+                                diagnostic = peer.diagnosticSnapshot(),
                                 cause = error,
                             )
                         }
@@ -302,6 +320,7 @@ class P2PTransferClient(
                                 transferId = transferId,
                                 sessionId = session.sessionId,
                                 originalReason = error.message ?: "文件分片发送失败",
+                                diagnostic = peer.diagnosticSnapshot(),
                                 cause = error,
                             )
                         }
@@ -325,6 +344,7 @@ class P2PTransferClient(
                     transferId = transferId,
                     sessionId = session.sessionId,
                     originalReason = error.message ?: "文件分片读取失败",
+                    diagnostic = peer.diagnosticSnapshot(),
                     cause = error,
                 )
             }
@@ -337,6 +357,7 @@ class P2PTransferClient(
                 transferId = transferId,
                 sessionId = session.sessionId,
                 originalReason = "P2P_ACK_TIMEOUT：跨网传输确认超时",
+                diagnostic = peer.diagnosticSnapshot(),
             )
         }
         channel.close()
@@ -541,6 +562,18 @@ class P2PTransferClient(
         private var peerCompletedBitmapB64: String? = null
         @Volatile
         private var hasRemoteDescription = false
+        @Volatile
+        private var offerSent = false
+        @Volatile
+        private var answerReceived = false
+        @Volatile
+        private var localIceCount = 0
+        @Volatile
+        private var remoteIceCount = 0
+        @Volatile
+        private var iceConnectionState = "unknown"
+        @Volatile
+        private var dataChannelState = "unknown"
         private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()
         private val peerConnection: PeerConnection = requireNotNull(
             factory.createPeerConnection(
@@ -552,7 +585,12 @@ class P2PTransferClient(
                     sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 },
                 object : PeerConnection.Observer by NoopPeerObserver {
+                    override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
+                        iceConnectionState = state.name
+                    }
+
                     override fun onIceCandidate(candidate: IceCandidate) {
+                        localIceCount += 1
                         signalingClient.send(
                             JSONObject()
                                 .put("type", "ice_candidate")
@@ -564,6 +602,7 @@ class P2PTransferClient(
                     }
 
                     override fun onDataChannel(channel: DataChannel) {
+                        dataChannelState = channel.state().name
                         receiver?.attach(sessionId, channel)
                     }
                 },
@@ -575,6 +614,7 @@ class P2PTransferClient(
             channel.registerObserver(object : DataChannel.Observer {
                 override fun onBufferedAmountChange(previousAmount: Long) = Unit
                 override fun onStateChange() {
+                    dataChannelState = channel.state().name
                     if (channel.state() == DataChannel.State.OPEN) openLatch.countDown()
                 }
                 override fun onMessage(buffer: DataChannel.Buffer) {
@@ -585,7 +625,7 @@ class P2PTransferClient(
             })
             val offer = createSdp { observer -> peerConnection.createOffer(observer, MediaConstraints()) }
             setLocal(offer)
-            signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
+            offerSent = signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
             return channel
         }
 
@@ -606,6 +646,7 @@ class P2PTransferClient(
         }
 
         fun acceptAnswer(message: JSONObject) {
+            answerReceived = true
             peerEphemeralPublicB64 = message.optString("receiver_x25519_eph_pub_b64").takeIf { it.isNotBlank() }
             peerAcceptSignatureB64 = message.optString("receiver_accept_signature_b64").takeIf { it.isNotBlank() }
             peerCompletedBitmapB64 = message.optString("completed_chunks_bitmap_b64").takeIf { it.isNotBlank() }
@@ -620,6 +661,7 @@ class P2PTransferClient(
                 message.optInt("sdp_m_line_index"),
                 message.getString("candidate"),
             )
+            remoteIceCount += 1
             if (!hasRemoteDescription) {
                 pendingIceCandidates.add(candidate)
                 if (hasRemoteDescription) {
@@ -640,6 +682,16 @@ class P2PTransferClient(
                 completedChunks = TransferProgressStore.decodeCompletedBitmap(peerCompletedBitmapB64),
             )
         }
+
+        fun diagnosticSnapshot(): P2PTransferDiagnostic =
+            P2PTransferDiagnostic(
+                offerSent = offerSent,
+                answerReceived = answerReceived,
+                localIceCount = localIceCount,
+                remoteIceCount = remoteIceCount,
+                iceConnectionState = iceConnectionState,
+                dataChannelState = dataChannelState,
+            )
 
         fun close() {
             pendingIceCandidates.clear()
