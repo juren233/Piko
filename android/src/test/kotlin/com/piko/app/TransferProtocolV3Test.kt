@@ -5,7 +5,6 @@ import com.piko.app.domain.TransferProtocolV3
 import com.piko.app.domain.TransferV3Frame
 import com.piko.app.domain.TransferV3KeyAgreementRole
 import com.piko.app.domain.TransferV3ManifestInput
-import java.security.KeyPairGenerator
 import java.util.Base64
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -114,8 +113,8 @@ class TransferProtocolV3Test {
 
     @Test
     fun inviteAndAcceptSignaturesRejectTampering() {
-        val senderSigning = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
-        val receiverSigning = KeyPairGenerator.getInstance("Ed25519").generateKeyPair()
+        val senderSigning = TransferProtocolV3.generateSigningKeyPair()
+        val receiverSigning = TransferProtocolV3.generateSigningKeyPair()
         val senderEphemeral = TransferProtocolV3.generateEphemeralKeyPair()
         val receiverEphemeral = TransferProtocolV3.generateEphemeralKeyPair()
         val manifestHashB64 = TransferProtocolV3.sha256(byteArrayOf(1, 2, 3)).base64()

@@ -5,9 +5,12 @@ import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
 import java.security.KeyFactory
+import java.security.KeyPair
 import java.security.KeyPairGenerator
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.security.Signature
+import java.security.spec.NamedParameterSpec
 import java.security.spec.PKCS8EncodedKeySpec
 import java.security.spec.X509EncodedKeySpec
 import java.util.Base64
@@ -16,6 +19,7 @@ import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
+import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 object TransferProtocolV3 {
     const val chunkSize: Int = 64 * 1024
@@ -31,14 +35,19 @@ object TransferProtocolV3 {
     private val ed25519X509Prefix = byteArrayOf(
         0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x03, 0x21, 0x00,
     )
+    private val curveProvider by lazy { BouncyCastleProvider() }
 
     fun generateEphemeralKeyPair(): TransferV3EphemeralKeyPair {
-        val keyPair = KeyPairGenerator.getInstance("X25519").generateKeyPair()
+        val keyPair = generateAgreementKeyPair()
         return TransferV3EphemeralKeyPair(
             privateKeyPkcs8B64 = keyPair.private.encoded.base64(),
             publicKeyB64 = keyPair.public.encoded.takeLast(32).toByteArray().base64(),
         )
     }
+
+    fun generateSigningKeyPair(): KeyPair = generateCurveKeyPair("Ed25519")
+
+    fun generateAgreementKeyPair(): KeyPair = generateCurveKeyPair("X25519")
 
     fun deriveSessionKey(
         sessionId: String,
@@ -331,10 +340,10 @@ object TransferProtocolV3 {
         }
 
     private fun x25519(privateKeyPkcs8B64: String, peerPublicKeyB64: String): ByteArray {
-        val keyFactory = KeyFactory.getInstance("X25519")
+        val keyFactory = KeyFactory.getInstance("X25519", curveProvider)
         val privateKey = keyFactory.generatePrivate(PKCS8EncodedKeySpec(privateKeyPkcs8B64.decodeBase64()))
         val peerPublic = keyFactory.generatePublic(X509EncodedKeySpec(x25519X509Prefix + peerPublicKeyB64.decodeBase64()))
-        return KeyAgreement.getInstance("X25519").run {
+        return KeyAgreement.getInstance("X25519", curveProvider).run {
             init(privateKey)
             doPhase(peerPublic, true)
             generateSecret()
@@ -342,8 +351,8 @@ object TransferProtocolV3 {
     }
 
     private fun signEd25519(privateKeyPkcs8B64: String, payload: ByteArray): ByteArray {
-        val privateKey = KeyFactory.getInstance("Ed25519").generatePrivate(PKCS8EncodedKeySpec(privateKeyPkcs8B64.decodeBase64()))
-        return Signature.getInstance("Ed25519").run {
+        val privateKey = KeyFactory.getInstance("Ed25519", curveProvider).generatePrivate(PKCS8EncodedKeySpec(privateKeyPkcs8B64.decodeBase64()))
+        return Signature.getInstance("Ed25519", curveProvider).run {
             initSign(privateKey)
             update(payload)
             sign()
@@ -351,13 +360,18 @@ object TransferProtocolV3 {
     }
 
     private fun verifyEd25519(publicKeyB64: String, payload: ByteArray, signature: ByteArray): Boolean {
-        val publicKey = KeyFactory.getInstance("Ed25519").generatePublic(X509EncodedKeySpec(ed25519X509Prefix + publicKeyB64.decodeBase64()))
-        return Signature.getInstance("Ed25519").run {
+        val publicKey = KeyFactory.getInstance("Ed25519", curveProvider).generatePublic(X509EncodedKeySpec(ed25519X509Prefix + publicKeyB64.decodeBase64()))
+        return Signature.getInstance("Ed25519", curveProvider).run {
             initVerify(publicKey)
             update(payload)
             verify(signature)
         }
     }
+
+    private fun generateCurveKeyPair(algorithm: String): KeyPair =
+        KeyPairGenerator.getInstance(algorithm, curveProvider)
+            .apply { initialize(NamedParameterSpec(algorithm), SecureRandom()) }
+            .generateKeyPair()
 
     private fun inviteSignaturePayload(
         transferId: String,

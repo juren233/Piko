@@ -4,8 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import java.security.KeyPair
-import java.security.KeyPairGenerator
+import com.piko.app.domain.TransferProtocolV3
 import java.security.SecureRandom
 import java.util.Base64
 
@@ -24,8 +23,8 @@ class DeviceIdentityStore private constructor(
         val existing = load()
         if (existing != null) return existing
 
-        val ed25519 = generateKeyPair("Ed25519")
-        val x25519 = generateKeyPair("X25519")
+        val ed25519 = TransferProtocolV3.generateSigningKeyPair()
+        val x25519 = TransferProtocolV3.generateAgreementKeyPair()
         val identity = DeviceIdentity(
             deviceId = newUlidLikeId(),
             ed25519PublicB64 = ed25519.public.encoded.takeLast(32).toByteArray().base64(),
@@ -75,8 +74,6 @@ class DeviceIdentityStore private constructor(
         }
     }
 }
-
-private fun generateKeyPair(algorithm: String): KeyPair = KeyPairGenerator.getInstance(algorithm).generateKeyPair()
 
 private fun ByteArray.base64(): String = Base64.getEncoder().encodeToString(this)
 
