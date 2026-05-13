@@ -38,6 +38,7 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -384,6 +385,9 @@ class P2PTransferClient(
         private var peerAcceptSignatureB64: String? = null
         @Volatile
         private var peerCompletedBitmapB64: String? = null
+        @Volatile
+        private var hasRemoteDescription = false
+        private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()
         private val peerConnection: PeerConnection = requireNotNull(
             factory.createPeerConnection(
                 PeerConnection.RTCConfiguration(
@@ -433,6 +437,7 @@ class P2PTransferClient(
 
         fun acceptOffer(sdp: String) {
             setRemote(SessionDescription(SessionDescription.Type.OFFER, sdp))
+            flushPendingIceCandidates()
             val answer = createSdp { observer -> peerConnection.createAnswer(observer, MediaConstraints()) }
             setLocal(answer)
             signalingClient.send(
@@ -452,16 +457,23 @@ class P2PTransferClient(
             peerCompletedBitmapB64 = message.optString("completed_chunks_bitmap_b64").takeIf { it.isNotBlank() }
             peerEphemeralLatch.countDown()
             setRemote(SessionDescription(SessionDescription.Type.ANSWER, message.getString("sdp")))
+            flushPendingIceCandidates()
         }
 
         fun addCandidate(message: JSONObject) {
-            peerConnection.addIceCandidate(
-                IceCandidate(
-                    message.optString("sdp_mid"),
-                    message.optInt("sdp_m_line_index"),
-                    message.getString("candidate"),
-                ),
+            val candidate = IceCandidate(
+                message.optString("sdp_mid"),
+                message.optInt("sdp_m_line_index"),
+                message.getString("candidate"),
             )
+            if (!hasRemoteDescription) {
+                pendingIceCandidates.add(candidate)
+                if (hasRemoteDescription) {
+                    flushPendingIceCandidates()
+                }
+                return
+            }
+            peerConnection.addIceCandidate(candidate)
         }
 
         fun awaitOpen(): Boolean = openLatch.await(15, TimeUnit.SECONDS)
@@ -476,8 +488,16 @@ class P2PTransferClient(
         }
 
         fun close() {
+            pendingIceCandidates.clear()
             peerConnection.close()
             peerConnection.dispose()
+        }
+
+        private fun flushPendingIceCandidates() {
+            while (true) {
+                val candidate = pendingIceCandidates.poll() ?: return
+                peerConnection.addIceCandidate(candidate)
+            }
         }
 
         private fun createSdp(block: (SdpObserver) -> Unit): SessionDescription {
@@ -496,6 +516,7 @@ class P2PTransferClient(
             val observer = BlockingSdpObserver()
             peerConnection.setRemoteDescription(observer, description)
             observer.awaitSet()
+            hasRemoteDescription = true
         }
     }
 }

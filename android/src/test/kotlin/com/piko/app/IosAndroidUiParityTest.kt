@@ -106,6 +106,12 @@ class IosAndroidUiParityTest {
         assertTrue("@MainActor\n    var friendDevices: [NativeSendDevice]" in iosModel)
         assertTrue("friendStore.friendDevices.values.flatMap" in iosModel)
         assertTrue("@MainActor\n    func startPresence()" in iosModel)
+        assertInOrder(
+            iosModel,
+            "@MainActor\n    func startPresence()",
+            "_ = p2pTransferClient",
+            "signalingClient.connect(token: token, deviceId: identity.deviceId)",
+        )
         assertFalse("friend-laptop" in iosModel)
         assertTrue("NavigationLink" in iosSettings)
         assertTrue("NativeFriendsView" in iosSettings)
@@ -172,6 +178,19 @@ class IosAndroidUiParityTest {
         assertTrue("fun acceptReceiveTransfer(transferId: String)" in androidP2P)
         assertTrue("TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)" in androidP2P)
         assertTrue("sha256File(tempFile).contentEquals(file.fileHash)" in androidP2P)
+        assertTrue("private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()" in androidP2P)
+        assertInOrder(
+            androidP2P,
+            "fun acceptOffer(sdp: String)",
+            "setRemote(SessionDescription(SessionDescription.Type.OFFER, sdp))",
+            "flushPendingIceCandidates()",
+        )
+        assertInOrder(
+            androidP2P,
+            "fun addCandidate(message: JSONObject)",
+            "if (!hasRemoteDescription)",
+            "pendingIceCandidates.add(candidate)",
+        )
         assertTrue("KeyAgreement.getInstance(\"X25519\", curveProvider)" in androidTransferV3)
         assertTrue("hkdfSha256(" in androidTransferV3)
         assertTrue("Signature.getInstance(\"Ed25519\", curveProvider)" in androidTransferV3)
@@ -191,6 +210,19 @@ class IosAndroidUiParityTest {
         assertTrue("NativeWebRTCSession" in iosWebRTC)
         assertTrue("new RTCPeerConnection" in iosWebRTC)
         assertTrue("pc.createDataChannel(\"piko-v3\"" in iosWebRTC)
+        assertTrue("const pendingIceCandidates = []" in iosWebRTC)
+        assertInOrder(
+            iosWebRTC,
+            "async function acceptAnswer(sdp)",
+            "await pc.setRemoteDescription({ type: \"answer\", sdp });",
+            "await flushPendingIceCandidates();",
+        )
+        assertInOrder(
+            iosWebRTC,
+            "async function addCandidate(candidate, sdpMid, sdpMLineIndex)",
+            "if (!pc.remoteDescription)",
+            "pendingIceCandidates.push(iceCandidate);",
+        )
         assertTrue("NativeTransferProtocolV3.encodeManifest(" in iosP2P)
         assertTrue("NativeTransferProtocolV3.encodeChunk(" in iosP2P)
         assertTrue("NativeTransferProtocolV3.generateEphemeralKeyPair()" in iosP2P)

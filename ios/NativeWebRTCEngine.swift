@@ -216,6 +216,7 @@ final class NativeWebRTCSession: NSObject {
     const native = window.webkit.messageHandlers.pikoWebRTC;
     let pc = null;
     let channel = null;
+    const pendingIceCandidates = [];
     function post(message) { native.postMessage(message); }
     function toBase64(buffer) {
       let binary = "";
@@ -260,6 +261,11 @@ final class NativeWebRTCSession: NSObject {
       pc.ondatachannel = (event) => attachDataChannel(event.channel);
       return true;
     }
+    async function flushPendingIceCandidates() {
+      while (pendingIceCandidates.length > 0) {
+        await pc.addIceCandidate(pendingIceCandidates.shift());
+      }
+    }
     async function createOfferer() {
       attachDataChannel(pc.createDataChannel("piko-v3", { ordered: true }));
       const offer = await pc.createOffer();
@@ -269,6 +275,7 @@ final class NativeWebRTCSession: NSObject {
     }
     async function acceptOffer(sdp, answerExtras) {
       await pc.setRemoteDescription({ type: "offer", sdp });
+      await flushPendingIceCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       post({ kind: "signal", type: "answer", sdp: answer.sdp, ...answerExtras });
@@ -276,10 +283,16 @@ final class NativeWebRTCSession: NSObject {
     }
     async function acceptAnswer(sdp) {
       await pc.setRemoteDescription({ type: "answer", sdp });
+      await flushPendingIceCandidates();
       return true;
     }
     async function addCandidate(candidate, sdpMid, sdpMLineIndex) {
-      await pc.addIceCandidate({ candidate, sdpMid, sdpMLineIndex });
+      const iceCandidate = { candidate, sdpMid, sdpMLineIndex };
+      if (!pc.remoteDescription) {
+        pendingIceCandidates.push(iceCandidate);
+        return true;
+      }
+      await pc.addIceCandidate(iceCandidate);
       return true;
     }
     function sendBase64(value) {

@@ -211,6 +211,7 @@ final class NativePikoModel: ObservableObject {
         if !lanDiscovery.startPresence() {
             transferLabel = "接收服务启动失败"
         }
+        _ = p2pTransferClient
         if let token = authStore.currentToken() {
             Task {
                 do {
