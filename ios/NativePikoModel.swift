@@ -107,6 +107,7 @@ final class NativePikoModel: ObservableObject {
 
     var myDevices: [NativeSendDevice] { [] }
 
+    @MainActor
     var friendDevices: [NativeSendDevice] {
         friendStore.friends.map { friend in
             NativeSendDevice(
@@ -161,6 +162,7 @@ final class NativePikoModel: ObservableObject {
         activeReceive = snapshot.activeReceive
     }
 
+    @MainActor
     func startPresence() {
         if !lanDiscovery.startPresence() {
             transferLabel = "接收服务启动失败"
