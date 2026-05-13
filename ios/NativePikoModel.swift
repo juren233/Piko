@@ -60,6 +60,7 @@ final class NativePikoModel: ObservableObject {
     private let deviceApiClient = NativeDeviceApiClient()
     private let signalingClient = NativeSignalingClient()
     private let receiveFileStore = NativeReceiveFileStore()
+    @MainActor
     private lazy var p2pTransferClient = NativeP2PTransferClient(
         authStore: authStore,
         identityStore: deviceIdentityStore,
@@ -88,7 +89,11 @@ final class NativePikoModel: ObservableObject {
         nickname: { [unowned self] in self.nickname },
         localInfo: { [unowned self] port in self.localSendDeviceInfo(port: port) },
         onIncomingConnection: { [weak self] connection in self?.receiveIncoming(connection) },
-        onDevicesChanged: { [weak self] devices in self?.applyDiscoveredDevices(devices) },
+        onDevicesChanged: { [weak self] devices in
+            Task { @MainActor in
+                self?.applyDiscoveredDevices(devices)
+            }
+        },
         onDiscoveryFailed: { [weak self] in self?.discoveryLabel = "搜索失败" }
     )
     private lazy var transferStateMachine = NativeTransferStateMachine { [weak self] snapshot in
@@ -116,6 +121,7 @@ final class NativePikoModel: ObservableObject {
         nickname.fullName
     }
 
+    @MainActor
     var canSend: Bool {
         !selectedSendTargets.isEmpty && !selectedItems.isEmpty && transferProgress == nil
     }
@@ -124,6 +130,7 @@ final class NativePikoModel: ObservableObject {
         items.filter { selectedItemIds.contains($0.id) }
     }
 
+    @MainActor
     private var selectedSendTargets: [NativeSendDevice] {
         (lanDevices + friendDevices).filter { selectedDeviceIds.contains($0.id) && $0.isConnectable }
     }
@@ -179,6 +186,7 @@ final class NativePikoModel: ObservableObject {
         selectedItems.first?.fileType ?? .other
     }
 
+    @MainActor
     private func applyDiscoveredDevices(_ devices: [NativeSendDevice]) {
         lanDevices = devices
         selectedDeviceIds = selectedDeviceIds.intersection(Set((devices + friendDevices).map(\.id)))
@@ -265,6 +273,7 @@ final class NativePikoModel: ObservableObject {
         UserDefaults.standard.set(location.rawValue, forKey: NativeMediaSaveLocation.userDefaultsKey)
     }
 
+    @MainActor
     func sendSelectedItems() {
         let targets = selectedSendTargets
         let payloadItems = selectedItems
@@ -333,6 +342,7 @@ final class NativePikoModel: ObservableObject {
         transferStateMachine.cancelSend()
     }
 
+    @MainActor
     func cancelReceiveTransfer() {
         if let activeReceive {
             p2pTransferClient.cancelReceiveTransfer(activeReceive.id)
@@ -340,6 +350,7 @@ final class NativePikoModel: ObservableObject {
         transferStateMachine.cancelReceive()
     }
 
+    @MainActor
     func acceptReceiveTransfer() {
         guard let activeReceive else {
             return
