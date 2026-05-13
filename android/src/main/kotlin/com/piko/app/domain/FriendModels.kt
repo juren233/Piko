@@ -15,6 +15,21 @@ data class FriendUser(
         get() = if (online) "在线" else "离线"
 }
 
+data class FriendDevice(
+    val ownerUserId: String,
+    val deviceId: String,
+    val platform: String,
+    val deviceName: String,
+    val ed25519PubB64: String,
+    val x25519PubB64: String,
+    val appVersion: String?,
+    val lastSeenAt: Long?,
+    val online: Boolean,
+) {
+    val presenceLabel: String
+        get() = if (online) "在线" else "离线"
+}
+
 data class FriendRequest(
     val id: String,
     val direction: FriendRequestDirection,
@@ -50,6 +65,7 @@ data class FriendSearchResult(
 
 data class FriendsState(
     val friends: List<FriendUser>,
+    val friendDevices: Map<String, List<FriendDevice>>,
     val incoming: List<FriendRequest>,
     val outgoing: List<FriendRequest>,
     val searchResults: List<FriendSearchResult>,
@@ -93,6 +109,7 @@ data class FriendsState(
     companion object {
         val Empty = FriendsState(
             friends = emptyList(),
+            friendDevices = emptyMap(),
             incoming = emptyList(),
             outgoing = emptyList(),
             searchResults = emptyList(),

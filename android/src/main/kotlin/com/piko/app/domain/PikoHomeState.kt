@@ -25,6 +25,7 @@ data class PikoHomeState(
                     files = event.files,
                     totalBytes = event.totalBytes,
                     completedBytes = 0L,
+                    requiresConfirmation = event.requiresConfirmation,
                 ),
             )
 
@@ -226,12 +227,17 @@ data class ReceiveTransferState(
     val files: List<ReceiveHistoryFile>,
     val totalBytes: Long,
     val completedBytes: Long,
+    val requiresConfirmation: Boolean = false,
 ) {
     val progress: Float
         get() = if (totalBytes <= 0L) 0f else (completedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
 
     val title: String
-        get() = "正在从${senderName.visibleDeviceName}接收${files.size}个文件"
+        get() = if (requiresConfirmation) {
+            "${senderName.visibleDeviceName}想发送${files.size}个文件"
+        } else {
+            "正在从${senderName.visibleDeviceName}接收${files.size}个文件"
+        }
 
     val subtitle: String
         get() = "${completedBytes.sizeLabel}/${totalBytes.sizeLabel}"
@@ -246,6 +252,7 @@ data class ReceiveTransferState(
             files = emptyList(),
             totalBytes = 0L,
             completedBytes = 0L,
+            requiresConfirmation = false,
         )
     }
 }
@@ -258,6 +265,7 @@ sealed class ReceiveTransferEvent {
         val senderName: String,
         val files: List<ReceiveHistoryFile>,
         val totalBytes: Long,
+        val requiresConfirmation: Boolean = false,
     ) : ReceiveTransferEvent()
 
     data class Progress(

@@ -91,7 +91,7 @@ class IosAndroidUiParityTest {
         val iosProject = File(rootDir, "ios/Piko.xcodeproj/project.pbxproj").readText()
 
         assertTrue("data class FriendsState" in androidFriendModels)
-        assertTrue("fun replaceFriendDevices(friends: List<FriendUser>)" in androidState)
+        assertTrue("fun replaceFriendDevices(devices: List<FriendDevice>)" in androidState)
         assertFalse("friend-demo-cavan" in androidState)
         assertTrue("friendsState = FriendsState.Empty" in androidHomeState)
         assertTrue("friendsRepository.refreshAll()" in androidApp)
@@ -102,7 +102,7 @@ class IosAndroidUiParityTest {
         assertTrue("NativeFriendApiClient()" in iosModel)
         assertTrue("NativePresenceTicker" in iosModel)
         assertTrue("@MainActor\n    var friendDevices: [NativeSendDevice]" in iosModel)
-        assertTrue("friendStore.friends.map" in iosModel)
+        assertTrue("friendStore.friendDevices.values.flatMap" in iosModel)
         assertTrue("@MainActor\n    func startPresence()" in iosModel)
         assertFalse("friend-laptop" in iosModel)
         assertTrue("NavigationLink" in iosSettings)
@@ -129,9 +129,92 @@ class IosAndroidUiParityTest {
             "NativePresenceTicker.swift",
             "NativeFriendsView.swift",
             "NativeFriendRequestsView.swift",
+            "NativeDeviceIdentity.swift",
+            "NativeDeviceApiClient.swift",
+            "NativeTransferSessionApiClient.swift",
+            "NativeP2PTransferClient.swift",
+            "NativeSignalingClient.swift",
+            "NativeWebRTCEngine.swift",
+            "NativeTransferProtocolV3.swift",
         ).forEach { fileName ->
             assertTrue(fileName in iosProject, "$fileName must be included in the Xcode project")
         }
+        val androidSignaling = readAndroid("transport/SignalingWebSocketClient.kt")
+        val androidP2P = readAndroid("transport/P2PTransferClient.kt")
+        val androidProgressStore = readAndroid("data/TransferProgressStore.kt")
+        val androidTransferV3 = readAndroid("domain/TransferProtocolV3.kt")
+        val androidSendActions = readAndroid("platform/AndroidSendPlatformActions.kt")
+        val iosSignaling = readIos("NativeSignalingClient.swift")
+        val iosP2P = readIos("NativeP2PTransferClient.swift")
+        val iosWebRTC = readIos("NativeWebRTCEngine.swift")
+        val iosTransferV3 = readIos("NativeTransferProtocolV3.swift")
+        assertTrue(androidSignaling.contains("/v1/signaling/ws?device_id="))
+        assertTrue("fun addListener(listener: (JSONObject) -> Unit)" in androidSignaling)
+        assertTrue("PeerConnectionFactory" in androidP2P)
+        assertTrue("createDataChannel(\"piko-v3\"" in androidP2P)
+        assertTrue("TransferProtocolV3.encodeManifest(" in androidP2P)
+        assertTrue("TransferProtocolV3.encodeChunk(" in androidP2P)
+        assertTrue("TransferProtocolV3.generateEphemeralKeyPair()" in androidP2P)
+        assertTrue("receiver_x25519_eph_pub_b64" in androidP2P)
+        assertTrue("sender_invite_signature_b64" in androidP2P)
+        assertTrue("receiver_accept_signature_b64" in androidP2P)
+        assertTrue("completed_chunks_bitmap_b64" in androidP2P)
+        assertTrue("TransferProgressStore.decodeCompletedBitmap" in androidP2P)
+        assertTrue("sanitizeCompletedChunks" in androidProgressStore)
+        assertTrue("partFile.hasChunk" in androidProgressStore)
+        assertTrue("autoAccept = message.optBoolean(\"same_account\", false)" in androidP2P)
+        assertTrue("requiresConfirmation = !autoAccept" in androidP2P)
+        assertTrue("verifyInviteSignature(" in androidP2P)
+        assertTrue("verifyAcceptSignature(" in androidP2P)
+        assertTrue("items.toManifestInputs(context.contentResolver)" in androidP2P)
+        assertTrue("completedChunks = mutableMapOf<Int, BooleanArray>()" in androidP2P)
+        assertTrue("fun acceptReceiveTransfer(transferId: String)" in androidP2P)
+        assertTrue("TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)" in androidP2P)
+        assertTrue("sha256File(tempFile).contentEquals(file.fileHash)" in androidP2P)
+        assertTrue("KeyAgreement.getInstance(\"X25519\")" in androidTransferV3)
+        assertTrue("hkdfSha256(" in androidTransferV3)
+        assertTrue("Signature.getInstance(\"Ed25519\")" in androidTransferV3)
+        assertTrue("enum class TransferV3KeyAgreementRole" in androidTransferV3)
+        assertTrue("AES/GCM/NoPadding" in androidTransferV3)
+        assertTrue("frameAck = 0x04" in androidTransferV3)
+        assertTrue("data class TransferV3ManifestInput" in androidTransferV3)
+        assertTrue("p2pTransferClient.send(" in androidSendActions)
+        assertFalse("WebRTC DataChannel 尚未接入" in androidSendActions)
+        assertTrue(iosSignaling.contains("/v1/signaling/ws"))
+        assertTrue("NativeWebRTCSession" in iosWebRTC)
+        assertTrue("new RTCPeerConnection" in iosWebRTC)
+        assertTrue("pc.createDataChannel(\"piko-v3\"" in iosWebRTC)
+        assertTrue("NativeTransferProtocolV3.encodeManifest(" in iosP2P)
+        assertTrue("NativeTransferProtocolV3.encodeChunk(" in iosP2P)
+        assertTrue("NativeTransferProtocolV3.generateEphemeralKeyPair()" in iosP2P)
+        assertTrue("receiver_x25519_eph_pub_b64" in iosP2P)
+        assertTrue("sender_invite_signature_b64" in iosP2P)
+        assertTrue("receiver_accept_signature_b64" in iosP2P)
+        assertTrue("completed_chunks_bitmap_b64" in iosP2P)
+        assertTrue("NativeTransferProgressStore.decodeCompletedBitmap" in iosP2P)
+        assertTrue("sanitizeCompletedChunks" in iosP2P)
+        assertTrue("chunkData(transferId: transferId, fileIndex: index, chunkIndex: chunkIndex)?.count" in iosP2P)
+        assertTrue("autoAccept: (message[\"same_account\"] as? Bool) ?? false" in iosP2P)
+        assertTrue("publishReceiveState(requiresConfirmation: !autoAccept)" in iosP2P)
+        assertTrue("verifyInviteSignature(" in iosP2P)
+        assertTrue("verifyAcceptSignature(" in iosP2P)
+        assertTrue("waitForPeerEphemeralPublic(seconds: 10)" in iosP2P)
+        assertTrue("items.toManifestInputs()" in iosP2P)
+        assertTrue("private var completedChunks: [Int: Set<Int>] = [:]" in iosP2P)
+        assertTrue("func acceptReceiveTransfer(_ transferId: String)" in iosP2P)
+        assertTrue("NativeTransferProtocolV3.encodeRetry(fileIndex: fileIndex, chunkIndex: chunkIndex)" in iosP2P)
+        assertTrue("SHA256.hashData(payload) == file.fileHash" in iosP2P)
+        assertTrue("Curve25519.KeyAgreement.PrivateKey()" in iosTransferV3)
+        assertTrue("HKDF<SHA256>.deriveKey(" in iosTransferV3)
+        assertTrue("Curve25519.Signing.PrivateKey" in iosTransferV3)
+        assertTrue("enum NativeTransferV3KeyAgreementRole" in iosTransferV3)
+        assertTrue("AES.GCM.seal" in iosTransferV3)
+        assertTrue("frameAck = 0x04" in iosTransferV3)
+        assertTrue("struct NativeTransferV3ManifestInput" in iosTransferV3)
+        assertTrue("p2pTransferClient.send(" in iosModel)
+        assertFalse("WebRTC DataChannel 尚未接入" in iosModel)
+        assertTrue("signalingClient.connect(token, identity.deviceId)" in androidApp)
+        assertTrue("signalingClient.connect(token: token, deviceId: identity.deviceId)" in iosModel)
     }
 
     @Test
@@ -753,6 +836,9 @@ class IosAndroidUiParityTest {
 
     private fun readIos(name: String): String =
         File(rootDir, "ios/$name").readText()
+
+    private fun readAndroid(name: String): String =
+        File(rootDir, "android/src/main/kotlin/com/piko/app/$name").readText()
 
     private fun assertInOrder(source: String, vararg snippets: String) {
         var cursor = 0

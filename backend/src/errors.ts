@@ -17,6 +17,14 @@ export type AppErrorCode =
   | "FRIEND_REQUEST_NOT_FOUND"
   | "FRIEND_REQUEST_FORBIDDEN"
   | "INVALID_SEARCH_QUERY"
+  | "DEVICE_NOT_FOUND"
+  | "DEVICE_NOT_OWNED"
+  | "DEVICE_OFFLINE"
+  | "INVALID_PUBLIC_KEY"
+  | "TRANSFER_SESSION_NOT_FOUND"
+  | "TRANSFER_SESSION_FORBIDDEN"
+  | "TRANSFER_PEER_NOT_FRIEND"
+  | "SIGNALING_RATE_LIMITED"
   | "INTERNAL";
 
 const STATUS_BY_CODE: Record<AppErrorCode, number> = {
@@ -36,6 +44,14 @@ const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   FRIEND_REQUEST_NOT_FOUND: 404,
   FRIEND_REQUEST_FORBIDDEN: 403,
   INVALID_SEARCH_QUERY: 400,
+  DEVICE_NOT_FOUND: 404,
+  DEVICE_NOT_OWNED: 403,
+  DEVICE_OFFLINE: 409,
+  INVALID_PUBLIC_KEY: 400,
+  TRANSFER_SESSION_NOT_FOUND: 404,
+  TRANSFER_SESSION_FORBIDDEN: 403,
+  TRANSFER_PEER_NOT_FRIEND: 403,
+  SIGNALING_RATE_LIMITED: 429,
   INTERNAL: 500,
 };
 
@@ -56,6 +72,14 @@ const MESSAGE_BY_CODE: Record<AppErrorCode, string> = {
   FRIEND_REQUEST_NOT_FOUND: "好友申请不存在",
   FRIEND_REQUEST_FORBIDDEN: "无权操作该好友申请",
   INVALID_SEARCH_QUERY: "搜索关键字格式不合法",
+  DEVICE_NOT_FOUND: "设备不存在",
+  DEVICE_NOT_OWNED: "无权操作该设备",
+  DEVICE_OFFLINE: "目标设备当前不在线",
+  INVALID_PUBLIC_KEY: "公钥格式不合法",
+  TRANSFER_SESSION_NOT_FOUND: "传输会话不存在",
+  TRANSFER_SESSION_FORBIDDEN: "无权操作该传输会话",
+  TRANSFER_PEER_NOT_FRIEND: "双方不是好友且不属于同账号",
+  SIGNALING_RATE_LIMITED: "信令请求过于频繁",
   INTERNAL: "服务器内部错误，请稍后重试",
 };
 
@@ -73,6 +97,6 @@ export class AppError extends Error {
 export function appErrorResponse(c: Context, error: AppError): Response {
   return c.json(
     { error: { code: error.code, message: error.message } },
-    error.status as 400 | 401 | 403 | 404 | 409 | 500,
+    error.status as 400 | 401 | 403 | 404 | 409 | 429 | 500,
   );
 }

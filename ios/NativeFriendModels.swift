@@ -19,6 +19,34 @@ struct NativeFriendUser: Identifiable, Equatable {
     }
 }
 
+struct NativeFriendDevice: Identifiable, Equatable {
+    let ownerUserId: String
+    let deviceId: String
+    let platform: String
+    let deviceName: String
+    let ed25519PubB64: String
+    let x25519PubB64: String
+    let appVersion: String?
+    let lastSeenAt: Int?
+    let online: Bool
+
+    var id: String { deviceId }
+
+    var subtitle: String {
+        "\(platformLabel) · \(online ? "在线" : "离线")"
+    }
+
+    private var platformLabel: String {
+        switch platform.lowercased() {
+        case "ios": return "iOS"
+        case "android": return "Android"
+        case "macos": return "macOS"
+        case "windows": return "Windows"
+        default: return platform
+        }
+    }
+}
+
 struct NativeFriendRequest: Identifiable, Equatable {
     enum Direction {
         case incoming

@@ -28,6 +28,16 @@ struct NativeFriendApiClient {
         }
     }
 
+    func friendDevices(userId: String, token: String) async -> Result<[NativeFriendDevice], NativeAccountError> {
+        let encoded = userId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? userId
+        return await request(path: "/v1/friends/\(encoded)/devices", method: "GET", body: nil, token: token) { json in
+            guard let devices = json["devices"] as? [[String: Any]] else {
+                throw NativeAccountError.networkUnavailable
+            }
+            return try devices.map { try parseFriendDevice($0, ownerUserId: userId) }
+        }
+    }
+
     func requests(direction: NativeFriendRequest.Direction, token: String) async -> Result<[NativeFriendRequest], NativeAccountError> {
         let value = direction == .incoming ? "incoming" : "outgoing"
         return await request(path: "/v1/friends/requests?direction=\(value)", method: "GET", body: nil, token: token) { json in
@@ -174,6 +184,29 @@ private func parseFriendUser(_ json: [String: Any]) throws -> NativeFriendUser {
         online: (json["online"] as? Bool) ?? false,
         lastSeenAt: json["last_seen_at"] as? Int,
         since: (json["since"] as? Int) ?? 0
+    )
+}
+
+private func parseFriendDevice(_ json: [String: Any], ownerUserId: String) throws -> NativeFriendDevice {
+    guard
+        let deviceId = json["device_id"] as? String,
+        let platform = json["platform"] as? String,
+        let deviceName = json["device_name"] as? String,
+        let ed25519PubB64 = json["ed25519_pub_b64"] as? String,
+        let x25519PubB64 = json["x25519_pub_b64"] as? String
+    else {
+        throw NativeAccountError.networkUnavailable
+    }
+    return NativeFriendDevice(
+        ownerUserId: ownerUserId,
+        deviceId: deviceId,
+        platform: platform,
+        deviceName: deviceName,
+        ed25519PubB64: ed25519PubB64,
+        x25519PubB64: x25519PubB64,
+        appVersion: (json["app_version"] as? String)?.nilIfBlank,
+        lastSeenAt: json["last_seen_at"] as? Int,
+        online: (json["online"] as? Bool) ?? false
     )
 }
 

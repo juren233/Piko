@@ -7,6 +7,7 @@ export default defineWorkersProject(() => {
       setupFiles: ["./test/helpers/applyMigrations.ts"],
       poolOptions: {
         workers: {
+          main: "./src/index.ts",
           singleWorker: true,
           isolatedStorage: true,
           miniflare: {

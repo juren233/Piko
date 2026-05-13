@@ -149,6 +149,7 @@ private enum NativeReceiveRow {
                 ) {
                     NativeActiveReceiveRow(
                         transfer: transfer,
+                        onAccept: model.acceptReceiveTransfer,
                         onCancel: model.cancelReceiveTransfer
                     )
                 }
@@ -796,6 +797,7 @@ private struct NativeReceiveEmptyStateContent: View {
 
 private struct NativeActiveReceiveRow: View {
     let transfer: NativeReceiveTransferState
+    let onAccept: () -> Void
     let onCancel: () -> Void
 
     var body: some View {
@@ -812,6 +814,17 @@ private struct NativeActiveReceiveRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
+            }
+            if transfer.requiresConfirmation {
+                Button(action: onAccept) {
+                    Image(uiImage: LucideTabIcon.check.image)
+                        .resizable()
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(PikoPalette.accent)
+                .frame(width: 44, height: 44)
+                .fixedSize(horizontal: true, vertical: false)
             }
             Button(action: onCancel) {
                 Image(uiImage: LucideTabIcon.x.image)

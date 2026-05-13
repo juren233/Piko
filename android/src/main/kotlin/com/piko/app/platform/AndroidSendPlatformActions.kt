@@ -32,7 +32,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import com.piko.app.data.DeviceIdentityStore
 import com.piko.app.data.ReceiveMediaSaveLocation
+import com.piko.app.data.TokenStorage
 import com.piko.app.domain.ReceiveFileType
 import com.piko.app.domain.ReceiveHistoryFile
 import com.piko.app.domain.ReceiveHistoryItem
@@ -51,12 +53,16 @@ import com.piko.app.domain.SendTransferHeaderFile
 import com.piko.app.domain.SendTransferProtocol
 import com.piko.app.domain.SendTransferRequest
 import com.piko.app.domain.SendTransferStatus
+import com.piko.app.domain.SendTransportPath
 import com.piko.app.transport.AndroidLocalSendMulticast
 import com.piko.app.transport.LocalSendDeviceInfo
 import com.piko.app.transport.LocalSendHttpServer
 import com.piko.app.transport.LocalSendHttpUploadClient
+import com.piko.app.transport.P2PTransferClient
+import com.piko.app.transport.SignalingWebSocketClient
 import com.piko.app.transport.TransferTransport
 import com.piko.app.transport.TransferTransportKind
+import com.piko.app.transport.TransferSessionApiClient
 import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
@@ -82,6 +88,10 @@ private const val PIKO_PROTOCOL_VERSION = 2
 internal fun rememberAndroidSendPlatformActions(
     currentNickname: DeviceNickname,
     mediaSaveLocation: ReceiveMediaSaveLocation,
+    tokenStore: TokenStorage,
+    deviceIdentityStore: DeviceIdentityStore,
+    signalingClient: SignalingWebSocketClient,
+    apiBaseUrl: String,
     onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
 ): SendPlatformActions {
     val context = LocalContext.current
@@ -103,8 +113,16 @@ internal fun rememberAndroidSendPlatformActions(
             onReceiveTransferEvent = onReceiveTransferEvent,
         )
     }
-    val transferClient = remember(appContext, currentNickname) {
-        AndroidTransferClient(appContext, currentNickname)
+    val transferClient = remember(appContext, currentNickname, tokenStore, deviceIdentityStore, signalingClient, apiBaseUrl) {
+        AndroidTransferClient(
+            context = appContext,
+            currentNickname = currentNickname,
+            tokenStore = tokenStore,
+            deviceIdentityStore = deviceIdentityStore,
+            signalingClient = signalingClient,
+            apiBaseUrl = apiBaseUrl,
+            onReceiveTransferEvent = onReceiveTransferEvent,
+        )
     }
 
     val imagePermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
@@ -162,7 +180,11 @@ internal fun rememberAndroidSendPlatformActions(
         startTransfer = transferClient::startTransfer,
         pauseTransfer = transferClient::pauseTransfer,
         cancelTransfer = transferClient::cancelTransfer,
-        cancelReceiveTransfer = lanDiscovery::cancelReceiveTransfer,
+        acceptReceiveTransfer = transferClient::acceptReceiveTransfer,
+        cancelReceiveTransfer = { transferId ->
+            lanDiscovery.cancelReceiveTransfer(transferId)
+            transferClient.cancelReceiveTransfer(transferId)
+        },
     )
 }
 
@@ -563,10 +585,25 @@ private fun localSendDeviceInfo(
 private class AndroidTransferClient(
     private val context: Context,
     currentNickname: DeviceNickname,
+    tokenStore: TokenStorage,
+    deviceIdentityStore: DeviceIdentityStore,
+    signalingClient: SignalingWebSocketClient,
+    apiBaseUrl: String,
+    onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
 ) {
+    private val mainHandler = Handler(Looper.getMainLooper())
     private val localSendClient = LocalSendHttpUploadClient(context) {
         localSendDeviceInfo(currentNickname, port = 0)
     }
+    private val p2pTransferClient = P2PTransferClient(
+        context = context,
+        tokenStore = tokenStore,
+        identityStore = deviceIdentityStore,
+        sessionsApi = TransferSessionApiClient(apiBaseUrl),
+        signalingClient = signalingClient,
+        senderName = currentNickname.fullName,
+        onReceiveTransferEvent = { event -> mainHandler.post { onReceiveTransferEvent(event) } },
+    )
 
     @Volatile
     private var activeTransferId: String? = null
@@ -593,28 +630,41 @@ private class AndroidTransferClient(
             try {
                 request.targets.forEach { target ->
                     ensureNotStopped()
-                    completedBytes += runCatching {
-                        localSendClient.upload(
-                            target = target,
-                            items = request.items,
-                            totalCompletedBeforeTarget = completedBytes,
-                            totalBytes = request.totalBytes,
-                            transferId = transferId,
-                            callback = callback,
-                            ensureActive = ::ensureNotStopped,
-                        )
-                    }.getOrElse { error ->
-                        if (error is TransferPausedException || error is TransferCanceledException) {
-                            throw error
+                    completedBytes += when (target.transportPath) {
+                        SendTransportPath.Lan -> runCatching {
+                            localSendClient.upload(
+                                target = target,
+                                items = request.items,
+                                totalCompletedBeforeTarget = completedBytes,
+                                totalBytes = request.totalBytes,
+                                transferId = transferId,
+                                callback = callback,
+                                ensureActive = ::ensureNotStopped,
+                            )
+                        }.getOrElse { error ->
+                            if (error is TransferPausedException || error is TransferCanceledException) {
+                                throw error
+                            }
+                            sendLegacyTransfer(
+                                target = target,
+                                request = request,
+                                totalCompletedBeforeTarget = completedBytes,
+                                totalBytes = request.totalBytes,
+                                transferId = transferId,
+                                callback = callback,
+                            )
                         }
-                        sendLegacyTransfer(
-                            target = target,
-                            request = request,
-                            totalCompletedBeforeTarget = completedBytes,
-                            totalBytes = request.totalBytes,
-                            transferId = transferId,
-                            callback = callback,
-                        )
+                        SendTransportPath.P2P -> {
+                            p2pTransferClient.send(
+                                target = target,
+                                transferId = transferId,
+                                items = request.items,
+                                totalCompletedBeforeTarget = completedBytes,
+                                totalBytes = request.totalBytes,
+                                callback = callback,
+                                ensureActive = ::ensureNotStopped,
+                            )
+                        }
                     }
                 }
                 callback(SendTransferEvent.Completed(transferId))
@@ -682,6 +732,14 @@ private class AndroidTransferClient(
             requestedStop = SendTransferStatus.Canceled
             runCatching { activeSocket?.close() }
         }
+    }
+
+    fun acceptReceiveTransfer(transferId: String) {
+        p2pTransferClient.acceptReceiveTransfer(transferId)
+    }
+
+    fun cancelReceiveTransfer(transferId: String) {
+        p2pTransferClient.cancelReceiveTransfer(transferId)
     }
 
     fun cancelAll() {

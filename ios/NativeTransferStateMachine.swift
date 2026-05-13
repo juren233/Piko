@@ -75,7 +75,8 @@ final class NativeTransferStateMachine {
             senderName: activeReceive.senderName,
             files: activeReceive.files,
             totalBytes: activeReceive.totalBytes,
-            receivedBytes: min(activeReceive.receivedBytes + receivedBytes, activeReceive.totalBytes)
+            receivedBytes: min(activeReceive.receivedBytes + receivedBytes, activeReceive.totalBytes),
+            requiresConfirmation: activeReceive.requiresConfirmation
         )
         publish()
     }

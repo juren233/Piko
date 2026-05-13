@@ -13,5 +13,13 @@ migrations_dir = "migrations"
 binding = "SESSIONS"
 id = "37b56f38e5804f22b75dc64a558aaf3c"
 
+[[durable_objects.bindings]]
+name = "SIGNALING_HUB"
+class_name = "SignalingHub"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["SignalingHub"]
+
 [observability]
 enabled = true

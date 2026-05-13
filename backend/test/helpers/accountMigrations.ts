@@ -54,4 +54,24 @@ export const testAccountMigrations: D1Migration[] = [
       "CREATE INDEX ix_friendships_user_b ON friendships(user_b_id) WHERE deleted_at IS NULL",
     ],
   },
+  {
+    name: "0003_device_keys_and_signaling.sql",
+    queries: [
+      `CREATE TABLE device_keys (
+  device_id        TEXT PRIMARY KEY,
+  user_id          TEXT NOT NULL,
+  platform         TEXT NOT NULL,
+  device_name      TEXT NOT NULL,
+  ed25519_pub      BLOB NOT NULL,
+  x25519_pub       BLOB NOT NULL,
+  app_version      TEXT,
+  created_at       INTEGER NOT NULL,
+  last_seen_at     INTEGER,
+  revoked_at       INTEGER,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+)`,
+      `CREATE INDEX ix_device_keys_user_active
+  ON device_keys(user_id) WHERE revoked_at IS NULL`,
+    ],
+  },
 ];

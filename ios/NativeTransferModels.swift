@@ -130,9 +130,13 @@ struct NativeReceiveTransferState: Identifiable {
     let files: [NativeTransferFileMetadata]
     let totalBytes: Int
     let receivedBytes: Int
+    let requiresConfirmation: Bool
 
     var title: String {
-        "正在从\(senderName.visibleDeviceName)接收\(files.count)个文件"
+        if requiresConfirmation {
+            return "\(senderName.visibleDeviceName)想发送\(files.count)个文件"
+        }
+        return "正在从\(senderName.visibleDeviceName)接收\(files.count)个文件"
     }
 
     var subtitle: String {

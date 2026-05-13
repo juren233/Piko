@@ -2,6 +2,7 @@ package com.piko.app.transport
 
 import com.piko.app.domain.AccountError
 import com.piko.app.domain.AccountResult
+import com.piko.app.domain.FriendDevice
 import com.piko.app.domain.FriendRelationship
 import com.piko.app.domain.FriendRequest
 import com.piko.app.domain.FriendRequestDirection
@@ -23,6 +24,7 @@ import java.net.URL
 interface FriendApi {
     suspend fun search(token: String, query: String): AccountResult<List<FriendSearchResult>>
     suspend fun friends(token: String): AccountResult<List<FriendUser>>
+    suspend fun friendDevices(token: String, userId: String): AccountResult<List<FriendDevice>>
     suspend fun requests(token: String, direction: FriendRequestDirection): AccountResult<List<FriendRequest>>
     suspend fun sendRequest(token: String, userId: String): AccountResult<FriendRequest>
     suspend fun accept(token: String, requestId: String): AccountResult<FriendRequest>
@@ -54,6 +56,14 @@ class FriendApiClient(
             json.getJSONArray("friends").mapObjects { parseFriendUser(it) }
         }
     }
+
+    override suspend fun friendDevices(token: String, userId: String): AccountResult<List<FriendDevice>> =
+        withContext(Dispatchers.IO) {
+            val encoded = URLEncoder.encode(userId, Charsets.UTF_8.name())
+            request("GET", "/v1/friends/$encoded/devices", null, token) { json ->
+                json.getJSONArray("devices").mapObjects { parseFriendDevice(userId, it) }
+            }
+        }
 
     override suspend fun requests(
         token: String,
@@ -182,6 +192,20 @@ class FriendApiClient(
             online = json.optBoolean("online", false),
             lastSeenAt = if (json.isNull("last_seen_at")) null else json.optLong("last_seen_at"),
             since = json.optLong("since", 0L),
+        )
+    }
+
+    private fun parseFriendDevice(ownerUserId: String, json: JSONObject): FriendDevice {
+        return FriendDevice(
+            ownerUserId = ownerUserId,
+            deviceId = json.getString("device_id"),
+            platform = json.getString("platform"),
+            deviceName = json.getString("device_name"),
+            ed25519PubB64 = json.getString("ed25519_pub_b64"),
+            x25519PubB64 = json.getString("x25519_pub_b64"),
+            appVersion = json.optString("app_version").takeIf { it.isNotBlank() && it != "null" },
+            lastSeenAt = if (json.isNull("last_seen_at")) null else json.optLong("last_seen_at"),
+            online = json.optBoolean("online", false),
         )
     }
 

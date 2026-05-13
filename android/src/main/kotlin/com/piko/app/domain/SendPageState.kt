@@ -121,16 +121,22 @@ data class SendPageState(
         )
     }
 
-    fun replaceFriendDevices(friends: List<FriendUser>): SendPageState {
-        val nextFriendDevices = friends.map { friend ->
+    fun replaceFriendDevices(devices: List<FriendDevice>): SendPageState {
+        val nextFriendDevices = devices.map { device ->
             SendDevice(
-                id = "friend-${friend.userId}",
-                name = friend.displayName,
+                id = "friend-${device.deviceId}",
+                name = device.deviceName,
                 group = SendDeviceGroup.Friend,
-                subtitle = friend.presenceLabel,
+                subtitle = "${device.platformLabel} · ${device.presenceLabel}",
                 host = null,
                 port = null,
-                platformHint = "friend",
+                platformHint = device.platform,
+                transportPath = SendTransportPath.P2P,
+                receiverUserId = device.ownerUserId,
+                receiverDeviceId = device.deviceId,
+                receiverEd25519PubB64 = device.ed25519PubB64,
+                receiverX25519PubB64 = device.x25519PubB64,
+                online = device.online,
             )
         }
         val deviceIds = allDevices().filterNot { it.group == SendDeviceGroup.Friend }.map { it.id }.toSet() +
@@ -248,19 +254,46 @@ data class SendDevice(
     val host: String? = null,
     val port: Int? = null,
     val platformHint: String? = null,
+    val transportPath: SendTransportPath = SendTransportPath.Lan,
+    val receiverUserId: String? = null,
+    val receiverDeviceId: String? = null,
+    val receiverEd25519PubB64: String? = null,
+    val receiverX25519PubB64: String? = null,
+    val online: Boolean = true,
 ) {
     val isConnectable: Boolean
-        get() = !host.isNullOrBlank() && port != null && port > 0
+        get() = when (transportPath) {
+            SendTransportPath.Lan -> !host.isNullOrBlank() && port != null && port > 0
+            SendTransportPath.P2P -> online &&
+                !receiverUserId.isNullOrBlank() &&
+                !receiverDeviceId.isNullOrBlank() &&
+                !receiverEd25519PubB64.isNullOrBlank() &&
+                !receiverX25519PubB64.isNullOrBlank()
+        }
 }
 
 private val SendDevice.isCurrentDevicePlaceholder: Boolean
     get() = id == CURRENT_DEVICE_ID || group == SendDeviceGroup.MyDevice
+
+enum class SendTransportPath {
+    Lan,
+    P2P,
+}
 
 enum class SendDeviceGroup {
     MyDevice,
     Lan,
     Friend,
 }
+
+private val FriendDevice.platformLabel: String
+    get() = when (platform.lowercase()) {
+        "ios" -> "iOS"
+        "android" -> "Android"
+        "macos" -> "macOS"
+        "windows" -> "Windows"
+        else -> platform
+    }
 
 data class SendImageItem(
     val id: String,

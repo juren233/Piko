@@ -29,6 +29,7 @@ class SendPlatformActions(
     },
     val pauseTransfer: (String) -> Unit = {},
     val cancelTransfer: (String) -> Unit = {},
+    val acceptReceiveTransfer: (String) -> Unit = {},
     val cancelReceiveTransfer: (String) -> Unit = {},
 ) {
     companion object {

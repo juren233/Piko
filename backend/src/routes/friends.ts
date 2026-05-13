@@ -4,6 +4,9 @@ import { AppError } from "../errors.js";
 import { canonicalize, listFriendsForUser, softDeleteFriendship } from "../db/friendships.js";
 import { getPresenceMany } from "../db/presence.js";
 import { requireAuth } from "../auth/middleware.js";
+import { assertCanAccessUserDevices, deviceToJsonWithPresence } from "./devices.js";
+import { listActiveDevicesForUser } from "../db/devices.js";
+import { getDevicePresenceMany } from "../db/presence.js";
 
 export const friendsRoute = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -28,6 +31,20 @@ friendsRoute.get("/", async (c) => {
         since: friend.since,
       };
     }),
+  });
+});
+
+friendsRoute.get("/:user_id/devices", async (c) => {
+  const currentUser = c.get("user");
+  const targetUserId = c.req.param("user_id");
+  await assertCanAccessUserDevices(c.env, currentUser.id, targetUserId);
+  const devices = await listActiveDevicesForUser(c.env, targetUserId);
+  const presence = await getDevicePresenceMany(
+    c.env,
+    devices.map((device) => device.device_id),
+  );
+  return c.json({
+    devices: devices.map((device) => deviceToJsonWithPresence(device, presence.get(device.device_id))),
   });
 });
 

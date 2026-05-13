@@ -32,6 +32,25 @@ export interface FriendRequestInput {
   receiverUserId: string;
 }
 
+export interface DeviceKeyInput {
+  deviceId: string;
+  platform: string;
+  deviceName: string;
+  ed25519Pub: Uint8Array;
+  x25519Pub: Uint8Array;
+  appVersion: string | null;
+}
+
+export interface TransferSessionInput {
+  receiverUserId: string;
+  receiverDeviceId: string;
+  transferId: string;
+  manifestHashB64: string;
+  senderX25519EphPubB64: string;
+  senderDeviceId: string | null;
+  senderInviteSignatureB64: string;
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -124,4 +143,100 @@ export function parseFriendRequestBody(body: unknown): FriendRequestInput {
     throw new AppError("INVALID_BODY");
   }
   return { receiverUserId };
+}
+
+export function parseUserIdQuery(raw: string | undefined): string {
+  if (raw === undefined || raw.length === 0 || raw.length > 64) {
+    throw new AppError("INVALID_BODY");
+  }
+  return raw;
+}
+
+export function parseDeviceKeyBody(body: unknown): DeviceKeyInput {
+  if (!isObject(body)) throw new AppError("INVALID_BODY");
+  const deviceId = requireString(body, "device_id");
+  const platform = requireString(body, "platform");
+  const deviceName = requireString(body, "device_name");
+  const ed25519Pub = parsePublicKey(requireString(body, "ed25519_pub_b64"));
+  const x25519Pub = parsePublicKey(requireString(body, "x25519_pub_b64"));
+  const rawVersion = body["app_version"];
+
+  if (!isUlid(deviceId)) throw new AppError("INVALID_BODY");
+  if (!platform || !["ios", "android", "macos", "windows"].includes(platform)) {
+    throw new AppError("INVALID_BODY");
+  }
+  if (!deviceName || deviceName.trim().length === 0 || deviceName.trim().length > 64) {
+    throw new AppError("INVALID_BODY");
+  }
+  if (rawVersion !== undefined && rawVersion !== null && typeof rawVersion !== "string") {
+    throw new AppError("INVALID_BODY");
+  }
+  const appVersion = typeof rawVersion === "string" && rawVersion.trim().length > 0
+    ? rawVersion.trim().slice(0, 64)
+    : null;
+
+  return {
+    deviceId,
+    platform,
+    deviceName: deviceName.trim(),
+    ed25519Pub,
+    x25519Pub,
+    appVersion,
+  };
+}
+
+export function parseTransferSessionBody(body: unknown): TransferSessionInput {
+  if (!isObject(body)) throw new AppError("INVALID_BODY");
+  const receiverUserId = requireString(body, "receiver_user_id");
+  const receiverDeviceId = requireString(body, "receiver_device_id");
+  const transferId = requireString(body, "transfer_id");
+  const manifestHashB64 = requireString(body, "manifest_hash_b64");
+  const senderX25519EphPubB64 = requireString(body, "sender_x25519_eph_pub_b64");
+  const senderDeviceId = requireString(body, "sender_device_id");
+  const senderInviteSignatureB64 = requireString(body, "sender_invite_signature_b64");
+
+  if (!receiverUserId || receiverUserId.length > 64) throw new AppError("INVALID_BODY");
+  if (!isUlid(receiverDeviceId)) throw new AppError("INVALID_BODY");
+  if (!transferId || transferId.length > 128) throw new AppError("INVALID_BODY");
+  if (manifestHashB64 === null || senderX25519EphPubB64 === null || senderInviteSignatureB64 === null) {
+    throw new AppError("INVALID_PUBLIC_KEY");
+  }
+  parsePublicKey(manifestHashB64);
+  parsePublicKey(senderX25519EphPubB64);
+  parseBase64Bytes(senderInviteSignatureB64, 64);
+  if (senderDeviceId !== null && !isUlid(senderDeviceId)) throw new AppError("INVALID_BODY");
+
+  return {
+    receiverUserId,
+    receiverDeviceId,
+    transferId,
+    manifestHashB64,
+    senderX25519EphPubB64,
+    senderDeviceId,
+    senderInviteSignatureB64,
+  };
+}
+
+function isUlid(value: string | null): value is string {
+  return value !== null && /^[0-9A-HJKMNP-TV-Z]{26}$/.test(value);
+}
+
+function parsePublicKey(value: string | null): Uint8Array {
+  return parseBase64Bytes(value, 32);
+}
+
+function parseBase64Bytes(value: string | null, expectedLength: number): Uint8Array {
+  if (value === null) throw new AppError("INVALID_PUBLIC_KEY");
+  try {
+    const binary = atob(value);
+    if (binary.length !== expectedLength) throw new AppError("INVALID_PUBLIC_KEY");
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  } catch (err) {
+    if (err instanceof AppError) throw err;
+    throw new AppError("INVALID_PUBLIC_KEY");
+  }
 }

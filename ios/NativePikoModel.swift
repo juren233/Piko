@@ -56,7 +56,30 @@ final class NativePikoModel: ObservableObject {
 
     private let queue = DispatchQueue(label: "piko.native.network")
     private let transferClient = NativeTransferClient()
+    private let deviceIdentityStore = NativeDeviceIdentityStore()
+    private let deviceApiClient = NativeDeviceApiClient()
+    private let signalingClient = NativeSignalingClient()
     private let receiveFileStore = NativeReceiveFileStore()
+    private lazy var p2pTransferClient = NativeP2PTransferClient(
+        authStore: authStore,
+        identityStore: deviceIdentityStore,
+        sessionApi: NativeTransferSessionApiClient(),
+        signalingClient: signalingClient,
+        receiveFileStore: receiveFileStore,
+        destinationFor: { [weak self] fileType in
+            self?.mediaSaveLocation.destination(for: fileType) ?? .folder
+        },
+        onReceiveState: { [weak self] state in
+            if let state {
+                self?.transferStateMachine.updateActiveReceive(state)
+            } else {
+                self?.transferStateMachine.clearActiveReceive()
+            }
+        },
+        onReceiveCompleted: { [weak self] item in
+            self?.prependReceiveHistory(item)
+        }
+    )
     private let localSendSessionStore = NativeLocalSendSessionStore()
     private let presenceTicker: NativePresenceTicker
     private var friendStoreCancellable: AnyCancellable?
@@ -94,27 +117,33 @@ final class NativePikoModel: ObservableObject {
     }
 
     var canSend: Bool {
-        !selectedLanTargets.isEmpty && !selectedItems.isEmpty && transferProgress == nil
+        !selectedSendTargets.isEmpty && !selectedItems.isEmpty && transferProgress == nil
     }
 
     private var selectedItems: [NativeTransferItem] {
         items.filter { selectedItemIds.contains($0.id) }
     }
 
-    private var selectedLanTargets: [NativeSendDevice] {
-        lanDevices.filter { selectedDeviceIds.contains($0.id) }
+    private var selectedSendTargets: [NativeSendDevice] {
+        (lanDevices + friendDevices).filter { selectedDeviceIds.contains($0.id) && $0.isConnectable }
     }
 
     var myDevices: [NativeSendDevice] { [] }
 
     @MainActor
     var friendDevices: [NativeSendDevice] {
-        friendStore.friends.map { friend in
+        friendStore.friendDevices.values.flatMap { $0 }.map { device in
             NativeSendDevice(
-                id: "friend-\(friend.userId)",
-                name: friend.displayName,
-                subtitle: friend.presence.subtitleLabel,
-                endpoint: Self.placeholderEndpoint
+                id: "friend-\(device.deviceId)",
+                name: device.deviceName,
+                subtitle: device.subtitle,
+                endpoint: Self.placeholderEndpoint,
+                transportPath: .p2p,
+                receiverUserId: device.ownerUserId,
+                receiverDeviceId: device.deviceId,
+                receiverEd25519PubB64: device.ed25519PubB64,
+                receiverX25519PubB64: device.x25519PubB64,
+                online: device.online
             )
         }
     }
@@ -152,7 +181,7 @@ final class NativePikoModel: ObservableObject {
 
     private func applyDiscoveredDevices(_ devices: [NativeSendDevice]) {
         lanDevices = devices
-        selectedDeviceIds = selectedDeviceIds.intersection(Set(devices.map(\.id)))
+        selectedDeviceIds = selectedDeviceIds.intersection(Set((devices + friendDevices).map(\.id)))
         discoveryLabel = devices.isEmpty ? "暂无设备" : "已发现 \(devices.count) 台"
     }
 
@@ -166,6 +195,22 @@ final class NativePikoModel: ObservableObject {
     func startPresence() {
         if !lanDiscovery.startPresence() {
             transferLabel = "接收服务启动失败"
+        }
+        if let token = authStore.currentToken() {
+            Task {
+                do {
+                    let identity = try deviceIdentityStore.loadOrCreate()
+                    _ = await deviceApiClient.registerDevice(
+                        identity: identity,
+                        deviceName: currentDeviceName,
+                        appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+                        token: token
+                    )
+                    signalingClient.connect(token: token, deviceId: identity.deviceId)
+                } catch {
+                    transferLabel = "设备注册失败"
+                }
+            }
         }
         presenceTicker.start(friendStore: friendStore)
     }
@@ -221,7 +266,7 @@ final class NativePikoModel: ObservableObject {
     }
 
     func sendSelectedItems() {
-        let targets = selectedLanTargets
+        let targets = selectedSendTargets
         let payloadItems = selectedItems
         guard !targets.isEmpty, !payloadItems.isEmpty else {
             return
@@ -234,6 +279,28 @@ final class NativePikoModel: ObservableObject {
             var sentBytes = 0
 
             for target in targets {
+                if target.transportPath == .p2p {
+                    let transferId = UUID().uuidString
+                    switch await self.p2pTransferClient.send(
+                        payloadItems,
+                        to: target,
+                        senderName: self.nickname.title,
+                        transferId: transferId,
+                        totalCompletedBeforeTarget: sentBytes,
+                        totalBytes: totalBytes,
+                        progressUpdate: { progress in
+                            self.transferStateMachine.updateSendProgress(progress)
+                        }
+                    ) {
+                    case .success(let sentTargetBytes):
+                        sentBytes += sentTargetBytes
+                    case .failure(let error):
+                        self.transferLabel = error.displayMessage
+                        self.transferStateMachine.finishSend()
+                        return
+                    }
+                    continue
+                }
                 guard let sentTargetBytes = await self.transferClient.send(
                     payloadItems,
                     to: target,
@@ -267,7 +334,17 @@ final class NativePikoModel: ObservableObject {
     }
 
     func cancelReceiveTransfer() {
+        if let activeReceive {
+            p2pTransferClient.cancelReceiveTransfer(activeReceive.id)
+        }
         transferStateMachine.cancelReceive()
+    }
+
+    func acceptReceiveTransfer() {
+        guard let activeReceive else {
+            return
+        }
+        p2pTransferClient.acceptReceiveTransfer(activeReceive.id)
     }
 
     func deleteReceiveHistory(_ item: NativeReceiveHistoryItem, deleteFiles: Bool, completion: @escaping (Int) -> Void) {
@@ -403,7 +480,8 @@ final class NativePikoModel: ObservableObject {
                 senderName: request.info.alias,
                 files: transferFiles,
                 totalBytes: request.files.reduce(0) { $0 + $1.size },
-                receivedBytes: 0
+                receivedBytes: 0,
+                requiresConfirmation: false
             )
         )
     }
@@ -578,7 +656,8 @@ final class NativePikoModel: ObservableObject {
                         senderName: envelope.senderName,
                         files: envelope.files,
                         totalBytes: envelope.totalBytes,
-                        receivedBytes: envelope.receivedBytes
+                        receivedBytes: envelope.receivedBytes,
+                        requiresConfirmation: false
                     )
                 )
                 if let transfer = envelope.transfer {
@@ -708,6 +787,30 @@ struct NativeSendDevice: Identifiable {
     let name: String
     let subtitle: String?
     let endpoint: NWEndpoint
+    var transportPath: NativeSendTransportPath = .lan
+    var receiverUserId: String?
+    var receiverDeviceId: String?
+    var receiverEd25519PubB64: String?
+    var receiverX25519PubB64: String?
+    var online: Bool = true
+
+    var isConnectable: Bool {
+        switch transportPath {
+        case .lan:
+            return true
+        case .p2p:
+            return online &&
+                receiverUserId?.nilIfBlank != nil &&
+                receiverDeviceId?.nilIfBlank != nil &&
+                receiverEd25519PubB64?.nilIfBlank != nil &&
+                receiverX25519PubB64?.nilIfBlank != nil
+        }
+    }
+}
+
+enum NativeSendTransportPath {
+    case lan
+    case p2p
 }
 
 extension String {

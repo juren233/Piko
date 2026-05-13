@@ -4,7 +4,7 @@ import com.piko.app.domain.SendDevice
 import com.piko.app.domain.SendDeviceGroup
 import com.piko.app.domain.SendFileItem
 import com.piko.app.domain.SendFileType
-import com.piko.app.domain.FriendUser
+import com.piko.app.domain.FriendDevice
 import com.piko.app.domain.SendImageItem
 import com.piko.app.domain.SendPageState
 import com.piko.app.domain.SendTransferEvent
@@ -25,37 +25,45 @@ class SendPageStateTest {
     }
 
     @Test
-    fun replaceFriendDevicesMapsRealFriendsAndDropsStaleSelection() {
-        val friend = FriendUser(
-            userId = "user-cavan",
-            username = "cavan",
-            nickname = "Cavan",
-            online = true,
+    fun replaceFriendDevicesMapsRealFriendDevicesAndDropsStaleSelection() {
+        val friendDevice = FriendDevice(
+            ownerUserId = "user-cavan",
+            deviceId = "01HV7Q9B5G8Y2N0P3R4S5T6V7W",
+            platform = "ios",
+            deviceName = "Cavan 的 iPhone",
+            ed25519PubB64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+            x25519PubB64 = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=",
+            appVersion = "1.0",
             lastSeenAt = 1_746_000_000,
-            since = 1_745_000_000,
+            online = true,
         )
 
         val state = SendPageState.initial(currentDeviceName = "Pixel")
-            .copy(selectedDeviceIds = setOf("friend-user-cavan", "missing-device"))
-            .replaceFriendDevices(listOf(friend))
+            .copy(selectedDeviceIds = setOf("friend-${friendDevice.deviceId}", "missing-device"))
+            .replaceFriendDevices(listOf(friendDevice))
 
         assertEquals(
             listOf(
                 SendDevice(
-                    id = "friend-user-cavan",
-                    name = "Cavan",
+                    id = "friend-${friendDevice.deviceId}",
+                    name = "Cavan 的 iPhone",
                     group = SendDeviceGroup.Friend,
-                    subtitle = "在线",
+                    subtitle = "iOS · 在线",
                     isSample = false,
                     host = null,
                     port = null,
-                    platformHint = "friend",
+                    platformHint = "ios",
+                    transportPath = com.piko.app.domain.SendTransportPath.P2P,
+                    receiverUserId = "user-cavan",
+                    receiverDeviceId = friendDevice.deviceId,
+                    receiverEd25519PubB64 = friendDevice.ed25519PubB64,
+                    receiverX25519PubB64 = friendDevice.x25519PubB64,
+                    online = true,
                 ),
             ),
             state.friendDevices,
         )
-        assertEquals(setOf("friend-user-cavan"), state.selectedDeviceIds)
-        assertFalse(state.canSend)
+        assertEquals(setOf("friend-${friendDevice.deviceId}"), state.selectedDeviceIds)
     }
 
     @Test

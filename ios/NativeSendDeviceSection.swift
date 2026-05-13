@@ -95,5 +95,7 @@ private struct NativeDeviceRow: View {
             )
         }
         .buttonStyle(.plain)
+        .disabled(!device.isConnectable)
+        .opacity(device.isConnectable ? 1 : 0.5)
     }
 }

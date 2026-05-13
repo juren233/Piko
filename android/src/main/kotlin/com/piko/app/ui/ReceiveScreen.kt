@@ -111,6 +111,11 @@ internal fun PikoReceiveScreen(
                     item(key = activeReceive.transferId) {
                         ActiveReceiveCard(
                             transfer = activeReceive,
+                            onAccept = {
+                                activeReceive.transferId?.let { transferId ->
+                                    sendPlatformActions.acceptReceiveTransfer(transferId)
+                                }
+                            },
                             onCancel = {
                                 activeReceive.transferId?.let { transferId ->
                                     sendPlatformActions.cancelReceiveTransfer(transferId)
@@ -153,6 +158,7 @@ internal fun PikoReceiveScreen(
 @Composable
 private fun ActiveReceiveCard(
     transfer: ReceiveTransferState,
+    onAccept: () -> Unit,
     onCancel: () -> Unit,
 ) {
     Row(
@@ -192,13 +198,23 @@ private fun ActiveReceiveCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+        if (transfer.requiresConfirmation) {
+            IconButton(onClick = onAccept) {
+                Icon(
+                    imageVector = LucideCheckIcon,
+                    contentDescription = "同意",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
         IconButton(
             onClick = onCancel,
             modifier = Modifier.offset(x = (-8).dp),
         ) {
             Icon(
                 imageVector = LucideXIcon,
-                contentDescription = "取消",
+                contentDescription = if (transfer.requiresConfirmation) "拒绝" else "取消",
                 modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.error,
             )

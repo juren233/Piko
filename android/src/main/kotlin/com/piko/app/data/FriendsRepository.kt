@@ -2,6 +2,7 @@ package com.piko.app.data
 
 import com.piko.app.domain.AccountError
 import com.piko.app.domain.AccountResult
+import com.piko.app.domain.FriendDevice
 import com.piko.app.domain.FriendRequestDirection
 import com.piko.app.domain.FriendsState
 import com.piko.app.transport.FriendApi
@@ -25,11 +26,20 @@ class FriendsRepository(
         val incoming = api.requests(token, FriendRequestDirection.Incoming)
         val outgoing = api.requests(token, FriendRequestDirection.Outgoing)
         if (friends is AccountResult.Ok && incoming is AccountResult.Ok && outgoing is AccountResult.Ok) {
+            val friendDevices = mutableMapOf<String, List<FriendDevice>>()
+            var deviceError: AccountError? = null
+            friends.value.forEach { friend ->
+                when (val devices = api.friendDevices(token, friend.userId)) {
+                    is AccountResult.Ok -> friendDevices[friend.userId] = devices.value
+                    is AccountResult.Err -> deviceError = deviceError ?: devices.error
+                }
+            }
             _state.value = _state.value.copy(
                 friends = friends.value,
+                friendDevices = friendDevices,
                 incoming = incoming.value,
                 outgoing = outgoing.value,
-                error = null,
+                error = deviceError,
             )
             return
         }

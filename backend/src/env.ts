@@ -1,6 +1,7 @@
 export interface Env {
   DB: D1Database;
   SESSIONS: KVNamespace;
+  SIGNALING_HUB?: DurableObjectNamespace;
 }
 
 export interface AuthenticatedUser {

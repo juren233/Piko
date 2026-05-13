@@ -9,6 +9,11 @@ import { usersSearchRoute } from "./routes/users-search.js";
 import { friendRequestsRoute } from "./routes/friend-requests.js";
 import { friendsRoute } from "./routes/friends.js";
 import { presenceRoute } from "./routes/presence.js";
+import { devicesRoute } from "./routes/devices.js";
+import { iceConfigRoute } from "./routes/ice-config.js";
+import { transferSessionsRoute } from "./routes/transfer-sessions.js";
+import { signalingWsRoute } from "./routes/signaling-ws.js";
+export { SignalingHub } from "./do/SignalingHub.js";
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -36,5 +41,9 @@ app.route("/v1/users/search", usersSearchRoute);
 app.route("/v1/friends/requests", friendRequestsRoute);
 app.route("/v1/friends", friendsRoute);
 app.route("/v1/presence", presenceRoute);
+app.route("/v1/devices", devicesRoute);
+app.route("/v1/ice-config", iceConfigRoute);
+app.route("/v1/transfers/sessions", transferSessionsRoute);
+app.route("/v1/signaling", signalingWsRoute);
 
 export default app;

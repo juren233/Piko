@@ -42,6 +42,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.juren233.piko.R
 import com.piko.app.data.AuthRepository
 import com.piko.app.data.AuthTokenStore
+import com.piko.app.data.DeviceIdentityStore
 import com.piko.app.data.FriendsRepository
 import com.piko.app.data.ReceiveHistoryStore
 import com.piko.app.data.ReceiveMediaSaveLocation
@@ -55,7 +56,9 @@ import com.piko.app.glass.LiquidBottomTab
 import com.piko.app.glass.LiquidBottomTabs
 import com.piko.app.glass.LiquidSendFloatingButton
 import com.piko.app.transport.AccountApiClient
+import com.piko.app.transport.DeviceApiClient
 import com.piko.app.transport.FriendApiClient
+import com.piko.app.transport.SignalingWebSocketClient
 import com.piko.app.ui.App
 import com.piko.app.ui.AuthSection
 import com.piko.app.ui.FriendsEntry
@@ -104,18 +107,34 @@ fun AndroidPikoApp() {
         }
         state = nextState
     }
+    val tokenStore = remember(appContext) {
+        AuthTokenStore.fromContext(appContext)
+    }
+    val deviceIdentityStore = remember(appContext) {
+        DeviceIdentityStore.fromContext(appContext)
+    }
+    val deviceApiClient = remember(appContext) {
+        DeviceApiClient(baseUrl = BuildConfig.PIKO_API_BASE_URL)
+    }
+    val signalingClient = remember(appContext) {
+        SignalingWebSocketClient(
+            baseUrl = BuildConfig.PIKO_API_BASE_URL,
+            onMessage = { },
+        )
+    }
     val sendPlatformActions = rememberAndroidSendPlatformActions(
         currentNickname = currentNickname,
         mediaSaveLocation = mediaSaveLocation,
+        tokenStore = tokenStore,
+        deviceIdentityStore = deviceIdentityStore,
+        signalingClient = signalingClient,
+        apiBaseUrl = BuildConfig.PIKO_API_BASE_URL,
         onReceiveTransferEvent = { event ->
             mutateState { current -> current.applyReceiveTransferEvent(event) }
         },
     )
     val backdrop = rememberLayerBackdrop()
 
-    val tokenStore = remember(appContext) {
-        AuthTokenStore.fromContext(appContext)
-    }
     val authRepository = remember(appContext) {
         AuthRepository(
             api = AccountApiClient(baseUrl = BuildConfig.PIKO_API_BASE_URL),
@@ -143,20 +162,38 @@ fun AndroidPikoApp() {
 
     LaunchedEffect(authState) {
         if (authState is AuthState.Authenticated) {
+            val token = tokenStore.load()
+            if (token != null) {
+                val identity = deviceIdentityStore.loadOrCreate()
+                when (
+                    val result = deviceApiClient.registerDevice(
+                        token = token,
+                        identity = identity,
+                        deviceName = currentNickname.fullName,
+                        appVersion = BuildConfig.VERSION_NAME,
+                    )
+                ) {
+                    is AccountResult.Ok -> Unit
+                    is AccountResult.Err -> lastAuthError = result.error
+                }
+                signalingClient.connect(token, identity.deviceId)
+            }
             friendsRepository.refreshAll()
             heartbeatScheduler.start()
         } else {
+            signalingClient.close()
             heartbeatScheduler.stop()
             friendsRepository.clear()
             settingsDestination = SettingsDestination.Settings
         }
     }
 
-    LaunchedEffect(friendsState.friends) {
+    LaunchedEffect(friendsState.friends, friendsState.friendDevices) {
+        val friendDevices = friendsState.friendDevices.values.flatten()
         mutateState { current ->
             current.copy(
                 friendsState = friendsState,
-                sendPage = current.sendPage.replaceFriendDevices(friendsState.friends),
+                sendPage = current.sendPage.replaceFriendDevices(friendDevices),
             )
         }
     }

@@ -95,7 +95,9 @@ dependencies {
     implementation(libs.compose.ui)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kyant.shapes)
+    implementation(libs.okhttp)
     implementation(libs.org.json)
+    implementation(libs.webrtc.android)
     testImplementation(libs.org.json)
     testImplementation(kotlin("test-junit"))
 }

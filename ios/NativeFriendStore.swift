@@ -3,6 +3,7 @@ import Foundation
 @MainActor
 final class NativeFriendStore: ObservableObject {
     @Published private(set) var friends: [NativeFriendUser] = []
+    @Published private(set) var friendDevices: [String: [NativeFriendDevice]] = [:]
     @Published private(set) var incomingRequests: [NativeFriendRequest] = []
     @Published private(set) var outgoingRequests: [NativeFriendRequest] = []
     @Published private(set) var searchResults: [NativeFriendSearchResult] = []
@@ -31,10 +32,21 @@ final class NativeFriendStore: ObservableObject {
         if case .success(let friends) = results.0,
            case .success(let incoming) = results.1,
            case .success(let outgoing) = results.2 {
+            var nextDevices: [String: [NativeFriendDevice]] = [:]
+            var deviceError: NativeAccountError?
+            for friend in friends {
+                switch await api.friendDevices(userId: friend.userId, token: token) {
+                case .success(let devices):
+                    nextDevices[friend.userId] = devices
+                case .failure(let error):
+                    deviceError = deviceError ?? error
+                }
+            }
             self.friends = friends
+            self.friendDevices = nextDevices
             self.incomingRequests = incoming
             self.outgoingRequests = outgoing
-            self.lastError = nil
+            self.lastError = deviceError
             return
         }
         self.lastError = firstError(results.0, results.1, results.2)
@@ -135,6 +147,7 @@ final class NativeFriendStore: ObservableObject {
 
     func clear() {
         friends = []
+        friendDevices = [:]
         incomingRequests = []
         outgoingRequests = []
         searchResults = []
