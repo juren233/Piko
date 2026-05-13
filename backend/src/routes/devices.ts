@@ -11,7 +11,7 @@ import {
   upsertDeviceKey,
   type DeviceKeyRow,
 } from "../db/devices.js";
-import { getDevicePresenceMany } from "../db/presence.js";
+import { getDevicePresenceManyForUser } from "../db/presence.js";
 import { parseDeviceKeyBody, parseUserIdQuery } from "../validation/schemas.js";
 
 export const devicesRoute = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -46,8 +46,9 @@ devicesRoute.get("/keys", async (c) => {
   await assertCanAccessUserDevices(c.env, currentUser.id, targetUserId);
 
   const devices = await listActiveDevicesForUser(c.env, targetUserId);
-  const presence = await getDevicePresenceMany(
+  const presence = await getDevicePresenceManyForUser(
     c.env,
+    targetUserId,
     devices.map((device) => device.device_id),
   );
   return c.json({
@@ -74,7 +75,7 @@ export async function assertCanAccessUserDevices(
 }
 
 export async function deviceToJson(env: Env, row: DeviceKeyRow) {
-  const presence = await getDevicePresenceMany(env, [row.device_id]);
+  const presence = await getDevicePresenceManyForUser(env, row.user_id, [row.device_id]);
   return deviceToJsonWithPresence(row, presence.get(row.device_id));
 }
 

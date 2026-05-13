@@ -75,5 +75,8 @@ struct NativeSendView: View {
                 model.addItems(items)
             }
         }
+        .task {
+            model.refreshFriendsPresence()
+        }
     }
 }

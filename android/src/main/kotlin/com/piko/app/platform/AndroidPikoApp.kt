@@ -1,6 +1,9 @@
 package com.piko.app.platform
 
+import android.app.Activity
+import android.app.Application
 import android.net.Uri
+import android.os.Bundle
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -19,9 +22,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -152,8 +157,11 @@ fun AndroidPikoApp() {
     var lastAuthError by remember(authRepository) { mutableStateOf<AccountError?>(null) }
     val authScope = rememberCoroutineScope()
     val friendsScope = rememberCoroutineScope()
-    val heartbeatScheduler = remember(friendsRepository, friendsScope) {
-        PresenceHeartbeatScheduler(friendsScope) { friendsRepository.heartbeat() }
+    fun refreshFriendsPresence() {
+        if (authState !is AuthState.Authenticated) return
+        friendsScope.launch {
+            friendsRepository.refreshAll()
+        }
     }
 
     LaunchedEffect(authRepository) {
@@ -178,13 +186,25 @@ fun AndroidPikoApp() {
                 }
                 signalingClient.connect(token, identity.deviceId)
             }
-            friendsRepository.refreshAll()
-            heartbeatScheduler.start()
+            refreshFriendsPresence()
         } else {
             signalingClient.close()
-            heartbeatScheduler.stop()
             friendsRepository.clear()
             settingsDestination = SettingsDestination.Settings
+        }
+    }
+
+    AppLifecycleForegroundObserver(onForeground = ::refreshFriendsPresence)
+
+    LaunchedEffect(selectedTab, authState) {
+        if (selectedTab == PikoTab.Send) {
+            refreshFriendsPresence()
+        }
+    }
+
+    LaunchedEffect(selectedTab, settingsDestination, authState) {
+        if (selectedTab == PikoTab.Settings && settingsDestination == SettingsDestination.Friends) {
+            refreshFriendsPresence()
         }
     }
 
@@ -402,6 +422,42 @@ private fun SystemNavigationBackdrop(modifier: Modifier = Modifier) {
                 ),
             ),
     )
+}
+
+@Composable
+private fun AppLifecycleForegroundObserver(onForeground: () -> Unit) {
+    val context = LocalContext.current
+    val currentOnForeground = rememberUpdatedState(onForeground)
+    DisposableEffect(context) {
+        val application = context.applicationContext as Application
+        var startedActivities = 0
+        val callbacks = object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+
+            override fun onActivityStarted(activity: Activity) {
+                startedActivities += 1
+                if (startedActivities == 1) {
+                    currentOnForeground.value()
+                }
+            }
+
+            override fun onActivityResumed(activity: Activity) = Unit
+
+            override fun onActivityPaused(activity: Activity) = Unit
+
+            override fun onActivityStopped(activity: Activity) {
+                startedActivities = (startedActivities - 1).coerceAtLeast(0)
+            }
+
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+        application.registerActivityLifecycleCallbacks(callbacks)
+        onDispose {
+            application.unregisterActivityLifecycleCallbacks(callbacks)
+        }
+    }
 }
 
 @Composable

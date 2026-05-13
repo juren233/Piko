@@ -22,6 +22,14 @@ interface DevicesEnvelope {
   devices: DeviceItem[];
 }
 
+interface FriendsEnvelope {
+  friends: Array<{
+    user_id: string;
+    online: boolean;
+    last_seen_at: number | null;
+  }>;
+}
+
 interface IceConfigEnvelope {
   ice_servers: Array<{ urls: string }>;
   ttl_seconds: number;
@@ -95,10 +103,116 @@ async function registerDevice(
 
 class RecordingSocket {
   readonly sent: Array<Record<string, unknown>> = [];
+  tags: string[] = [];
+  private attachment: unknown = null;
 
   send(raw: string): void {
     this.sent.push(JSON.parse(raw) as Record<string, unknown>);
   }
+
+  serializeAttachment(value: unknown): void {
+    this.attachment = value;
+  }
+
+  deserializeAttachment(): unknown {
+    return this.attachment;
+  }
+}
+
+function attachDevice(ws: RecordingSocket, deviceId: string): RecordingSocket {
+  ws.tags = [deviceId];
+  ws.serializeAttachment({ device_id: deviceId });
+  return ws;
+}
+
+function hubStateRecorder(webSockets: RecordingSocket[] = []): DurableObjectState & { alarmCalls: number } {
+  const stored = new Map<string, unknown>();
+  const state = {
+    alarmCalls: 0,
+    acceptWebSocket: (ws: WebSocket, tags: string[]) => {
+      const recording = ws as unknown as RecordingSocket;
+      recording.tags = tags;
+      webSockets.push(recording);
+    },
+    getWebSockets: (tag?: string) =>
+      (tag ? webSockets.filter((ws) => ws.tags.includes(tag)) : webSockets) as unknown as WebSocket[],
+    storage: {
+      setAlarm: () => {
+        state.alarmCalls += 1;
+        return Promise.resolve();
+      },
+      put: (key: string, value: unknown) => {
+        stored.set(key, value);
+        return Promise.resolve();
+      },
+      get: <T = unknown>(key: string) => Promise.resolve((stored.get(key) as T | undefined) ?? null),
+      delete: (key: string) => {
+        stored.delete(key);
+        return Promise.resolve(false);
+      },
+      list: <T = unknown>(options?: { prefix?: string }) => {
+        const prefix = options?.prefix ?? "";
+        const entries = [...stored.entries()].filter(([key]) => key.startsWith(prefix)) as Array<[string, T]>;
+        return Promise.resolve(new Map(entries));
+      },
+    },
+  };
+  return state as unknown as DurableObjectState & { alarmCalls: number };
+}
+
+function signalingNamespace(hubs: Map<string, SignalingHub>) {
+  return {
+    idFromName(name: string) {
+      return { name };
+    },
+    get(id: { name: string }) {
+      return {
+        fetch: (request: Request | string, init?: RequestInit) => {
+          const hub = hubs.get(id.name);
+          if (!hub) throw new Error(`missing hub ${id.name}`);
+          const req = typeof request === "string" ? new Request(request, init) : request;
+          return hub.fetch(req);
+        },
+      };
+    },
+  };
+}
+
+async function appCall<T = unknown>(
+  testEnv: Env,
+  method: "DELETE" | "GET" | "POST",
+  path: string,
+  options: { body?: unknown; bearer?: string } = {},
+): Promise<{ status: number; json: T }> {
+  const headers: Record<string, string> = {};
+  let body: string | undefined;
+  if (options.body !== undefined) {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(options.body);
+  }
+  if (options.bearer) {
+    headers.authorization = `Bearer ${options.bearer}`;
+  }
+  const res = await app.request(`https://piko.test${path}`, { method, headers, body }, testEnv);
+  let json: T;
+  if (res.status === 204) {
+    json = undefined as T;
+  } else {
+    json = (await res.json()) as T;
+  }
+  return { status: res.status, json };
+}
+
+function transferSessionBody(receiverUserId: string, receiverDeviceId: string, senderDeviceId?: string) {
+  return {
+    receiver_user_id: receiverUserId,
+    receiver_device_id: receiverDeviceId,
+    transfer_id: "transfer-001",
+    manifest_hash_b64: KEY_A,
+    sender_x25519_eph_pub_b64: KEY_B,
+    sender_device_id: senderDeviceId,
+    sender_invite_signature_b64: SIGNATURE_A,
+  };
 }
 
 describe("cross-network signaling control plane", () => {
@@ -169,39 +283,75 @@ describe("cross-network signaling control plane", () => {
     expect(forbidden.json.error.code).toBe("TRANSFER_SESSION_FORBIDDEN");
   });
 
-  it("guards transfer session creation by friendship and device presence", async () => {
+  it("guards transfer session creation by friendship and invite delivery", async () => {
     const alice = await register("sessionguardalice");
     const bob = await register("sessionguardbob");
+    await registerDevice(alice, "01ARZ3NDEKTSV4RRFFQ69G5FAZ", "Alice Phone");
     await registerDevice(bob, "01ARZ3NDEKTSV4RRFFQ69G5FAY", "Bob Offline");
 
     const nonFriend = await call<ErrEnvelope>("POST", "/v1/transfers/sessions", {
       bearer: alice.token,
-      body: {
-        receiver_user_id: bob.user.id,
-        receiver_device_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
-        transfer_id: "transfer-001",
-        manifest_hash_b64: KEY_A,
-        sender_x25519_eph_pub_b64: KEY_B,
-        sender_invite_signature_b64: SIGNATURE_A,
-      },
+      body: transferSessionBody(bob.user.id, "01ARZ3NDEKTSV4RRFFQ69G5FAY", "01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
     });
     expect(nonFriend.status).toBe(403);
     expect(nonFriend.json.error.code).toBe("TRANSFER_PEER_NOT_FRIEND");
 
     await makeFriends(alice, bob);
-    const offline = await call<ErrEnvelope>("POST", "/v1/transfers/sessions", {
+    const hubs = new Map<string, SignalingHub>();
+    const senderState = hubStateRecorder();
+    const receiverState = hubStateRecorder();
+    const testEnv = {
+      ...env,
+      SIGNALING_HUB: signalingNamespace(hubs),
+    };
+    hubs.set(alice.user.id, new SignalingHub(senderState, testEnv as unknown as Env));
+    hubs.set(bob.user.id, new SignalingHub(receiverState, testEnv as unknown as Env));
+
+    const offline = await appCall<ErrEnvelope>(testEnv as unknown as Env, "POST", "/v1/transfers/sessions", {
       bearer: alice.token,
-      body: {
-        receiver_user_id: bob.user.id,
-        receiver_device_id: "01ARZ3NDEKTSV4RRFFQ69G5FAY",
-        transfer_id: "transfer-002",
-        manifest_hash_b64: KEY_A,
-        sender_x25519_eph_pub_b64: KEY_B,
-        sender_invite_signature_b64: SIGNATURE_A,
-      },
+      body: transferSessionBody(bob.user.id, "01ARZ3NDEKTSV4RRFFQ69G5FAY", "01ARZ3NDEKTSV4RRFFQ69G5FAZ"),
     });
     expect(offline.status).toBe(409);
     expect(offline.json.error.code).toBe("DEVICE_OFFLINE");
+    expect((await receiverState.storage.list({ prefix: "sr:" })).size).toBe(0);
+  });
+
+  it("reports friend online from active signaling websocket without writing device TTL", async () => {
+    const alice = await register("devicepresencealice");
+    const bob = await register("devicepresencebob");
+    await makeFriends(alice, bob);
+    await registerDevice(bob, "01HR0A9S9Y1N2Z3X4W5V6T7S9A", "Bob Phone");
+    const bobWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S9A");
+    const hubs = new Map<string, SignalingHub>();
+    const testEnv = {
+      ...env,
+      SIGNALING_HUB: signalingNamespace(hubs),
+    };
+    const bobState = hubStateRecorder([bobWs]);
+    hubs.set(alice.user.id, new SignalingHub(hubStateRecorder(), testEnv as unknown as Env));
+    hubs.set(bob.user.id, new SignalingHub(bobState, testEnv as unknown as Env));
+
+    const friends = await appCall<FriendsEnvelope>(testEnv as unknown as Env, "GET", "/v1/friends", { bearer: alice.token });
+
+    expect(friends.status).toBe(200);
+    expect(friends.json.friends[0]).toMatchObject({
+      user_id: bob.user.id,
+      online: true,
+    });
+    expect(await env.SESSIONS.get("dp:01HR0A9S9Y1N2Z3X4W5V6T7S9A")).toBe(null);
+  });
+
+  it("accepts signaling websockets without scheduling alarms or writing device presence", async () => {
+    const state = hubStateRecorder();
+    const hub = new SignalingHub(state, env as unknown as Env);
+
+    const res = await hub.fetch(new Request("https://signaling.local/ws?device_id=01HR0A9S9Y1N2Z3X4W5V6T7S9B", {
+      headers: { upgrade: "websocket" },
+    }));
+
+    expect(res.status).toBe(101);
+    expect(state.alarmCalls).toBe(0);
+    expect(await env.SESSIONS.get("dp:01HR0A9S9Y1N2Z3X4W5V6T7S9B")).toBe(null);
   });
 
   it("routes signaling websocket to the authenticated user's durable object shard", async () => {
@@ -238,101 +388,33 @@ describe("cross-network signaling control plane", () => {
     await makeFriends(alice, bob);
     await registerDevice(alice, "01HR0A9S9Y1N2Z3X4W5V6T7S8R", "Alice Phone");
     await registerDevice(bob, "01HR0A9S9Y1N2Z3X4W5V6T7S8S", "Bob Phone");
-    await env.SESSIONS.put(
-      "dp:01HR0A9S9Y1N2Z3X4W5V6T7S8S",
-      JSON.stringify({ last_seen_at: Date.now() }),
-      { expirationTtl: 60 },
-    );
 
-    const senderWs = new RecordingSocket();
-    const receiverWs = new RecordingSocket();
+    const senderWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S8R");
+    const receiverWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S8S");
+    const senderState = hubStateRecorder([senderWs]);
+    const receiverState = hubStateRecorder([receiverWs]);
     const hubs = new Map<string, SignalingHub>();
     const testEnv = {
       ...env,
-      SIGNALING_HUB: {
-        idFromName(name: string) {
-          return { name };
-        },
-        get(id: { name: string }) {
-          return {
-            fetch: (request: Request | string, init?: RequestInit) => {
-              const hub = hubs.get(id.name);
-              if (!hub) throw new Error(`missing hub ${id.name}`);
-              const req = typeof request === "string" ? new Request(request, init) : request;
-              return hub.fetch(req);
-            },
-          };
-        },
-      },
+      SIGNALING_HUB: signalingNamespace(hubs),
     };
-    const senderHub = new SignalingHub({} as DurableObjectState, testEnv as unknown as Env);
-    const receiverHub = new SignalingHub({} as DurableObjectState, testEnv as unknown as Env);
+    let senderHub = new SignalingHub(senderState, testEnv as unknown as Env);
+    const receiverHub = new SignalingHub(receiverState, testEnv as unknown as Env);
     hubs.set(alice.user.id, senderHub);
     hubs.set(bob.user.id, receiverHub);
-    (senderHub as unknown as { liveWs: Map<string, WebSocket> }).liveWs.set(
-      "01HR0A9S9Y1N2Z3X4W5V6T7S8R",
-      senderWs as unknown as WebSocket,
-    );
-    (receiverHub as unknown as { liveWs: Map<string, WebSocket> }).liveWs.set(
-      "01HR0A9S9Y1N2Z3X4W5V6T7S8S",
-      receiverWs as unknown as WebSocket,
-    );
 
-    const created = await call<SessionEnvelope>("POST", "/v1/transfers/sessions", {
+    const created = await appCall<SessionEnvelope>(testEnv as unknown as Env, "POST", "/v1/transfers/sessions", {
       bearer: alice.token,
-      body: {
-        receiver_user_id: bob.user.id,
-        receiver_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8S",
-        transfer_id: "transfer-route-001",
-        manifest_hash_b64: KEY_A,
-        sender_x25519_eph_pub_b64: KEY_B,
-        sender_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8R",
-        sender_invite_signature_b64: SIGNATURE_A,
-      },
+      body: transferSessionBody(bob.user.id, "01HR0A9S9Y1N2Z3X4W5V6T7S8S", "01HR0A9S9Y1N2Z3X4W5V6T7S8R"),
     });
     expect(created.status).toBe(201);
     expect(created.json.ice_servers).toEqual([{ urls: "stun:stun.cloudflare.com:3478" }]);
-
-    await senderHub.fetch(
-      new Request("https://signaling.local/registerSession", {
-        method: "POST",
-        body: JSON.stringify({
-          session_id: created.json.session_id,
-          sender_user_id: alice.user.id,
-          sender_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8R",
-          receiver_user_id: bob.user.id,
-          receiver_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8S",
-          peer_user_id: bob.user.id,
-          expires_at: created.json.expires_at,
-        }),
-      }),
-    );
-    await receiverHub.fetch(
-      new Request("https://signaling.local/dispatchInvite", {
-        method: "POST",
-        body: JSON.stringify({
-          session_id: created.json.session_id,
-          from_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8R",
-          from_user_id: alice.user.id,
-          receiver_user_id: bob.user.id,
-          receiver_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8S",
-          transfer_id: "transfer-route-001",
-          manifest_hash_b64: KEY_A,
-          sender_x25519_eph_pub_b64: KEY_B,
-          sender_invite_signature_b64: SIGNATURE_A,
-          sender_ed25519_pub_b64: KEY_A,
-          sender_x25519_pub_b64: KEY_B,
-          same_account: false,
-          expires_at: created.json.expires_at,
-        }),
-      }),
-    );
     expect(receiverWs.sent.at(-1)).toMatchObject({
       type: "invite",
       session_id: created.json.session_id,
       from_device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S8R",
       from_user_id: alice.user.id,
-      transfer_id: "transfer-route-001",
+      transfer_id: "transfer-001",
       manifest_hash_b64: KEY_A,
       sender_x25519_eph_pub_b64: KEY_B,
       sender_invite_signature_b64: SIGNATURE_A,
@@ -341,6 +423,8 @@ describe("cross-network signaling control plane", () => {
       same_account: false,
     });
 
+    senderHub = new SignalingHub(senderState, testEnv as unknown as Env);
+    hubs.set(alice.user.id, senderHub);
     await receiverHub.webSocketMessage(
       receiverWs as unknown as WebSocket,
       JSON.stringify({ type: "answer", session_id: created.json.session_id, sdp: "answer-sdp" }),
@@ -351,6 +435,8 @@ describe("cross-network signaling control plane", () => {
       sdp: "answer-sdp",
     });
 
+    senderHub = new SignalingHub(senderState, testEnv as unknown as Env);
+    hubs.set(alice.user.id, senderHub);
     await senderHub.webSocketMessage(
       senderWs as unknown as WebSocket,
       JSON.stringify({

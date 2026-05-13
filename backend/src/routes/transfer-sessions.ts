@@ -4,7 +4,6 @@ import { requireAuth } from "../auth/middleware.js";
 import { AppError } from "../errors.js";
 import { areFriends } from "../db/friendships.js";
 import { blobToBase64, findActiveDevice } from "../db/devices.js";
-import { getDevicePresence } from "../db/presence.js";
 import { parseTransferSessionBody } from "../validation/schemas.js";
 
 export const transferSessionsRoute = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -33,8 +32,6 @@ transferSessionsRoute.post("/", async (c) => {
     throw new AppError("DEVICE_NOT_FOUND");
   }
 
-  const presence = await getDevicePresence(c.env, input.receiverDeviceId);
-  if (!presence.online) throw new AppError("DEVICE_OFFLINE");
   const senderDeviceId = input.senderDeviceId;
   if (!senderDeviceId) throw new AppError("DEVICE_NOT_FOUND");
   const senderDevice = await findActiveDevice(c.env, senderDeviceId);
@@ -51,52 +48,51 @@ transferSessionsRoute.post("/", async (c) => {
     receiver_device_id: input.receiverDeviceId,
     expires_at: expiresAt,
   };
-  if (c.env.SIGNALING_HUB) {
-    await c.env.SIGNALING_HUB.get(c.env.SIGNALING_HUB.idFromName(currentUser.id)).fetch(
-      "https://signaling.local/registerSession",
-      {
-        method: "POST",
-        body: JSON.stringify({
-          session_id: sessionId,
-          sender_user_id: currentUser.id,
-          sender_device_id: senderDeviceId,
-          receiver_user_id: input.receiverUserId,
-          receiver_device_id: input.receiverDeviceId,
-          peer_user_id: input.receiverUserId,
-          expires_at: expiresAt,
-        }),
-      },
-    );
-    const id = c.env.SIGNALING_HUB.idFromName(input.receiverUserId);
-    const inviteResponse = await c.env.SIGNALING_HUB.get(id).fetch("https://signaling.local/dispatchInvite", {
+  if (!c.env.SIGNALING_HUB) throw new AppError("DEVICE_OFFLINE");
+  await c.env.SIGNALING_HUB.get(c.env.SIGNALING_HUB.idFromName(currentUser.id)).fetch(
+    "https://signaling.local/registerSession",
+    {
       method: "POST",
       body: JSON.stringify({
         session_id: sessionId,
-        from_device_id: senderDeviceId,
-        from_user_id: currentUser.id,
+        sender_user_id: currentUser.id,
+        sender_device_id: senderDeviceId,
         receiver_user_id: input.receiverUserId,
         receiver_device_id: input.receiverDeviceId,
-        transfer_id: input.transferId,
-        manifest_hash_b64: input.manifestHashB64,
-        sender_x25519_eph_pub_b64: input.senderX25519EphPubB64,
-        sender_invite_signature_b64: input.senderInviteSignatureB64,
-        sender_ed25519_pub_b64: blobToBase64(senderDevice.ed25519_pub),
-        sender_x25519_pub_b64: blobToBase64(senderDevice.x25519_pub),
-        same_account: input.receiverUserId === currentUser.id,
+        peer_user_id: input.receiverUserId,
         expires_at: expiresAt,
       }),
-    });
-    const inviteResult = (await inviteResponse.json().catch(() => ({ delivered: false }))) as { delivered?: boolean };
-    if (!inviteResult.delivered) {
-      await c.env.SIGNALING_HUB.get(c.env.SIGNALING_HUB.idFromName(currentUser.id)).fetch(
-        "https://signaling.local/closeSession",
-        {
-          method: "POST",
-          body: JSON.stringify({ session_id: sessionId, reason: "receiver_offline" }),
-        },
-      );
-      throw new AppError("DEVICE_OFFLINE");
-    }
+    },
+  );
+  const id = c.env.SIGNALING_HUB.idFromName(input.receiverUserId);
+  const inviteResponse = await c.env.SIGNALING_HUB.get(id).fetch("https://signaling.local/dispatchInvite", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      from_device_id: senderDeviceId,
+      from_user_id: currentUser.id,
+      receiver_user_id: input.receiverUserId,
+      receiver_device_id: input.receiverDeviceId,
+      transfer_id: input.transferId,
+      manifest_hash_b64: input.manifestHashB64,
+      sender_x25519_eph_pub_b64: input.senderX25519EphPubB64,
+      sender_invite_signature_b64: input.senderInviteSignatureB64,
+      sender_ed25519_pub_b64: blobToBase64(senderDevice.ed25519_pub),
+      sender_x25519_pub_b64: blobToBase64(senderDevice.x25519_pub),
+      same_account: input.receiverUserId === currentUser.id,
+      expires_at: expiresAt,
+    }),
+  });
+  const inviteResult = (await inviteResponse.json().catch(() => ({ delivered: false }))) as { delivered?: boolean };
+  if (!inviteResult.delivered) {
+    await c.env.SIGNALING_HUB.get(c.env.SIGNALING_HUB.idFromName(currentUser.id)).fetch(
+      "https://signaling.local/closeSession",
+      {
+        method: "POST",
+        body: JSON.stringify({ session_id: sessionId, reason: "receiver_offline" }),
+      },
+    );
+    throw new AppError("DEVICE_OFFLINE");
   }
   await c.env.SESSIONS.put(`tr:${sessionId}`, JSON.stringify(route), {
     expirationTtl: 30 * 60,

@@ -227,7 +227,7 @@ describe("friends control plane", () => {
     expect(canceled.json.request.status).toBe("canceled");
   });
 
-  it("reports friend presence after heartbeat", async () => {
+  it("keeps heartbeat compatible without making friends online", async () => {
     const alice = await register("friendpresencealice");
     const bob = await register("friendpresencebob");
 
@@ -246,11 +246,9 @@ describe("friends control plane", () => {
     const heartbeat = await call("POST", "/v1/presence/heartbeat", { bearer: alice.token });
     expect(heartbeat.status).toBe(204);
 
-    const after = await call<FriendsEnvelope>("GET", "/v1/friends", { bearer: bob.token });
-    expect(after.json.friends[0]).toMatchObject({
-      user_id: alice.user.id,
-      online: true,
-    });
-    expect(typeof after.json.friends[0]?.last_seen_at).toBe("number");
+    const afterHeartbeat = await call<FriendsEnvelope>("GET", "/v1/friends", { bearer: bob.token });
+    expect(afterHeartbeat.json.friends[0]?.online).toBe(false);
+
+    expect(afterHeartbeat.json.friends[0]?.last_seen_at).toBe(null);
   });
 });

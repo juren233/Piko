@@ -121,7 +121,7 @@ class IosAndroidUiParityTest {
         assertTrue("func search(query:" in iosFriendStore)
         assertTrue("PikoCollapsingPageHeroHeader" in iosFriendsView)
         assertTrue("NativeFriendRequestsView" in iosFriendRequestsView)
-        assertTrue("DispatchSourceTimer" in iosPresenceTicker)
+        assertFalse("DispatchSourceTimer" in iosPresenceTicker)
         listOf(
             "NativeFriendModels.swift",
             "NativeFriendApiClient.swift",
@@ -227,6 +227,40 @@ class IosAndroidUiParityTest {
         assertFalse("WebRTC DataChannel 尚未接入" in iosModel)
         assertTrue("signalingClient.connect(token, identity.deviceId)" in androidApp)
         assertTrue("signalingClient.connect(token: token, deviceId: identity.deviceId)" in iosModel)
+    }
+
+    @Test
+    fun presenceRefreshIsEventDrivenWithoutPeriodicTickers() {
+        val androidApp = readAndroid("platform/AndroidPikoApp.kt")
+        val androidScheduler = readAndroid("platform/PresenceHeartbeatScheduler.kt")
+        val iosModel = readIos("NativePikoModel.swift")
+        val iosPresenceTicker = readIos("NativePresenceTicker.swift")
+        val iosRoot = readIos("PikoRootView.swift")
+
+        assertFalse("delay(30_000)" in androidScheduler)
+        assertFalse("while (isActive)" in androidScheduler)
+        assertFalse("heartbeatScheduler.start()" in androidApp)
+        assertFalse("friendsRepository.heartbeat()" in androidApp)
+        assertTrue("refreshFriendsPresence()" in androidApp)
+        assertTrue("AppLifecycleForegroundObserver" in androidApp)
+        assertTrue("selectedTab == PikoTab.Send" in androidApp)
+        assertTrue("settingsDestination == SettingsDestination.Friends" in androidApp)
+        assertTrue("friendsRepository.refreshAll()" in androidApp)
+        assertInOrder(
+            iosModel,
+            "func refreshFriendsPresence()",
+            "await friendStore.refreshAll()",
+        )
+        assertFalse("DispatchSourceTimer" in iosPresenceTicker)
+        assertFalse("timer.schedule" in iosPresenceTicker)
+        assertFalse("await friendStore.heartbeat()" in iosPresenceTicker)
+        assertTrue("@Environment(\\.scenePhase)" in iosRoot)
+        assertTrue(".onChange(of: scenePhase)" in iosRoot)
+        assertTrue("model.refreshFriendsPresence()" in iosRoot)
+        assertTrue("signalingClient.connect(token, identity.deviceId)" in androidApp)
+        assertTrue("signalingClient.connect(token: token, deviceId: identity.deviceId)" in iosModel)
+        assertFalse("model.stopPresence()" in iosRoot)
+        assertFalse("onDisappear" in iosRoot)
     }
 
     @Test

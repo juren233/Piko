@@ -1,9 +1,7 @@
 import type { Env } from "../env.js";
 
 const PRESENCE_PREFIX = "p:";
-const DEVICE_PRESENCE_PREFIX = "dp:";
 const PRESENCE_TTL_SECONDS = 90;
-const DEVICE_PRESENCE_TTL_SECONDS = 60;
 
 interface PresenceRecord {
   last_seen_at: number;
@@ -32,36 +30,33 @@ export async function getPresenceMany(
   return new Map(entries);
 }
 
-export async function touchDevicePresence(env: Env, deviceId: string, now: number): Promise<void> {
-  await env.SESSIONS.put(
-    DEVICE_PRESENCE_PREFIX + deviceId,
-    JSON.stringify({ last_seen_at: now }),
-    { expirationTtl: DEVICE_PRESENCE_TTL_SECONDS },
-  );
-}
-
-export async function getDevicePresenceMany(
+export async function getDevicePresenceManyForUser(
   env: Env,
+  userId: string,
   deviceIds: string[],
 ): Promise<Map<string, PresenceStatus>> {
-  const entries = await Promise.all(
-    deviceIds.map(async (deviceId) => [deviceId, await getDevicePresence(env, deviceId)] as const),
-  );
-  return new Map(entries);
-}
-
-export async function getDevicePresence(env: Env, deviceId: string): Promise<PresenceStatus> {
-  const raw = await env.SESSIONS.get(DEVICE_PRESENCE_PREFIX + deviceId);
-  if (!raw) return { online: false, lastSeenAt: null };
-  try {
-    const parsed = JSON.parse(raw) as { last_seen_at?: unknown };
-    if (typeof parsed.last_seen_at !== "number") {
-      return { online: false, lastSeenAt: null };
-    }
-    return { online: true, lastSeenAt: parsed.last_seen_at };
-  } catch {
-    return { online: false, lastSeenAt: null };
+  if (deviceIds.length === 0 || !env.SIGNALING_HUB) {
+    return new Map(deviceIds.map((deviceId) => [deviceId, { online: false, lastSeenAt: null }] as const));
   }
+  const id = env.SIGNALING_HUB.idFromName(userId);
+  const response = await env.SIGNALING_HUB.get(id).fetch("https://signaling.local/presence", {
+    method: "POST",
+    body: JSON.stringify({ device_ids: deviceIds }),
+  });
+  const payload = (await response.json().catch(() => ({ devices: [] }))) as {
+    devices?: Array<{ device_id?: unknown; online?: unknown; last_seen_at?: unknown }>;
+  };
+  const statuses = new Map<string, PresenceStatus>(
+    deviceIds.map((deviceId) => [deviceId, { online: false, lastSeenAt: null }] as const),
+  );
+  for (const device of payload.devices ?? []) {
+    if (typeof device.device_id !== "string") continue;
+    statuses.set(device.device_id, {
+      online: device.online === true,
+      lastSeenAt: typeof device.last_seen_at === "number" ? device.last_seen_at : null,
+    });
+  }
+  return statuses;
 }
 
 async function getPresence(env: Env, userId: string): Promise<PresenceStatus> {

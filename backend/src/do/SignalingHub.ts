@@ -1,5 +1,4 @@
 import type { Env } from "../env.js";
-import { touchDevicePresence } from "../db/presence.js";
 
 interface SessionRoute {
   sender_user_id: string;
@@ -46,6 +45,17 @@ interface SessionClose {
   reason?: string;
 }
 
+interface PresenceQuery {
+  device_ids?: unknown;
+}
+
+interface WebSocketAttachmentAccess {
+  serializeAttachment?: (value: unknown) => void;
+  deserializeAttachment?: () => unknown;
+}
+
+const SESSION_ROUTE_PREFIX = "sr:";
+
 export class SignalingHub {
   private readonly liveWs = new Map<string, WebSocket>();
   private readonly sessions = new Map<string, SessionRoute>();
@@ -59,15 +69,6 @@ export class SignalingHub {
     const url = new URL(request.url);
     if (url.pathname === "/dispatchInvite" && request.method === "POST") {
       const payload = (await request.json()) as InviteDispatch;
-      this.registerSessionRoute({
-        session_id: payload.session_id,
-        sender_user_id: payload.from_user_id,
-        sender_device_id: payload.from_device_id ?? "",
-        receiver_user_id: payload.receiver_user_id,
-        receiver_device_id: payload.receiver_device_id,
-        peer_user_id: payload.from_user_id,
-        expires_at: payload.expires_at,
-      });
       const delivered = this.sendToDevice(payload.receiver_device_id, {
         type: "invite",
         session_id: payload.session_id,
@@ -81,24 +82,53 @@ export class SignalingHub {
         sender_x25519_pub_b64: payload.sender_x25519_pub_b64,
         same_account: payload.same_account,
       });
+      if (delivered) {
+        await this.registerSessionRoute({
+          session_id: payload.session_id,
+          sender_user_id: payload.from_user_id,
+          sender_device_id: payload.from_device_id ?? "",
+          receiver_user_id: payload.receiver_user_id,
+          receiver_device_id: payload.receiver_device_id,
+          peer_user_id: payload.from_user_id,
+          expires_at: payload.expires_at,
+        });
+      }
       return Response.json({ ok: true, delivered });
     }
 
     if (url.pathname === "/registerSession" && request.method === "POST") {
-      this.registerSessionRoute((await request.json()) as SessionRegistration);
+      await this.registerSessionRoute((await request.json()) as SessionRegistration);
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/closeSession" && request.method === "POST") {
+      const payload = (await request.json()) as SessionClose;
+      await this.closeSession(payload.session_id, payload.reason ?? "finished");
+      return Response.json({ ok: true });
+    }
+
+    if (url.pathname === "/presence" && request.method === "POST") {
+      const payload = (await request.json().catch(() => ({}))) as PresenceQuery;
+      const deviceIds = Array.isArray(payload.device_ids)
+        ? payload.device_ids.filter((deviceId): deviceId is string => typeof deviceId === "string")
+        : [];
+      const now = Date.now();
+      return Response.json({
+        devices: deviceIds.map((deviceId) => {
+          const online = this.findSockets(deviceId).length > 0;
+          return {
+            device_id: deviceId,
+            online,
+            last_seen_at: online ? now : null,
+          };
+        }),
+      });
     }
 
     if (url.pathname === "/dispatchPeerMessage" && request.method === "POST") {
       const payload = (await request.json()) as PeerDispatch;
       const delivered = this.sendToDevice(payload.target_device_id, payload.message);
       return Response.json({ ok: true, delivered });
-    }
-
-    if (url.pathname === "/closeSession" && request.method === "POST") {
-      const payload = (await request.json()) as SessionClose;
-      this.closeSession(payload.session_id, payload.reason ?? "finished");
-      return Response.json({ ok: true });
     }
 
     if (request.headers.get("upgrade") !== "websocket") {
@@ -112,8 +142,8 @@ export class SignalingHub {
     const client = pair[0];
     const server = pair[1];
     this.state.acceptWebSocket(server, [urlDeviceId]);
+    (server as WebSocketAttachmentAccess).serializeAttachment?.({ device_id: urlDeviceId });
     this.liveWs.set(urlDeviceId, server);
-    await touchDevicePresence(this.env, urlDeviceId, Date.now());
 
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -131,13 +161,11 @@ export class SignalingHub {
     }
 
     if (message.type === "hello") {
-      await touchDevicePresence(this.env, deviceId, Date.now());
       this.send(ws, { type: "hello", device_id: deviceId });
       return;
     }
 
     if (message.type === "pong") {
-      await touchDevicePresence(this.env, deviceId, Date.now());
       return;
     }
 
@@ -146,7 +174,7 @@ export class SignalingHub {
       this.send(ws, { type: "error", code: "TRANSFER_SESSION_NOT_FOUND", message: "传输会话不存在" });
       return;
     }
-    const route = this.sessions.get(sessionId);
+    const route = await this.getSessionRoute(sessionId);
     if (!route) {
       this.send(ws, { type: "error", session_id: sessionId, code: "TRANSFER_SESSION_NOT_FOUND", message: "传输会话不存在" });
       return;
@@ -169,40 +197,63 @@ export class SignalingHub {
     const deviceId = this.findDeviceId(ws);
     if (!deviceId) return;
     this.liveWs.delete(deviceId);
-    await this.env.SESSIONS.put(`dp:${deviceId}`, JSON.stringify({ last_seen_at: Date.now() }), {
-      expirationTtl: 1,
-    });
-    for (const [sessionId, route] of this.sessions.entries()) {
+    for (const [sessionId, route] of await this.listSessionRoutes()) {
       if (route.sender_device_id === deviceId || route.receiver_device_id === deviceId) {
         await this.forwardBye(sessionId, route, deviceId, "device_closed");
-        this.sessions.delete(sessionId);
+        await this.deleteSessionRoute(sessionId);
       }
     }
   }
 
-  alarm(): void {
-    for (const ws of this.liveWs.values()) {
-      this.send(ws, { type: "ping" });
-    }
-  }
-
   private findDeviceId(ws: WebSocket): string | null {
+    const attachment = (ws as WebSocketAttachmentAccess).deserializeAttachment?.();
+    if (isDeviceAttachment(attachment)) return attachment.device_id;
     for (const [deviceId, candidate] of this.liveWs.entries()) {
       if (candidate === ws) return deviceId;
     }
     return null;
   }
 
-  private registerSessionRoute(payload: SessionRegistration): void {
+  private async registerSessionRoute(payload: SessionRegistration): Promise<void> {
     if (!payload.sender_device_id || !payload.receiver_device_id) return;
-    this.sessions.set(payload.session_id, {
+    const route = {
       sender_user_id: payload.sender_user_id,
       sender_device_id: payload.sender_device_id,
       receiver_user_id: payload.receiver_user_id,
       receiver_device_id: payload.receiver_device_id,
       peer_user_id: payload.peer_user_id,
       expires_at: payload.expires_at,
-    });
+    };
+    this.sessions.set(payload.session_id, route);
+    await this.state.storage.put(SESSION_ROUTE_PREFIX + payload.session_id, route);
+  }
+
+  private async getSessionRoute(sessionId: string): Promise<SessionRoute | null> {
+    const cached = this.sessions.get(sessionId);
+    if (cached) return this.validSessionRoute(sessionId, cached);
+    const stored = await this.state.storage.get<SessionRoute>(SESSION_ROUTE_PREFIX + sessionId);
+    if (!stored) return null;
+    this.sessions.set(sessionId, stored);
+    return this.validSessionRoute(sessionId, stored);
+  }
+
+  private async listSessionRoutes(): Promise<Array<[string, SessionRoute]>> {
+    const stored = await this.state.storage.list<SessionRoute>({ prefix: SESSION_ROUTE_PREFIX });
+    return [...stored.entries()].map(([key, route]) => [key.slice(SESSION_ROUTE_PREFIX.length), route]);
+  }
+
+  private async deleteSessionRoute(sessionId: string): Promise<void> {
+    this.sessions.delete(sessionId);
+    await this.state.storage.delete(SESSION_ROUTE_PREFIX + sessionId);
+  }
+
+  private validSessionRoute(sessionId: string, route: SessionRoute): SessionRoute | null {
+    if (route.expires_at <= Date.now()) {
+      this.sessions.delete(sessionId);
+      void this.state.storage.delete(SESSION_ROUTE_PREFIX + sessionId);
+      return null;
+    }
+    return route;
   }
 
   private currentUserId(route: SessionRoute, deviceId: string): string {
@@ -218,12 +269,12 @@ export class SignalingHub {
     });
   }
 
-  private closeSession(sessionId: string, reason: string): void {
-    const route = this.sessions.get(sessionId);
+  private async closeSession(sessionId: string, reason: string): Promise<void> {
+    const route = await this.getSessionRoute(sessionId);
     if (!route) return;
     this.sendToDevice(route.sender_device_id, { type: "bye", session_id: sessionId, reason });
     this.sendToDevice(route.receiver_device_id, { type: "bye", session_id: sessionId, reason });
-    this.sessions.delete(sessionId);
+    await this.deleteSessionRoute(sessionId);
   }
 
   private async forwardBye(sessionId: string, route: SessionRoute, closedDeviceId: string, reason: string): Promise<void> {
@@ -238,13 +289,35 @@ export class SignalingHub {
   }
 
   private sendToDevice(deviceId: string, message: unknown): boolean {
-    const ws = this.liveWs.get(deviceId);
-    if (!ws) return false;
-    this.send(ws, message);
-    return true;
+    const sockets = this.findSockets(deviceId);
+    for (const ws of sockets) {
+      this.send(ws, message);
+    }
+    return sockets.length > 0;
+  }
+
+  private findSockets(deviceId: string): WebSocket[] {
+    const sockets = new Set<WebSocket>();
+    const cached = this.liveWs.get(deviceId);
+    if (cached) sockets.add(cached);
+    for (const ws of this.state.getWebSockets(deviceId)) {
+      sockets.add(ws);
+    }
+    for (const ws of this.state.getWebSockets()) {
+      if (this.findDeviceId(ws) === deviceId) sockets.add(ws);
+    }
+    return [...sockets];
   }
 
   private send(ws: WebSocket, message: unknown): void {
     ws.send(JSON.stringify(message));
   }
+
+}
+
+function isDeviceAttachment(value: unknown): value is { device_id: string } {
+  return typeof value === "object" &&
+    value !== null &&
+    "device_id" in value &&
+    typeof (value as { device_id?: unknown }).device_id === "string";
 }

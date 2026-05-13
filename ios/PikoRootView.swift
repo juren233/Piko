@@ -20,6 +20,7 @@ struct PikoRootView: View {
     }
 
     @StateObject private var model = NativePikoModel()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var selection: Tab = .receive
     @State private var receiveTopBarProgress: CGFloat = 0
     @State private var sendTopBarProgress: CGFloat = 0
@@ -104,6 +105,16 @@ struct PikoRootView: View {
         .onAppear {
             model.startPresence()
             model.startDiscovery()
+        }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active {
+                model.refreshFriendsPresence()
+            }
+        }
+        .onChange(of: selection) { tab in
+            if tab == .send {
+                model.refreshFriendsPresence()
+            }
         }
     }
 }

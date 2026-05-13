@@ -200,6 +200,13 @@ final class NativePikoModel: ObservableObject {
     }
 
     @MainActor
+    func refreshFriendsPresence() {
+        Task {
+            await friendStore.refreshAll()
+        }
+    }
+
+    @MainActor
     func startPresence() {
         if !lanDiscovery.startPresence() {
             transferLabel = "接收服务启动失败"
