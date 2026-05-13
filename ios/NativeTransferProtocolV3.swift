@@ -528,7 +528,7 @@ private extension Data {
     }
 }
 
-private extension SHA256 {
+extension SHA256 {
     static func hashData(_ data: Data) -> Data {
         Data(hash(data: data))
     }

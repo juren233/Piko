@@ -11,7 +11,7 @@ XCODE_PROJECT="$REPO_ROOT/ios/Piko.xcodeproj"
 XCODE_WORKSPACE="$REPO_ROOT/ios/Piko.xcworkspace"
 SCHEME="Piko"
 BUNDLE_IDENTIFIER="com.juren233.piko"
-DEPLOYMENT_TARGET="15.0"
+DEPLOYMENT_TARGET="16.0"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
   echo "未找到构建配置：$CONFIG_PATH" >&2
