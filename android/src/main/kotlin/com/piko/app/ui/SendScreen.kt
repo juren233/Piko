@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -17,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import com.piko.app.domain.PikoHomeState
 import com.piko.app.domain.SendLanDiscoveryState
 import com.piko.app.domain.SendPageState
+import com.piko.app.domain.SendTransportPath
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.domain.SendTransferStatus
 import com.piko.app.platform.SendPlatformActions
@@ -31,6 +35,11 @@ internal fun PikoSendScreen(
 ) {
     val selectedTargetCount = sendPage.selectedDevices.size
     val selectedItemCount = sendPage.selectedTransferItems.size
+    val failedTransfer = sendPage.activeTransfer.takeIf { transfer ->
+        transfer.status == SendTransferStatus.Failed &&
+            !transfer.errorMessage.isNullOrBlank() &&
+            transfer.targets.any { target -> target.transportPath == SendTransportPath.P2P }
+    }
 
     LaunchedEffect(Unit) {
         onStateMutate { state ->
@@ -188,5 +197,36 @@ internal fun PikoSendScreen(
                 )
             }
         }
+        failedTransfer?.let { transfer ->
+            SendTransferFailureDialog(
+                message = transfer.errorMessage.orEmpty(),
+                onDismiss = {
+                    onStateMutate { state ->
+                        state.copy(
+                            sendPage = state.sendPage.applyTransferEvent(
+                                SendTransferEvent.Canceled(transfer.transferId ?: ""),
+                            ),
+                        )
+                    }
+                },
+            )
+        }
     }
+}
+
+@Composable
+private fun SendTransferFailureDialog(
+    message: String,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = "P2P 传输失败") },
+        text = { Text(text = message) },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = "好")
+            }
+        },
+    )
 }

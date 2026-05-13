@@ -42,6 +42,14 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
+class P2PTransferFailure(
+    val stage: String,
+    val transferId: String,
+    val sessionId: String?,
+    val originalReason: String,
+    cause: Throwable? = null,
+) : IllegalStateException(originalReason, cause)
+
 class P2PTransferClient(
     private val context: Context,
     private val tokenStore: TokenStorage,
@@ -69,11 +77,38 @@ class P2PTransferClient(
         callback: (SendTransferEvent) -> Unit,
         ensureActive: () -> Unit,
     ): Long {
-        val manifestFiles = items.toManifestInputs(context.contentResolver)
-        val sessionContext = kotlinx.coroutines.runBlocking { createSession(target, transferId, manifestFiles) }
+        val manifestFiles = runCatching {
+            items.toManifestInputs(context.contentResolver)
+        }.getOrElse { error ->
+            throw P2PTransferFailure(
+                stage = "send_manifest",
+                transferId = transferId,
+                sessionId = null,
+                originalReason = error.message ?: "无法读取待发送文件清单",
+                cause = error,
+            )
+        }
+        val sessionContext = try {
+            kotlinx.coroutines.runBlocking { createSession(target, transferId, manifestFiles) }
+        } catch (failure: P2PTransferFailure) {
+            throw failure
+        } catch (error: Throwable) {
+            throw P2PTransferFailure(
+                stage = "create_session",
+                transferId = transferId,
+                sessionId = null,
+                originalReason = error.message ?: "跨网传输会话创建失败",
+                cause = error,
+            )
+        }
         val session = sessionContext.config
-        require(session.iceServers.none { it.urls.contains("google", ignoreCase = true) }) {
-            "ICE 配置包含非 Cloudflare STUN"
+        if (session.iceServers.any { it.urls.contains("google", ignoreCase = true) }) {
+            throw P2PTransferFailure(
+                stage = "create_session",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = "ICE 配置包含非 Cloudflare STUN",
+            )
         }
         val sentFrames = ConcurrentHashMap<ChunkKey, ByteArray>()
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
@@ -98,15 +133,44 @@ class P2PTransferClient(
             },
         )
         peers[session.sessionId] = peer
-        val channel = peer.createOfferer()
+        val channel = runCatching {
+            peer.createOfferer()
+        }.getOrElse { error ->
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "data_channel_open",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = error.message ?: "WebRTC offer 创建失败",
+                cause = error,
+            )
+        }
         if (!peer.awaitOpen()) {
             peer.close()
             peers.remove(session.sessionId)
-            error("跨网直连超时")
+            throw P2PTransferFailure(
+                stage = "data_channel_open",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = "DATA_CHANNEL_TIMEOUT：跨网直连超时",
+            )
         }
-        val peerHandshake = peer.awaitPeerHandshake()
-        require(
-            TransferProtocolV3.verifyAcceptSignature(
+        val peerHandshake = runCatching {
+            peer.awaitPeerHandshake()
+        }.getOrElse { error ->
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "key_agreement",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = error.message ?: "接收方握手等待失败",
+                cause = error,
+            )
+        }
+        if (
+            !TransferProtocolV3.verifyAcceptSignature(
                 sessionId = session.sessionId,
                 transferId = transferId,
                 manifestHashB64 = sessionContext.manifestHashB64,
@@ -114,44 +178,133 @@ class P2PTransferClient(
                 receiverEphemeralPublicKeyB64 = peerHandshake.ephemeralPublicB64,
                 signatureB64 = peerHandshake.acceptSignatureB64,
                 receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
-            ),
-        ) { "接收方签名校验失败" }
-        val sessionKey = TransferProtocolV3.deriveSessionKey(
-            sessionId = session.sessionId,
-            transferId = transferId,
-            localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
-            peerEphemeralPublicKeyB64 = peerHandshake.ephemeralPublicB64,
-            localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
-            peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
-            role = TransferV3KeyAgreementRole.Sender,
-        )
+            )
+        ) {
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "key_agreement",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = "接收方签名校验失败",
+            )
+        }
+        val sessionKey = runCatching {
+            TransferProtocolV3.deriveSessionKey(
+                sessionId = session.sessionId,
+                transferId = transferId,
+                localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
+                peerEphemeralPublicKeyB64 = peerHandshake.ephemeralPublicB64,
+                localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
+                peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
+                role = TransferV3KeyAgreementRole.Sender,
+            )
+        }.getOrElse { error ->
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "key_agreement",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = error.message ?: "跨网密钥协商失败",
+                cause = error,
+            )
+        }
         sessionContext.sessionKey = sessionKey
 
         val peerCompletedChunks = peerHandshake.completedChunks
-        sendBinary(
-            channel,
+        val manifestFrame = runCatching {
             TransferProtocolV3.encodeManifest(
                 sessionKey = sessionKey,
                 sessionId = session.sessionId,
                 transferId = transferId,
                 files = manifestFiles,
                 senderName = senderName,
-            ),
-        )
+            )
+        }.getOrElse { error ->
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "send_manifest",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = error.message ?: "传输清单编码失败",
+                cause = error,
+            )
+        }
+        runCatching {
+            sendBinary(channel, manifestFrame)
+        }.getOrElse { error ->
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "send_manifest",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = error.message ?: "传输清单发送失败",
+                cause = error,
+            )
+        }
         var sentBytes = 0L
         val buffer = ByteArray(TransferProtocolV3.chunkSize)
         items.forEachIndexed { fileIndex, item ->
-            ensureActive()
-            context.contentResolver.openInputStream(Uri.parse(item.sourceUri)).use { input ->
-                requireNotNull(input) { "无法读取 ${item.displayName}" }
-                var chunkIndex = 0
-                while (true) {
-                    ensureActive()
-                    val read = input.read(buffer)
-                    if (read == -1) break
-                    val chunkKey = ChunkKey(fileIndex, chunkIndex)
-                    if (peerCompletedChunks[fileIndex]?.contains(chunkIndex) == true) {
-                        if (ackedChunks.add(chunkKey)) ackLatch.countDown()
+            runCatching {
+                ensureActive()
+                context.contentResolver.openInputStream(Uri.parse(item.sourceUri)).use { input ->
+                    requireNotNull(input) { "无法读取 ${item.displayName}" }
+                    var chunkIndex = 0
+                    while (true) {
+                        ensureActive()
+                        val read = input.read(buffer)
+                        if (read == -1) break
+                        val chunkKey = ChunkKey(fileIndex, chunkIndex)
+                        if (peerCompletedChunks[fileIndex]?.contains(chunkIndex) == true) {
+                            if (ackedChunks.add(chunkKey)) ackLatch.countDown()
+                            sentBytes += read
+                            chunkIndex += 1
+                            callback(
+                                SendTransferEvent.Progress(
+                                    transferId = transferId,
+                                    completedBytes = (totalCompletedBeforeTarget + sentBytes).coerceAtMost(totalBytes),
+                                    totalBytes = totalBytes,
+                                ),
+                            )
+                            continue
+                        }
+                        val chunkFrame = runCatching {
+                            TransferProtocolV3.encodeChunk(
+                                sessionKey = sessionKey,
+                                sessionId = session.sessionId,
+                                transferId = transferId,
+                                fileIndex = fileIndex,
+                                chunkIndex = chunkIndex,
+                                plain = buffer.copyOf(read),
+                            )
+                        }.getOrElse { error ->
+                            peer.close()
+                            peers.remove(session.sessionId)
+                            throw P2PTransferFailure(
+                                stage = "send_chunk",
+                                transferId = transferId,
+                                sessionId = session.sessionId,
+                                originalReason = error.message ?: "文件分片编码失败",
+                                cause = error,
+                            )
+                        }
+                        sentFrames[chunkKey] = chunkFrame
+                        runCatching {
+                            sendBinary(channel, chunkFrame)
+                        }.getOrElse { error ->
+                            peer.close()
+                            peers.remove(session.sessionId)
+                            throw P2PTransferFailure(
+                                stage = "send_chunk",
+                                transferId = transferId,
+                                sessionId = session.sessionId,
+                                originalReason = error.message ?: "文件分片发送失败",
+                                cause = error,
+                            )
+                        }
                         sentBytes += read
                         chunkIndex += 1
                         callback(
@@ -161,34 +314,30 @@ class P2PTransferClient(
                                 totalBytes = totalBytes,
                             ),
                         )
-                        continue
                     }
-                    val chunkFrame = TransferProtocolV3.encodeChunk(
-                        sessionKey = sessionKey,
-                        sessionId = session.sessionId,
-                        transferId = transferId,
-                        fileIndex = fileIndex,
-                        chunkIndex = chunkIndex,
-                        plain = buffer.copyOf(read),
-                    )
-                    sentFrames[chunkKey] = chunkFrame
-                    sendBinary(channel, chunkFrame)
-                    sentBytes += read
-                    chunkIndex += 1
-                    callback(
-                        SendTransferEvent.Progress(
-                            transferId = transferId,
-                            completedBytes = (totalCompletedBeforeTarget + sentBytes).coerceAtMost(totalBytes),
-                            totalBytes = totalBytes,
-                        ),
-                    )
                 }
+            }.getOrElse { error ->
+                if (error is P2PTransferFailure) throw error
+                peer.close()
+                peers.remove(session.sessionId)
+                throw P2PTransferFailure(
+                    stage = "send_chunk",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = error.message ?: "文件分片读取失败",
+                    cause = error,
+                )
             }
         }
         if (totalChunks > 0 && !ackLatch.await(30, TimeUnit.SECONDS)) {
             peer.close()
             peers.remove(session.sessionId)
-            error("跨网传输确认超时")
+            throw P2PTransferFailure(
+                stage = "ack",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = "P2P_ACK_TIMEOUT：跨网传输确认超时",
+            )
         }
         channel.close()
         peer.close()
@@ -237,7 +386,12 @@ class P2PTransferClient(
                 receiverX25519PubB64 = receiverX25519PubB64,
                 manifestHashB64 = manifestHashB64,
             )
-            is AccountResult.Err -> error(session.error.messageOrCode())
+            is AccountResult.Err -> throw P2PTransferFailure(
+                stage = "create_session",
+                transferId = transferId,
+                sessionId = null,
+                originalReason = session.error.messageOrCode(),
+            )
         }
     }
 
@@ -937,6 +1091,6 @@ private fun ByteArray.base64(): String = Base64.getEncoder().encodeToString(this
 private fun com.piko.app.domain.AccountError.messageOrCode(): String = when (this) {
     com.piko.app.domain.AccountError.Network -> "网络不可用"
     com.piko.app.domain.AccountError.SessionExpired -> "登录已过期"
-    is com.piko.app.domain.AccountError.Server -> message.ifBlank { code }
+    is com.piko.app.domain.AccountError.Server -> "${message.ifBlank { "服务端错误" }}（$code）"
     else -> "跨网传输会话创建失败"
 }

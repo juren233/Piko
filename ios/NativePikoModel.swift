@@ -36,6 +36,12 @@ enum NativeReceiveSaveDestination {
     case album
 }
 
+private struct NativeP2PFailureDiagnostic {
+    let stage: String
+    let sessionId: String
+    let originalReason: String
+}
+
 final class NativePikoModel: ObservableObject {
     @Published var lanDevices: [NativeSendDevice] = []
     @Published var selectedDeviceIds: Set<String> = []
@@ -45,6 +51,7 @@ final class NativePikoModel: ObservableObject {
     @Published var activeReceive: NativeReceiveTransferState?
     @Published var transferLabel = "等待发送"
     @Published var transferProgress: Double?
+    @Published var transferFailureMessage: String?
     @Published var discoveryLabel = "正在搜索"
     @Published var imageSectionExpanded = false
     @Published var mediaSaveLocation: NativeMediaSaveLocation
@@ -150,6 +157,7 @@ final class NativePikoModel: ObservableObject {
                 receiverDeviceId: device.deviceId,
                 receiverEd25519PubB64: device.ed25519PubB64,
                 receiverX25519PubB64: device.x25519PubB64,
+                platformHint: device.platform,
                 online: device.online
             )
         }
@@ -312,7 +320,8 @@ final class NativePikoModel: ObservableObject {
                     case .success(let sentTargetBytes):
                         sentBytes += sentTargetBytes
                     case .failure(let error):
-                        self.transferLabel = error.displayMessage
+                        self.transferFailureMessage = self.p2pFailureMessage(target: target, transferId: transferId, error: error)
+                        self.transferLabel = self.p2pFailureOriginalReason(error)
                         self.transferStateMachine.finishSend()
                         return
                     }
@@ -339,6 +348,49 @@ final class NativePikoModel: ObservableObject {
             }
 
             self.transferStateMachine.finishSend()
+        }
+    }
+
+    private func p2pFailureMessage(target: NativeSendDevice, transferId: String, error: NativeAccountError) -> String {
+        let diagnostic = p2pDiagnostic(error)
+        let deviceId = target.receiverDeviceId?.nilIfBlank ?? "未知设备"
+        let userId = target.receiverUserId?.nilIfBlank ?? "未知用户"
+        let receiverPlatform = target.platformHint?.nilIfBlank ?? "未知"
+        let onlineSnapshot = target.online ? "在线" : "离线"
+        return [
+            "目标：\(target.name)",
+            "用户：\(userId)",
+            "设备：\(deviceId)",
+            "传输：\(transferId)",
+            "会话：\(diagnostic.sessionId)",
+            "路径：P2P",
+            "发送端：iOS",
+            "接收端：\(receiverPlatform)",
+            "在线快照：\(onlineSnapshot)",
+            "阶段：\(diagnostic.stage)",
+            "原始原因：\(diagnostic.originalReason)"
+        ].joined(separator: "\n")
+    }
+
+    private func p2pFailureOriginalReason(_ error: NativeAccountError) -> String {
+        p2pDiagnostic(error).originalReason
+    }
+
+    private func p2pDiagnostic(_ error: NativeAccountError) -> NativeP2PFailureDiagnostic {
+        switch error {
+        case .server(let code, let message):
+            let fields = message.p2pDiagnosticFields
+            return NativeP2PFailureDiagnostic(
+                stage: fields["阶段"]?.nilIfBlank ?? "unknown",
+                sessionId: fields["会话"]?.nilIfBlank ?? "未创建/未知",
+                originalReason: fields["原始原因"]?.nilIfBlank ?? "\(message.nilIfBlank ?? "服务端错误")（\(code)）"
+            )
+        default:
+            return NativeP2PFailureDiagnostic(
+                stage: "unknown",
+                sessionId: "未创建/未知",
+                originalReason: error.displayMessage
+            )
         }
     }
 
@@ -811,6 +863,7 @@ struct NativeSendDevice: Identifiable {
     var receiverDeviceId: String?
     var receiverEd25519PubB64: String?
     var receiverX25519PubB64: String?
+    var platformHint: String? = nil
     var online: Bool = true
 
     var isConnectable: Bool {
@@ -818,8 +871,7 @@ struct NativeSendDevice: Identifiable {
         case .lan:
             return true
         case .p2p:
-            return online &&
-                receiverUserId?.nilIfBlank != nil &&
+            return receiverUserId?.nilIfBlank != nil &&
                 receiverDeviceId?.nilIfBlank != nil &&
                 receiverEd25519PubB64?.nilIfBlank != nil &&
                 receiverX25519PubB64?.nilIfBlank != nil
@@ -836,6 +888,15 @@ extension String {
     var nilIfBlank: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var p2pDiagnosticFields: [String: String] {
+        split(separator: "\n").reduce(into: [:]) { result, line in
+            let parts = line.split(separator: "：", maxSplits: 1).map(String.init)
+            if parts.count == 2 {
+                result[parts[0]] = parts[1]
+            }
+        }
     }
 
     var fourDigitCode: String? {

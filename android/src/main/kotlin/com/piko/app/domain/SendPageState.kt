@@ -264,8 +264,7 @@ data class SendDevice(
     val isConnectable: Boolean
         get() = when (transportPath) {
             SendTransportPath.Lan -> !host.isNullOrBlank() && port != null && port > 0
-            SendTransportPath.P2P -> online &&
-                !receiverUserId.isNullOrBlank() &&
+            SendTransportPath.P2P -> !receiverUserId.isNullOrBlank() &&
                 !receiverDeviceId.isNullOrBlank() &&
                 !receiverEd25519PubB64.isNullOrBlank() &&
                 !receiverX25519PubB64.isNullOrBlank()

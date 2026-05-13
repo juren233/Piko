@@ -75,6 +75,16 @@ struct NativeSendView: View {
                 model.addItems(items)
             }
         }
+        .alert("P2P 传输失败", isPresented: Binding(
+            get: { model.transferFailureMessage != nil },
+            set: { if !$0 { model.transferFailureMessage = nil } }
+        )) {
+            Button("好", role: .cancel) {
+                model.transferFailureMessage = nil
+            }
+        } message: {
+            Text(model.transferFailureMessage ?? "")
+        }
         .task {
             model.refreshFriendsPresence()
         }

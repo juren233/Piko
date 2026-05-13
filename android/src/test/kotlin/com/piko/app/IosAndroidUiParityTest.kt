@@ -178,6 +178,8 @@ class IosAndroidUiParityTest {
         assertTrue("fun acceptReceiveTransfer(transferId: String)" in androidP2P)
         assertTrue("TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)" in androidP2P)
         assertTrue("sha256File(tempFile).contentEquals(file.fileHash)" in androidP2P)
+        assertFalse("SendTransportPath.P2P -> online &&" in androidState)
+        assertFalse("return online &&" in iosModel)
         assertTrue("private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()" in androidP2P)
         assertInOrder(
             androidP2P,
@@ -256,6 +258,22 @@ class IosAndroidUiParityTest {
         assertTrue("@MainActor\n    func acceptReceiveTransfer()" in iosModel)
         assertTrue("@MainActor\n    func cancelReceiveTransfer()" in iosModel)
         assertTrue("p2pTransferClient.send(" in iosModel)
+        assertTrue("@Published var transferFailureMessage: String?" in iosModel)
+        assertTrue("p2pFailureMessage(target: target, transferId: transferId, error: error)" in iosModel)
+        assertTrue(".alert(\"P2P 传输失败\"" in readIos("NativeSendView.swift"))
+        assertTrue("AlertDialog(" in readAndroid("ui/SendScreen.kt"))
+        assertTrue("P2P 传输失败" in readAndroid("ui/SendScreen.kt"))
+        assertTrue("p2pFailureMessage(target = target, transferId = transferId, cause = error)" in androidSendActions)
+        assertTrue("class P2PTransferFailure(" in androidP2P)
+        assertTrue("private func p2pError(" in iosP2P)
+        listOf("传输：", "会话：", "发送端：", "接收端：", "在线快照：", "阶段：", "原始原因：").forEach { field ->
+            assertTrue(field in androidSendActions, "Android P2P failure dialog must include $field")
+            assertTrue(field in iosModel, "iOS P2P failure dialog must include $field")
+        }
+        listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "send_chunk", "ack").forEach { stage ->
+            assertTrue(stage in androidP2P, "Android P2P must keep failure stage $stage")
+            assertTrue(stage in iosP2P, "iOS P2P must keep failure stage $stage")
+        }
         assertFalse("WebRTC DataChannel 尚未接入" in iosModel)
         assertTrue("signalingClient.connect(token, identity.deviceId)" in androidApp)
         assertTrue("signalingClient.connect(token: token, deviceId: identity.deviceId)" in iosModel)

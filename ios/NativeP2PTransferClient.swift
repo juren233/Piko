@@ -45,12 +45,14 @@ final class NativeP2PTransferClient {
         transferId: String,
         manifestFiles: [NativeTransferV3ManifestInput]
     ) async -> Result<NativeP2PSendSession, NativeAccountError> {
-        guard let token = authStore.currentToken(),
-              let receiverUserId = target.receiverUserId,
+        guard let token = authStore.currentToken() else {
+            return .failure(p2pError(stage: "create_session", sessionId: nil, code: "SESSION_EXPIRED", message: "登录已过期"))
+        }
+        guard let receiverUserId = target.receiverUserId,
               let receiverDeviceId = target.receiverDeviceId,
               let receiverEd25519PubB64 = target.receiverEd25519PubB64,
               let receiverX25519PubB64 = target.receiverX25519PubB64 else {
-            return .failure(.sessionExpired)
+            return .failure(p2pError(stage: "create_session", sessionId: nil, code: "TARGET_DEVICE_INCOMPLETE", message: "目标 P2P 信息缺失"))
         }
         do {
             let identity = try identityStore.loadOrCreate()
@@ -84,11 +86,22 @@ final class NativeP2PTransferClient {
                     )
                 )
             case .failure(let error):
-                return .failure(error)
+                return .failure(p2pError(stage: "create_session", sessionId: nil, code: error.p2pCode, message: error.p2pOriginalReason))
             }
         } catch {
-            return .failure(.networkUnavailable)
+            return .failure(p2pError(stage: "create_session", sessionId: nil, code: "CREATE_SESSION_FAILED", message: error.localizedDescription))
         }
+    }
+
+    private func p2pError(stage: String, sessionId: String?, code: String, message: String) -> NativeAccountError {
+        .server(
+            code: code,
+            message: [
+                "阶段：\(stage)",
+                "会话：\(sessionId?.nilIfBlank ?? "未创建/未知")",
+                "原始原因：\(message.nilIfBlank ?? code)"
+            ].joined(separator: "\n")
+        )
     }
 
     func send(
@@ -101,7 +114,7 @@ final class NativeP2PTransferClient {
         progressUpdate: @escaping (Double) -> Void
     ) async -> Result<Int, NativeAccountError> {
         guard let manifestFiles = items.toManifestInputs() else {
-            return .failure(.networkUnavailable)
+            return .failure(p2pError(stage: "send_manifest", sessionId: nil, code: "MANIFEST_INPUT_FAILED", message: "无法读取待发送文件清单"))
         }
         switch await createSession(target: target, transferId: transferId, manifestFiles: manifestFiles) {
         case .failure(let error):
@@ -109,7 +122,7 @@ final class NativeP2PTransferClient {
         case .success(let sessionContext):
             let config = sessionContext.config
             guard config.iceServers.allSatisfy({ !$0.urls.localizedCaseInsensitiveContains("google") }) else {
-                return .failure(.server(code: "INVALID_ICE_CONFIG", message: "ICE 配置包含非 Cloudflare STUN"))
+                return .failure(p2pError(stage: "create_session", sessionId: config.sessionId, code: "INVALID_ICE_CONFIG", message: "ICE 配置包含非 Cloudflare STUN"))
             }
             let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
             var sentFrames: [String: Data] = [:]
@@ -148,7 +161,7 @@ final class NativeP2PTransferClient {
             sessions[config.sessionId] = session
             guard await session.createOffer(), await session.waitUntilOpen(seconds: 15) else {
                 closeSession(config.sessionId)
-                return .failure(.server(code: "DATA_CHANNEL_TIMEOUT", message: "跨网直连超时"))
+                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: "DATA_CHANNEL_TIMEOUT", message: "跨网直连超时"))
             }
             guard let peerHandshake = await session.waitForPeerEphemeralPublic(seconds: 10),
                   NativeTransferProtocolV3.verifyAcceptSignature(
@@ -170,7 +183,7 @@ final class NativeP2PTransferClient {
                     role: .sender
                   ) else {
                 closeSession(config.sessionId)
-                return .failure(.server(code: "KEY_AGREEMENT_FAILED", message: "跨网密钥协商失败"))
+                return .failure(p2pError(stage: "key_agreement", sessionId: config.sessionId, code: "KEY_AGREEMENT_FAILED", message: "跨网密钥协商失败"))
             }
             negotiatedSessionKey = sessionKey
             sessionContext.sessionKey = sessionKey
@@ -185,14 +198,14 @@ final class NativeP2PTransferClient {
             ),
             await session.send(manifestFrame) else {
                 closeSession(config.sessionId)
-                return .failure(.networkUnavailable)
+                return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: "传输清单发送失败"))
             }
 
             var sentBytes = 0
             for (fileIndex, item) in items.enumerated() {
                 guard let stream = InputStream(url: item.fileURL) else {
                     closeSession(config.sessionId)
-                    return .failure(.networkUnavailable)
+                    return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "OPEN_FILE_FAILED", message: "无法读取待发送文件"))
                 }
                 stream.open()
                 defer {
@@ -203,12 +216,12 @@ final class NativeP2PTransferClient {
                 while stream.hasBytesAvailable {
                     if Task.isCancelled {
                         closeSession(config.sessionId)
-                        return .failure(.networkUnavailable)
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "TRANSFER_CANCELLED", message: "传输已取消"))
                     }
                     let read = stream.read(&buffer, maxLength: buffer.count)
                     guard read >= 0 else {
                         closeSession(config.sessionId)
-                        return .failure(.networkUnavailable)
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "READ_FILE_FAILED", message: "文件分片读取失败"))
                     }
                     if read == 0 {
                         break
@@ -229,7 +242,7 @@ final class NativeP2PTransferClient {
                     ),
                     await session.send(chunkFrame) else {
                         closeSession(config.sessionId)
-                        return .failure(.networkUnavailable)
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败"))
                     }
                     sentFrames[chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)] = chunkFrame
                     sentBytes += read
@@ -240,7 +253,7 @@ final class NativeP2PTransferClient {
 
             guard await ackTracker.waitForAll(seconds: 30) else {
                 closeSession(config.sessionId)
-                return .failure(.server(code: "P2P_ACK_TIMEOUT", message: "跨网传输确认超时"))
+                return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: "P2P_ACK_TIMEOUT", message: "跨网传输确认超时"))
             }
             closeSession(config.sessionId)
             if let token = authStore.currentToken() {
@@ -686,6 +699,30 @@ private final class NativeP2PSendSession {
         self.receiverEd25519PubB64 = receiverEd25519PubB64
         self.receiverX25519PubB64 = receiverX25519PubB64
         self.manifestHashB64 = manifestHashB64
+    }
+}
+
+private extension NativeAccountError {
+    var p2pCode: String {
+        switch self {
+        case .server(let code, _):
+            return code
+        case .networkUnavailable:
+            return "NETWORK_UNAVAILABLE"
+        case .sessionExpired:
+            return "SESSION_EXPIRED"
+        default:
+            return "ACCOUNT_ERROR"
+        }
+    }
+
+    var p2pOriginalReason: String {
+        switch self {
+        case .server(_, let message):
+            return message.nilIfBlank ?? displayMessage
+        default:
+            return displayMessage
+        }
     }
 }
 

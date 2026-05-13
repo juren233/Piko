@@ -58,6 +58,7 @@ import com.piko.app.transport.AndroidLocalSendMulticast
 import com.piko.app.transport.LocalSendDeviceInfo
 import com.piko.app.transport.LocalSendHttpServer
 import com.piko.app.transport.LocalSendHttpUploadClient
+import com.piko.app.transport.P2PTransferFailure
 import com.piko.app.transport.P2PTransferClient
 import com.piko.app.transport.SignalingWebSocketClient
 import com.piko.app.transport.TransferTransport
@@ -627,8 +628,10 @@ private class AndroidTransferClient(
             isDaemon = true,
         ) {
             var completedBytes = 0L
+            var activeTarget: SendDevice? = null
             try {
                 request.targets.forEach { target ->
+                    activeTarget = target
                     ensureNotStopped()
                     completedBytes += when (target.transportPath) {
                         SendTransportPath.Lan -> runCatching {
@@ -673,13 +676,41 @@ private class AndroidTransferClient(
             } catch (_: TransferCanceledException) {
                 callback(SendTransferEvent.Canceled(transferId))
             } catch (error: Throwable) {
-                callback(SendTransferEvent.Failed(transferId, error.message ?: "发送失败"))
+                val target = activeTarget
+                val message = if (target?.transportPath == SendTransportPath.P2P) {
+                    p2pFailureMessage(target = target, transferId = transferId, cause = error)
+                } else {
+                    error.message ?: "发送失败"
+                }
+                callback(SendTransferEvent.Failed(transferId, message))
             } finally {
                 activeSocket = null
                 activeTransferId = null
                 requestedStop = null
             }
         }
+    }
+
+    private fun p2pFailureMessage(target: SendDevice, transferId: String, cause: Throwable): String {
+        val p2pFailure = cause as? P2PTransferFailure
+        val sessionId = p2pFailure?.sessionId?.ifBlank { null } ?: "未创建/未知"
+        val stage = p2pFailure?.stage ?: "unknown"
+        val originalReason = p2pFailure?.originalReason ?: (cause.message ?: cause::class.java.simpleName)
+        val receiverPlatform = target.platformHint?.ifBlank { null } ?: "未知"
+        val onlineSnapshot = if (target.online) "在线" else "离线"
+        return listOf(
+            "目标：${target.name}",
+            "用户：${target.receiverUserId ?: "未知用户"}",
+            "设备：${target.receiverDeviceId ?: "未知设备"}",
+            "传输：$transferId",
+            "会话：$sessionId",
+            "路径：P2P",
+            "发送端：Android",
+            "接收端：$receiverPlatform",
+            "在线快照：$onlineSnapshot",
+            "阶段：$stage",
+            "原始原因：$originalReason",
+        ).joinToString("\n")
     }
 
     private fun sendLegacyTransfer(
