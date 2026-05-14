@@ -473,4 +473,50 @@ describe("cross-network signaling control plane", () => {
     );
     expect(senderWs.sent.at(-1)).toMatchObject({ type: "bye", session_id: created.json.session_id });
   });
+
+  it("keeps signaling sessions alive when an older duplicate device websocket closes", async () => {
+    const alice = await register("signaldupwsalice");
+    const bob = await register("signaldupwsbob");
+    await makeFriends(alice, bob);
+    await registerDevice(alice, "01HR0A9S9Y1N2Z3X4W5V6T7S8T", "Alice Phone");
+    await registerDevice(bob, "01HR0A9S9Y1N2Z3X4W5V6T7S8V", "Bob Phone");
+
+    const senderWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S8T");
+    const receiverOldWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S8V");
+    const receiverNewWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S8V");
+    const senderState = hubStateRecorder([senderWs]);
+    const receiverState = hubStateRecorder([receiverOldWs, receiverNewWs]);
+    const hubs = new Map<string, SignalingHub>();
+    const testEnv = {
+      ...env,
+      SIGNALING_HUB: signalingNamespace(hubs),
+    };
+    const senderHub = new SignalingHub(senderState, testEnv as unknown as Env);
+    const receiverHub = new SignalingHub(receiverState, testEnv as unknown as Env);
+    hubs.set(alice.user.id, senderHub);
+    hubs.set(bob.user.id, receiverHub);
+
+    const created = await appCall<SessionEnvelope>(testEnv as unknown as Env, "POST", "/v1/transfers/sessions", {
+      bearer: alice.token,
+      body: transferSessionBody(bob.user.id, "01HR0A9S9Y1N2Z3X4W5V6T7S8V", "01HR0A9S9Y1N2Z3X4W5V6T7S8T"),
+    });
+    expect(created.status).toBe(201);
+
+    await receiverHub.webSocketClose(receiverOldWs as unknown as WebSocket);
+    expect(senderWs.sent.at(-1)).not.toMatchObject({
+      type: "bye",
+      session_id: created.json.session_id,
+      reason: "device_closed",
+    });
+
+    await receiverHub.webSocketMessage(
+      receiverNewWs as unknown as WebSocket,
+      JSON.stringify({ type: "answer", session_id: created.json.session_id, sdp: "answer-after-reconnect" }),
+    );
+    expect(senderWs.sent.at(-1)).toMatchObject({
+      type: "answer",
+      session_id: created.json.session_id,
+      sdp: "answer-after-reconnect",
+    });
+  });
 });

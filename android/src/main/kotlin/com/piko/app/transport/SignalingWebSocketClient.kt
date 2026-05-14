@@ -68,13 +68,15 @@ class SignalingWebSocketClient(
                 }
 
                 override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    if (socket === webSocket) socket = null
+                    if (socket !== webSocket) return
+                    socket = null
                     onFailure(t)
                     scheduleReconnect()
                 }
 
                 override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                    if (socket === webSocket) socket = null
+                    if (socket !== webSocket) return
+                    socket = null
                     if (!closedByUser) scheduleReconnect()
                 }
             },

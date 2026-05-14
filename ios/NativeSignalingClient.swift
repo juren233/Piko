@@ -41,7 +41,7 @@ final class NativeSignalingClient {
         task = nextTask
         nextTask.resume()
         send(["type": "hello"])
-        receiveLoop()
+        receiveLoop(nextTask)
     }
 
     func send(_ message: [String: Any]) {
@@ -62,17 +62,20 @@ final class NativeSignalingClient {
         activeDeviceId = nil
     }
 
-    private func receiveLoop() {
-        task?.receive { [weak self] result in
+    private func receiveLoop(_ currentTask: URLSessionWebSocketTask) {
+        currentTask.receive { [weak self, weak currentTask] result in
             guard let self else {
+                return
+            }
+            guard let currentTask, self.task === currentTask else {
                 return
             }
             switch result {
             case .success(.string(let text)):
                 self.handle(text)
-                self.receiveLoop()
+                self.receiveLoop(currentTask)
             case .success:
-                self.receiveLoop()
+                self.receiveLoop(currentTask)
             case .failure:
                 self.task = nil
                 self.scheduleReconnect()

@@ -199,7 +199,12 @@ export class SignalingHub {
   async webSocketClose(ws: WebSocket): Promise<void> {
     const deviceId = this.findDeviceId(ws);
     if (!deviceId) return;
-    this.liveWs.delete(deviceId);
+    if (this.liveWs.get(deviceId) === ws) {
+      this.liveWs.delete(deviceId);
+    }
+    if (this.hasOtherSocket(deviceId, ws)) {
+      return;
+    }
     for (const [sessionId, route] of await this.listSessionRoutes()) {
       if (route.sender_device_id === deviceId || route.receiver_device_id === deviceId) {
         await this.forwardBye(sessionId, route, deviceId, "device_closed");
@@ -215,6 +220,18 @@ export class SignalingHub {
       if (candidate === ws) return deviceId;
     }
     return null;
+  }
+
+  private hasOtherSocket(deviceId: string, closingWs: WebSocket): boolean {
+    const cached = this.liveWs.get(deviceId);
+    if (cached && cached !== closingWs) return true;
+    for (const ws of this.state.getWebSockets(deviceId)) {
+      if (ws !== closingWs) return true;
+    }
+    for (const ws of this.state.getWebSockets()) {
+      if (ws !== closingWs && this.findDeviceId(ws) === deviceId) return true;
+    }
+    return false;
   }
 
   private async registerSessionRoute(payload: SessionRegistration): Promise<void> {
