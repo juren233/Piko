@@ -9,6 +9,8 @@ struct NativeWebRTCDiagnostic {
     let iceServerUrls: String
     let localCandidateTypes: String
     let remoteCandidateTypes: String
+    let localCandidateDetails: String
+    let remoteCandidateDetails: String
     let iceConnectionState: String
     let iceGatheringState: String
     let signalingState: String
@@ -24,6 +26,8 @@ struct NativeWebRTCDiagnostic {
         iceServerUrls: "unknown",
         localCandidateTypes: "none",
         remoteCandidateTypes: "none",
+        localCandidateDetails: "none",
+        remoteCandidateDetails: "none",
         iceConnectionState: "unknown",
         iceGatheringState: "unknown",
         signalingState: "unknown",
@@ -61,6 +65,8 @@ final class NativeWebRTCSession: NSObject {
     private var remoteIceCount = 0
     private var localCandidateTypes: Set<String> = []
     private var remoteCandidateTypes: Set<String> = []
+    private var localCandidateDetails: Set<String> = []
+    private var remoteCandidateDetails: Set<String> = []
     private var iceConnectionState = "unknown"
     private var iceGatheringState = "unknown"
     private var signalingState = "unknown"
@@ -80,6 +86,8 @@ final class NativeWebRTCSession: NSObject {
             iceServerUrls: iceServers.map(\.urls).joined(separator: ",").nilIfBlank ?? "none",
             localCandidateTypes: Self.candidateTypesDescription(localCandidateTypes),
             remoteCandidateTypes: Self.candidateTypesDescription(remoteCandidateTypes),
+            localCandidateDetails: Self.candidateDetailsDescription(localCandidateDetails),
+            remoteCandidateDetails: Self.candidateDetailsDescription(remoteCandidateDetails),
             iceConnectionState: iceConnectionState,
             iceGatheringState: iceGatheringState,
             signalingState: signalingState,
@@ -157,6 +165,7 @@ final class NativeWebRTCSession: NSObject {
         }
         remoteIceCount += 1
         remoteCandidateTypes.insert(Self.candidateType(candidate))
+        remoteCandidateDetails.insert(Self.candidateSummary(candidate))
         let sdpMid = message["sdp_mid"] as? String
         let sdpMLineIndex = message["sdp_m_line_index"] as? Int ?? 0
         _ = await evaluate(
@@ -310,6 +319,63 @@ final class NativeWebRTCSession: NSObject {
     private static func candidateTypesDescription(_ types: Set<String>) -> String {
         let values = types.filter { !$0.isEmpty }.sorted()
         return values.isEmpty ? "none" : values.joined(separator: ",")
+    }
+
+    private static func candidateDetailsDescription(_ details: Set<String>) -> String {
+        let values = details.filter { !$0.isEmpty }.sorted().prefix(12)
+        return values.isEmpty ? "none" : values.joined(separator: ";")
+    }
+
+    private static func candidateSummary(_ candidate: String) -> String {
+        let parts = candidate
+            .split(whereSeparator: { $0 == " " || $0 == "\t" })
+            .map(String.init)
+        let proto = parts.indices.contains(2) ? parts[2].lowercased() : "unknown"
+        let address = parts.indices.contains(4) ? addressKind(parts[4]) : "unknown"
+        let port = parts.indices.contains(5) && !parts[5].isEmpty ? parts[5] : "unknown"
+        var values = [
+            "type=\(candidateType(candidate))",
+            "proto=\(proto)",
+            "addr=\(address)",
+            "port=\(port)"
+        ]
+        if let relatedAddress = regexCapture(pattern: #"\braddr\s+(\S+)"#, in: candidate) {
+            values.append("raddr=\(addressKind(relatedAddress))")
+        }
+        if let relatedPort = regexCapture(pattern: #"\brport\s+(\S+)"#, in: candidate) {
+            values.append("rport=\(relatedPort)")
+        }
+        return values.joined(separator: "/")
+    }
+
+    private static func addressKind(_ value: String) -> String {
+        let lowercased = value.lowercased()
+        if lowercased.contains(":") {
+            if lowercased == "::1" { return "loopback-ipv6" }
+            if lowercased.hasPrefix("fe80:") { return "link-local-ipv6" }
+            if lowercased.hasPrefix("fd") || lowercased.hasPrefix("fc") { return "ula-ipv6" }
+            return "public-ipv6"
+        }
+        let octets = lowercased.split(separator: ".").compactMap { Int($0) }
+        guard octets.count == 4 else {
+            return "unknown"
+        }
+        let first = octets[0]
+        let second = octets[1]
+        if first == 10 { return "private-ipv4" }
+        if first == 172 && (16...31).contains(second) { return "private-ipv4" }
+        if first == 192 && second == 168 { return "private-ipv4" }
+        if first == 169 && second == 254 { return "link-local-ipv4" }
+        if first == 100 && (64...127).contains(second) { return "cgnat-ipv4" }
+        if first == 127 { return "loopback-ipv4" }
+        return "public-ipv4"
+    }
+
+    private static func regexCapture(pattern: String, in value: String) -> String? {
+        guard let range = value.range(of: pattern, options: .regularExpression) else {
+            return nil
+        }
+        return value[range].split(separator: " ").last.map(String.init)
     }
 
     private static let html = """
@@ -535,6 +601,9 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             signal["session_id"] = sessionId
             if signal["type"] as? String == "ice_candidate" {
                 localIceCount += 1
+                if let candidate = signal["candidate"] as? String {
+                    localCandidateDetails.insert(Self.candidateSummary(candidate))
+                }
                 if let candidateType = signal["candidate_type"] as? String {
                     localCandidateTypes.insert(candidateType)
                 } else if let candidate = signal["candidate"] as? String {

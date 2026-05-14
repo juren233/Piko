@@ -47,6 +47,8 @@ private struct NativeP2PFailureDiagnostic {
     let iceServerUrls: String
     let localCandidateTypes: String
     let remoteCandidateTypes: String
+    let localCandidateDetails: String
+    let remoteCandidateDetails: String
     let iceConnectionState: String
     let iceGatheringState: String
     let signalingState: String
@@ -389,6 +391,8 @@ final class NativePikoModel: ObservableObject {
             "ice_server_urls：\(diagnostic.iceServerUrls)",
             "local_candidate_types：\(diagnostic.localCandidateTypes)",
             "remote_candidate_types：\(diagnostic.remoteCandidateTypes)",
+            "local_candidate_details：\(diagnostic.localCandidateDetails)",
+            "remote_candidate_details：\(diagnostic.remoteCandidateDetails)",
             "ice_connection_state：\(diagnostic.iceConnectionState)",
             "ice_gathering_state：\(diagnostic.iceGatheringState)",
             "signaling_state：\(diagnostic.signalingState)",
@@ -417,6 +421,8 @@ final class NativePikoModel: ObservableObject {
                 iceServerUrls: fields["ice_server_urls"]?.nilIfBlank ?? "unknown",
                 localCandidateTypes: fields["local_candidate_types"]?.nilIfBlank ?? "none",
                 remoteCandidateTypes: fields["remote_candidate_types"]?.nilIfBlank ?? "none",
+                localCandidateDetails: fields["local_candidate_details"]?.nilIfBlank ?? "none",
+                remoteCandidateDetails: fields["remote_candidate_details"]?.nilIfBlank ?? "none",
                 iceConnectionState: fields["ice_connection_state"]?.nilIfBlank ?? "unknown",
                 iceGatheringState: fields["ice_gathering_state"]?.nilIfBlank ?? "unknown",
                 signalingState: fields["signaling_state"]?.nilIfBlank ?? "unknown",
@@ -436,6 +442,8 @@ final class NativePikoModel: ObservableObject {
                 iceServerUrls: "unknown",
                 localCandidateTypes: "none",
                 remoteCandidateTypes: "none",
+                localCandidateDetails: "none",
+                remoteCandidateDetails: "none",
                 iceConnectionState: "unknown",
                 iceGatheringState: "unknown",
                 signalingState: "unknown",

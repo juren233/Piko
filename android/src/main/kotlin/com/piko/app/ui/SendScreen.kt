@@ -1,5 +1,8 @@
 package com.piko.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.piko.app.domain.PikoHomeState
@@ -219,10 +223,23 @@ private fun SendTransferFailureDialog(
     message: String,
     onDismiss: () -> Unit,
 ) {
+    val context = LocalContext.current
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(text = "P2P 传输失败") },
         text = { Text(text = message) },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    val clipboardManager =
+                        context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    clipboardManager.setPrimaryClip(ClipData.newPlainText("P2P 传输失败", message))
+                },
+            ) {
+                Text(text = "复制")
+            }
+        },
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text(text = "好")

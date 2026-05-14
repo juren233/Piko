@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct NativeSendView: View {
     @ObservedObject var model: NativePikoModel
@@ -79,6 +80,9 @@ struct NativeSendView: View {
             get: { model.transferFailureMessage != nil },
             set: { if !$0 { model.transferFailureMessage = nil } }
         )) {
+            Button("复制") {
+                UIPasteboard.general.string = model.transferFailureMessage ?? ""
+            }
             Button("好", role: .cancel) {
                 model.transferFailureMessage = nil
             }

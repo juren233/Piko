@@ -344,9 +344,17 @@ class IosAndroidUiParityTest {
         assertTrue("p2pTransferClient.send(" in iosModel)
         assertTrue("@Published var transferFailureMessage: String?" in iosModel)
         assertTrue("p2pFailureMessage(target: target, transferId: transferId, error: error)" in iosModel)
-        assertTrue(".alert(\"P2P 传输失败\"" in readIos("NativeSendView.swift"))
-        assertTrue("AlertDialog(" in readAndroid("ui/SendScreen.kt"))
-        assertTrue("P2P 传输失败" in readAndroid("ui/SendScreen.kt"))
+        val iosSendView = readIos("NativeSendView.swift")
+        val androidSendScreen = readAndroid("ui/SendScreen.kt")
+        assertTrue(".alert(\"P2P 传输失败\"" in iosSendView)
+        assertTrue("Button(\"复制\")" in iosSendView)
+        assertTrue("UIPasteboard.general.string = model.transferFailureMessage ?? \"\"" in iosSendView)
+        assertTrue("AlertDialog(" in androidSendScreen)
+        assertTrue("P2P 传输失败" in androidSendScreen)
+        assertTrue("LocalContext.current" in androidSendScreen)
+        assertTrue("context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager" in androidSendScreen)
+        assertTrue("clipboardManager.setPrimaryClip(ClipData.newPlainText(\"P2P 传输失败\", message))" in androidSendScreen)
+        assertTrue("Text(text = \"复制\")" in androidSendScreen)
         assertTrue("p2pFailureMessage(target = target, transferId = transferId, cause = error)" in androidSendActions)
         assertTrue("class P2PTransferFailure(" in androidP2P)
         assertTrue("private func p2pError(" in iosP2P)
@@ -369,6 +377,8 @@ class IosAndroidUiParityTest {
             "ice_server_urls：",
             "local_candidate_types：",
             "remote_candidate_types：",
+            "local_candidate_details：",
+            "remote_candidate_details：",
             "ice_connection_state：",
             "ice_gathering_state：",
             "signaling_state：",
@@ -393,6 +403,8 @@ class IosAndroidUiParityTest {
             "iceServerUrls = iceServerUrls",
             "localCandidateTypes = localCandidateTypes.candidateTypesDescription()",
             "remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription()",
+            "localCandidateDetails = localCandidateDetails.candidateDetailsDescription()",
+            "remoteCandidateDetails = remoteCandidateDetails.candidateDetailsDescription()",
             "iceConnectionState = state.name",
             "iceGatheringState = state.name",
             "signalingState = state.name",
@@ -414,6 +426,8 @@ class IosAndroidUiParityTest {
             "iceServerUrls: iceServers.map(\\.urls).joined(separator: \",\").nilIfBlank ?? \"none\"",
             "localCandidateTypes: Self.candidateTypesDescription(localCandidateTypes)",
             "remoteCandidateTypes: Self.candidateTypesDescription(remoteCandidateTypes)",
+            "localCandidateDetails: Self.candidateDetailsDescription(localCandidateDetails)",
+            "remoteCandidateDetails: Self.candidateDetailsDescription(remoteCandidateDetails)",
             "iceConnectionState = value",
             "iceGatheringState = value",
             "signalingState = value",
@@ -423,6 +437,7 @@ class IosAndroidUiParityTest {
             "iceCandidateErrors: iceCandidateErrors.joined",
             "selectedCandidatePair: selectedCandidatePair",
             "candidateType(event.candidate.candidate)",
+            "candidateSummary(candidate)",
         ).forEach { marker ->
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }
