@@ -44,7 +44,12 @@ private struct NativeP2PFailureDiagnostic {
     let answerReceived: String
     let localIceCount: String
     let remoteIceCount: String
+    let iceServerUrls: String
+    let localCandidateTypes: String
+    let remoteCandidateTypes: String
     let iceConnectionState: String
+    let iceGatheringState: String
+    let signalingState: String
     let dataChannelState: String
 }
 
@@ -379,7 +384,12 @@ final class NativePikoModel: ObservableObject {
             "answer_received：\(diagnostic.answerReceived)",
             "local_ice_count：\(diagnostic.localIceCount)",
             "remote_ice_count：\(diagnostic.remoteIceCount)",
+            "ice_server_urls：\(diagnostic.iceServerUrls)",
+            "local_candidate_types：\(diagnostic.localCandidateTypes)",
+            "remote_candidate_types：\(diagnostic.remoteCandidateTypes)",
             "ice_connection_state：\(diagnostic.iceConnectionState)",
+            "ice_gathering_state：\(diagnostic.iceGatheringState)",
+            "signaling_state：\(diagnostic.signalingState)",
             "data_channel_state：\(diagnostic.dataChannelState)"
         ].joined(separator: "\n")
     }
@@ -400,7 +410,12 @@ final class NativePikoModel: ObservableObject {
                 answerReceived: fields["answer_received"]?.nilIfBlank ?? "false",
                 localIceCount: fields["local_ice_count"]?.nilIfBlank ?? "0",
                 remoteIceCount: fields["remote_ice_count"]?.nilIfBlank ?? "0",
+                iceServerUrls: fields["ice_server_urls"]?.nilIfBlank ?? "unknown",
+                localCandidateTypes: fields["local_candidate_types"]?.nilIfBlank ?? "none",
+                remoteCandidateTypes: fields["remote_candidate_types"]?.nilIfBlank ?? "none",
                 iceConnectionState: fields["ice_connection_state"]?.nilIfBlank ?? "unknown",
+                iceGatheringState: fields["ice_gathering_state"]?.nilIfBlank ?? "unknown",
+                signalingState: fields["signaling_state"]?.nilIfBlank ?? "unknown",
                 dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown"
             )
         default:
@@ -412,7 +427,12 @@ final class NativePikoModel: ObservableObject {
                 answerReceived: "false",
                 localIceCount: "0",
                 remoteIceCount: "0",
+                iceServerUrls: "unknown",
+                localCandidateTypes: "none",
+                remoteCandidateTypes: "none",
                 iceConnectionState: "unknown",
+                iceGatheringState: "unknown",
+                signalingState: "unknown",
                 dataChannelState: "unknown"
             )
         }

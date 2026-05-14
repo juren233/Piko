@@ -113,7 +113,12 @@ final class NativeP2PTransferClient {
                 "answer_received：\(diagnostic.answerReceived)",
                 "local_ice_count：\(diagnostic.localIceCount)",
                 "remote_ice_count：\(diagnostic.remoteIceCount)",
+                "ice_server_urls：\(diagnostic.iceServerUrls)",
+                "local_candidate_types：\(diagnostic.localCandidateTypes)",
+                "remote_candidate_types：\(diagnostic.remoteCandidateTypes)",
                 "ice_connection_state：\(diagnostic.iceConnectionState)",
+                "ice_gathering_state：\(diagnostic.iceGatheringState)",
+                "signaling_state：\(diagnostic.signalingState)",
                 "data_channel_state：\(diagnostic.dataChannelState)"
             ].joined(separator: "\n")
         )

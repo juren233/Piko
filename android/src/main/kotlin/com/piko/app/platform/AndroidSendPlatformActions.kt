@@ -717,7 +717,12 @@ private class AndroidTransferClient(
             "answer_received：${diagnostic?.answerReceived ?: false}",
             "local_ice_count：${diagnostic?.localIceCount ?: 0}",
             "remote_ice_count：${diagnostic?.remoteIceCount ?: 0}",
+            "ice_server_urls：${diagnostic?.iceServerUrls ?: "unknown"}",
+            "local_candidate_types：${diagnostic?.localCandidateTypes ?: "none"}",
+            "remote_candidate_types：${diagnostic?.remoteCandidateTypes ?: "none"}",
             "ice_connection_state：${diagnostic?.iceConnectionState ?: "unknown"}",
+            "ice_gathering_state：${diagnostic?.iceGatheringState ?: "unknown"}",
+            "signaling_state：${diagnostic?.signalingState ?: "unknown"}",
             "data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}",
         ).joinToString("\n")
     }

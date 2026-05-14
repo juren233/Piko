@@ -6,7 +6,12 @@ struct NativeWebRTCDiagnostic {
     let answerReceived: Bool
     let localIceCount: Int
     let remoteIceCount: Int
+    let iceServerUrls: String
+    let localCandidateTypes: String
+    let remoteCandidateTypes: String
     let iceConnectionState: String
+    let iceGatheringState: String
+    let signalingState: String
     let dataChannelState: String
 
     static let empty = NativeWebRTCDiagnostic(
@@ -14,7 +19,12 @@ struct NativeWebRTCDiagnostic {
         answerReceived: false,
         localIceCount: 0,
         remoteIceCount: 0,
+        iceServerUrls: "unknown",
+        localCandidateTypes: "none",
+        remoteCandidateTypes: "none",
         iceConnectionState: "unknown",
+        iceGatheringState: "unknown",
+        signalingState: "unknown",
         dataChannelState: "unknown"
     )
 }
@@ -45,7 +55,11 @@ final class NativeWebRTCSession: NSObject {
     private var answerReceived = false
     private var localIceCount = 0
     private var remoteIceCount = 0
+    private var localCandidateTypes: Set<String> = []
+    private var remoteCandidateTypes: Set<String> = []
     private var iceConnectionState = "unknown"
+    private var iceGatheringState = "unknown"
+    private var signalingState = "unknown"
     private var dataChannelState = "unknown"
     private var peerEphemeralPublicB64: String?
     private(set) var peerAcceptSignatureB64: String?
@@ -57,7 +71,12 @@ final class NativeWebRTCSession: NSObject {
             answerReceived: answerReceived,
             localIceCount: localIceCount,
             remoteIceCount: remoteIceCount,
+            iceServerUrls: iceServers.map(\.urls).joined(separator: ",").nilIfBlank ?? "none",
+            localCandidateTypes: Self.candidateTypesDescription(localCandidateTypes),
+            remoteCandidateTypes: Self.candidateTypesDescription(remoteCandidateTypes),
             iceConnectionState: iceConnectionState,
+            iceGatheringState: iceGatheringState,
+            signalingState: signalingState,
             dataChannelState: dataChannelState
         )
     }
@@ -129,6 +148,7 @@ final class NativeWebRTCSession: NSObject {
             return
         }
         remoteIceCount += 1
+        remoteCandidateTypes.insert(Self.candidateType(candidate))
         let sdpMid = message["sdp_mid"] as? String
         let sdpMLineIndex = message["sdp_m_line_index"] as? Int ?? 0
         _ = await evaluate(
@@ -257,6 +277,18 @@ final class NativeWebRTCSession: NSObject {
         return String(json.dropFirst().dropLast())
     }
 
+    private static func candidateType(_ candidate: String) -> String {
+        guard let range = candidate.range(of: #" typ ([A-Za-z0-9_-]+)"#, options: .regularExpression) else {
+            return "unknown"
+        }
+        return candidate[range].split(separator: " ").last.map { String($0).lowercased() } ?? "unknown"
+    }
+
+    private static func candidateTypesDescription(_ types: Set<String>) -> String {
+        let values = types.filter { !$0.isEmpty }.sorted()
+        return values.isEmpty ? "none" : values.joined(separator: ",")
+    }
+
     private static let html = """
     <!doctype html>
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -282,6 +314,10 @@ final class NativeWebRTCSession: NSObject {
       }
       return bytes;
     }
+    function candidateType(candidate) {
+      const match = candidate.match(/ typ ([A-Za-z0-9_-]+)/);
+      return match ? match[1].toLowerCase() : "unknown";
+    }
     function attachDataChannel(nextChannel) {
       channel = nextChannel;
       channel.binaryType = "arraybuffer";
@@ -306,13 +342,19 @@ final class NativeWebRTCSession: NSObject {
     function setupPeer(urls) {
       if (pc) { return true; }
       pc = new RTCPeerConnection({ iceServers: urls.map((url) => ({ urls: url })) });
+      post({ kind: "ice_state", value: pc.iceConnectionState });
+      post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
+      post({ kind: "signaling_state", value: pc.signalingState });
       pc.oniceconnectionstatechange = () => post({ kind: "ice_state", value: pc.iceConnectionState });
+      pc.onicegatheringstatechange = () => post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
+      pc.onsignalingstatechange = () => post({ kind: "signaling_state", value: pc.signalingState });
       pc.onicecandidate = (event) => {
         if (!event.candidate) { return; }
         post({
           kind: "signal",
           type: "ice_candidate",
           candidate: event.candidate.candidate,
+          candidate_type: candidateType(event.candidate.candidate),
           sdp_mid: event.candidate.sdpMid,
           sdp_m_line_index: event.candidate.sdpMLineIndex
         });
@@ -414,6 +456,14 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             if let value = body["value"] as? String {
                 iceConnectionState = value
             }
+        case "ice_gathering_state":
+            if let value = body["value"] as? String {
+                iceGatheringState = value
+            }
+        case "signaling_state":
+            if let value = body["value"] as? String {
+                signalingState = value
+            }
         case "data_channel_state":
             if let value = body["value"] as? String {
                 dataChannelState = value
@@ -430,6 +480,11 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             signal["session_id"] = sessionId
             if signal["type"] as? String == "ice_candidate" {
                 localIceCount += 1
+                if let candidateType = signal["candidate_type"] as? String {
+                    localCandidateTypes.insert(candidateType)
+                } else if let candidate = signal["candidate"] as? String {
+                    localCandidateTypes.insert(Self.candidateType(candidate))
+                }
             }
             if let peerKey = signal["receiver_x25519_eph_pub_b64"] as? String {
                 peerEphemeralPublicB64 = peerKey

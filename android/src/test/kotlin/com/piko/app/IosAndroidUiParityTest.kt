@@ -349,7 +349,12 @@ class IosAndroidUiParityTest {
             "answer_received：",
             "local_ice_count：",
             "remote_ice_count：",
+            "ice_server_urls：",
+            "local_candidate_types：",
+            "remote_candidate_types：",
             "ice_connection_state：",
+            "ice_gathering_state：",
+            "signaling_state：",
             "data_channel_state：",
         )
         p2pFailureDialogFields.forEach { field ->
@@ -366,8 +371,14 @@ class IosAndroidUiParityTest {
             "localIceCount += 1",
             "remoteIceCount += 1",
             "answerReceived = true",
+            "iceServerUrls = iceServerUrls",
+            "localCandidateTypes = localCandidateTypes.candidateTypesDescription()",
+            "remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription()",
             "iceConnectionState = state.name",
+            "iceGatheringState = state.name",
+            "signalingState = state.name",
             "dataChannelState = channel.state().name",
+            "candidate.sdp.iceCandidateType()",
         ).forEach { marker ->
             assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
         }
@@ -377,8 +388,14 @@ class IosAndroidUiParityTest {
             "localIceCount += 1",
             "remoteIceCount += 1",
             "answerReceived = true",
+            "iceServerUrls: iceServers.map(\\.urls).joined(separator: \",\").nilIfBlank ?? \"none\"",
+            "localCandidateTypes: Self.candidateTypesDescription(localCandidateTypes)",
+            "remoteCandidateTypes: Self.candidateTypesDescription(remoteCandidateTypes)",
             "iceConnectionState = value",
+            "iceGatheringState = value",
+            "signalingState = value",
             "dataChannelState = value",
+            "candidateType(event.candidate.candidate)",
         ).forEach { marker ->
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }

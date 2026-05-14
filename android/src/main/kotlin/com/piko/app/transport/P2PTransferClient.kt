@@ -53,7 +53,12 @@ data class P2PTransferDiagnostic(
     val answerReceived: Boolean = false,
     val localIceCount: Int = 0,
     val remoteIceCount: Int = 0,
+    val iceServerUrls: String = "unknown",
+    val localCandidateTypes: String = "none",
+    val remoteCandidateTypes: String = "none",
     val iceConnectionState: String = "unknown",
+    val iceGatheringState: String = "unknown",
+    val signalingState: String = "unknown",
     val dataChannelState: String = "unknown",
 )
 
@@ -672,7 +677,15 @@ class P2PTransferClient(
         @Volatile
         private var remoteIceCount = 0
         @Volatile
+        private var iceServerUrls = iceServers.joinToString(",") { it.urls }.ifBlank { "none" }
+        private val localCandidateTypes = ConcurrentHashMap.newKeySet<String>()
+        private val remoteCandidateTypes = ConcurrentHashMap.newKeySet<String>()
+        @Volatile
         private var iceConnectionState = "unknown"
+        @Volatile
+        private var iceGatheringState = "unknown"
+        @Volatile
+        private var signalingState = "unknown"
         @Volatile
         private var dataChannelState = "unknown"
         @Volatile
@@ -690,17 +703,27 @@ class P2PTransferClient(
                     sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
                 },
                 object : PeerConnection.Observer by NoopPeerObserver {
+                    override fun onSignalingChange(state: PeerConnection.SignalingState) {
+                        signalingState = state.name
+                    }
+
                     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                         iceConnectionState = state.name
                     }
 
+                    override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
+                        iceGatheringState = state.name
+                    }
+
                     override fun onIceCandidate(candidate: IceCandidate) {
                         localIceCount += 1
+                        localCandidateTypes.add(candidate.sdp.iceCandidateType())
                         signalingClient.send(
                             JSONObject()
                                 .put("type", "ice_candidate")
                                 .put("session_id", sessionId)
                                 .put("candidate", candidate.sdp)
+                                .put("candidate_type", candidate.sdp.iceCandidateType())
                                 .put("sdp_mid", candidate.sdpMid)
                                 .put("sdp_m_line_index", candidate.sdpMLineIndex),
                         )
@@ -767,6 +790,7 @@ class P2PTransferClient(
                 message.getString("candidate"),
             )
             remoteIceCount += 1
+            remoteCandidateTypes.add(message.optString("candidate_type").ifBlank { message.getString("candidate").iceCandidateType() })
             if (!hasRemoteDescription) {
                 pendingIceCandidates.add(candidate)
                 if (hasRemoteDescription) {
@@ -806,7 +830,12 @@ class P2PTransferClient(
                 answerReceived = answerReceived,
                 localIceCount = localIceCount,
                 remoteIceCount = remoteIceCount,
+                iceServerUrls = iceServerUrls,
+                localCandidateTypes = localCandidateTypes.candidateTypesDescription(),
+                remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription(),
                 iceConnectionState = iceConnectionState,
+                iceGatheringState = iceGatheringState,
+                signalingState = signalingState,
                 dataChannelState = dataChannelState,
             )
 
@@ -1266,6 +1295,12 @@ private fun JSONObject.optIceServers(): List<IceServerConfig> {
         server.optString("urls").takeIf { it.isNotBlank() }?.let(::IceServerConfig)
     }.ifEmpty { defaultP2PIceServers() }
 }
+
+private fun String.iceCandidateType(): String =
+    Regex("""\btyp\s+([A-Za-z0-9_-]+)""").find(this)?.groupValues?.get(1)?.lowercase() ?: "unknown"
+
+private fun Set<String>.candidateTypesDescription(): String =
+    filter { it.isNotBlank() }.sorted().joinToString(",").ifBlank { "none" }
 
 private fun List<TransferV3ManifestInput>.manifestHashB64(): String {
     val digest = MessageDigest.getInstance("SHA-256")
