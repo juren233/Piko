@@ -851,6 +851,7 @@ private class P2PReceiver(
     private var confirmed = false
     private var canceled = false
     private var activeChannel: DataChannel? = null
+    private var readySent = false
     private var didComplete = false
 
     fun attach(sessionId: String, channel: DataChannel) {
@@ -858,6 +859,7 @@ private class P2PReceiver(
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
             override fun onStateChange() {
+                if (channel.state() == DataChannel.State.OPEN) maybeSendReadyAndDrainPending()
                 if (channel.state() == DataChannel.State.CLOSED) finishIfComplete(channel)
             }
             override fun onMessage(buffer: DataChannel.Buffer) {
@@ -866,6 +868,7 @@ private class P2PReceiver(
                 handle(bytes, channel)
             }
         })
+        maybeSendReadyAndDrainPending()
     }
 
     private fun handle(bytes: ByteArray, channel: DataChannel) {
@@ -912,12 +915,7 @@ private class P2PReceiver(
                         requiresConfirmation = !confirmed,
                     ),
                 )
-                if (confirmed) {
-                    sendReady(channel)
-                    val pending = pendingChunkFrames.toList()
-                    pendingChunkFrames.clear()
-                    pending.forEach { (bytes, c) -> handle(bytes, c) }
-                }
+                maybeSendReadyAndDrainPending()
             }
             is TransferV3Frame.Chunk -> {
                 if (!confirmed) {
@@ -967,12 +965,7 @@ private class P2PReceiver(
                 requiresConfirmation = false,
             ),
         )
-        val channel = activeChannel ?: return
-        if (!manifestReady) return
-        sendReady(channel)
-        val pending = pendingChunkFrames.toList()
-        pendingChunkFrames.clear()
-        pending.forEach { (bytes, c) -> handle(bytes, c) }
+        maybeSendReadyAndDrainPending()
     }
 
     fun cancel() {
@@ -1061,6 +1054,16 @@ private class P2PReceiver(
         require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)), true))) {
             "DataChannel RETRY 发送失败"
         }
+    }
+
+    private fun maybeSendReadyAndDrainPending() {
+        val channel = activeChannel ?: return
+        if (!confirmed || manifest.isEmpty() || readySent || channel.state() != DataChannel.State.OPEN) return
+        sendReady(channel)
+        readySent = true
+        val pending = pendingChunkFrames.toList()
+        pendingChunkFrames.clear()
+        pending.forEach { (bytes, c) -> handle(bytes, c) }
     }
 }
 

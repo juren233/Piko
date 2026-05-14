@@ -172,7 +172,8 @@ extension Data {
         guard let bytes = readData(count: 4, offset: &offset) else {
             return nil
         }
-        return bytes.reduce(0) { ($0 << 8) | Int($1) }
+        let unsigned = bytes.reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+        return Int(Int32(bitPattern: unsigned))
     }
 
     func readInt64(offset: inout Int) -> Int? {

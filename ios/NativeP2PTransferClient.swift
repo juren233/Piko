@@ -556,6 +556,7 @@ private final class NativeP2PReceiver {
     private var pendingChunkFrames: [Data] = []
     private var confirmed = false
     private var canceled = false
+    private var readySent = false
     private var totalBytes = 0
     private var receivedBytes = 0
 
@@ -635,10 +636,7 @@ private final class NativeP2PReceiver {
                 publishReceiveState(requiresConfirmation: !autoAccept)
             }
             if confirmed {
-                sendReady()
-                let pending = pendingChunkFrames
-                pendingChunkFrames.removeAll(keepingCapacity: false)
-                pending.forEach(receive)
+                sendReadyAndDrainPending()
             }
         case .chunk(let fileIndex, let chunkIndex, let bytes):
             guard confirmed else {
@@ -686,10 +684,7 @@ private final class NativeP2PReceiver {
             return
         }
         publishReceiveState(requiresConfirmation: false)
-        sendReady()
-        let pending = pendingChunkFrames
-        pendingChunkFrames.removeAll(keepingCapacity: false)
-        pending.forEach(receive)
+        sendReadyAndDrainPending()
     }
 
     func cancel() {
@@ -792,6 +787,17 @@ private final class NativeP2PReceiver {
 
     private func sendRetry(fileIndex: Int, chunkIndex: Int) {
         sendControl(NativeTransferProtocolV3.encodeRetry(fileIndex: fileIndex, chunkIndex: chunkIndex))
+    }
+
+    private func sendReadyAndDrainPending() {
+        guard !readySent, !files.isEmpty else {
+            return
+        }
+        sendReady()
+        readySent = true
+        let pending = pendingChunkFrames
+        pendingChunkFrames.removeAll(keepingCapacity: false)
+        pending.forEach(receive)
     }
 }
 
