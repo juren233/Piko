@@ -52,6 +52,8 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
+private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L
+private const val P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L
 
 data class P2PTransferDiagnostic(
     val offerSent: Boolean = false,
@@ -191,7 +193,7 @@ class P2PTransferClient(
                 cause = error,
             )
         }
-        if (!peer.awaitOpen()) {
+        if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
             if (peer.isAborted) {
                 peer.close()
                 peers.remove(session.sessionId)
@@ -204,7 +206,7 @@ class P2PTransferClient(
                 )
             }
             peer.triggerIceRestart()
-            if (!peer.awaitOpen()) {
+            if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
                 val diag = peer.diagnosticSnapshot()
                 peer.close()
                 peers.remove(session.sessionId)
@@ -856,8 +858,8 @@ class P2PTransferClient(
             peerConnection.addIceCandidate(candidate)
         }
 
-        fun awaitOpen(): Boolean {
-            val opened = openLatch.await(15, TimeUnit.SECONDS)
+        fun awaitOpen(seconds: Long): Boolean {
+            val opened = openLatch.await(seconds, TimeUnit.SECONDS)
             return opened && !aborted
         }
 

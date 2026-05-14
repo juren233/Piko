@@ -1,6 +1,11 @@
 import CryptoKit
 import Foundation
 
+private enum NativeP2PTiming {
+    static let initialOpenWaitSeconds: TimeInterval = 30
+    static let restartOpenWaitSeconds: TimeInterval = 45
+}
+
 @MainActor
 final class NativeP2PTransferClient {
     let authStore: NativeAuthStore
@@ -200,10 +205,10 @@ final class NativeP2PTransferClient {
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: "OFFER_FAILED", message: "WebRTC offer 创建失败", diagnostic: diagnostic))
             }
-            var opened = await session.waitUntilOpen(seconds: 15)
+            var opened = await session.waitUntilOpen(seconds: NativeP2PTiming.initialOpenWaitSeconds)
             if !opened && !receiverReadyTracker.isAborted {
                 _ = await session.restartIce()
-                opened = await session.waitUntilOpen(seconds: 15)
+                opened = await session.waitUntilOpen(seconds: NativeP2PTiming.restartOpenWaitSeconds)
             }
             guard opened else {
                 let diagnostic = await session.diagnosticSnapshotWithStats()

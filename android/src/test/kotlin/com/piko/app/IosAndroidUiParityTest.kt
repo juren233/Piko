@@ -397,6 +397,10 @@ class IosAndroidUiParityTest {
         assertTrue("target.receiverDeviceId?.ifBlank { null } ?: \"未知设备\"" in androidSendActions)
         listOf(
             "data class P2PTransferDiagnostic(",
+            "P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L",
+            "P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L",
+            "peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)",
+            "peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)",
             "fun diagnosticSnapshot()",
             "localIceCount += 1",
             "remoteIceCount += 1",
@@ -423,6 +427,7 @@ class IosAndroidUiParityTest {
         }
         listOf(
             "struct NativeWebRTCDiagnostic",
+            "NativeWebRTCTiming.sendOpenWaitSeconds",
             "var diagnosticSnapshot",
             "localIceCount += 1",
             "remoteIceCount += 1",
@@ -447,6 +452,12 @@ class IosAndroidUiParityTest {
             "candidateSummary(candidate)",
         ).forEach { marker ->
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
+        }
+        listOf(
+            "NativeP2PTiming.initialOpenWaitSeconds",
+            "NativeP2PTiming.restartOpenWaitSeconds",
+        ).forEach { marker ->
+            assertTrue(marker in iosP2P, "iOS P2P must record WebRTC timing marker $marker")
         }
         listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "receiver_ready", "send_chunk", "ack").forEach { stage ->
             assertTrue(stage in androidP2P, "Android P2P must keep failure stage $stage")

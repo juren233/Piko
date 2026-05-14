@@ -1,6 +1,10 @@
 import Foundation
 @preconcurrency import WebKit
 
+private enum NativeWebRTCTiming {
+    static let sendOpenWaitSeconds: TimeInterval = 30
+}
+
 struct NativeWebRTCDiagnostic {
     let offerSent: Bool
     let answerReceived: Bool
@@ -178,7 +182,7 @@ final class NativeWebRTCSession: NSObject {
     }
 
     func send(_ data: Data) async -> Bool {
-        guard await waitUntilOpen(seconds: 15) else {
+        guard await waitUntilOpen(seconds: NativeWebRTCTiming.sendOpenWaitSeconds) else {
             return false
         }
         return await evaluate("return sendBase64(\(Self.jsonString(data.base64EncodedString())));")
