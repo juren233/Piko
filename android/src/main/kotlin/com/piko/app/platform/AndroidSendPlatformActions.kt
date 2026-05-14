@@ -729,6 +729,7 @@ private class AndroidTransferClient(
             "data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}",
             "ice_candidate_errors：${diagnostic?.iceCandidateErrors ?: "none"}",
             "selected_candidate_pair：${diagnostic?.selectedCandidatePair ?: "none"}",
+            "ice_candidate_pair_stats：${diagnostic?.iceCandidatePairStats ?: "none"}",
         ).joinToString("\n")
     }
 

@@ -123,7 +123,8 @@ final class NativeP2PTransferClient {
                 "signaling_state：\(diagnostic.signalingState)",
                 "data_channel_state：\(diagnostic.dataChannelState)",
                 "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
-                "selected_candidate_pair：\(diagnostic.selectedCandidatePair)"
+                "selected_candidate_pair：\(diagnostic.selectedCandidatePair)",
+                "ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)"
             ].joined(separator: "\n")
         )
     }
@@ -195,7 +196,7 @@ final class NativeP2PTransferClient {
                 ackTracker?.abort()
             }
             guard await session.createOffer() else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: "OFFER_FAILED", message: "WebRTC offer 创建失败", diagnostic: diagnostic))
             }
@@ -205,7 +206,7 @@ final class NativeP2PTransferClient {
                 opened = await session.waitUntilOpen(seconds: 15)
             }
             guard opened else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
                 let message = abortedByPeer ? "对方已取消接收" : Self.crossNetworkDiagnosis(diagnostic)
@@ -230,7 +231,7 @@ final class NativeP2PTransferClient {
                     peerStaticPublicKeyB64: sessionContext.receiverX25519PubB64,
                     role: .sender
                   ) else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "key_agreement", sessionId: config.sessionId, code: "KEY_AGREEMENT_FAILED", message: "跨网密钥协商失败", diagnostic: diagnostic))
             }
@@ -246,12 +247,12 @@ final class NativeP2PTransferClient {
                 senderName: senderName
             ),
             await session.send(manifestFrame) else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: "传输清单发送失败", diagnostic: diagnostic))
             }
             guard await receiverReadyTracker.wait(seconds: 120) else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "等待接收端确认超时", diagnostic: diagnostic))
@@ -259,7 +260,7 @@ final class NativeP2PTransferClient {
 
             for (fileIndex, item) in items.enumerated() {
                 guard let stream = InputStream(url: item.fileURL) else {
-                    let diagnostic = session.diagnosticSnapshot
+                    let diagnostic = await session.diagnosticSnapshotWithStats()
                     closeSession(config.sessionId)
                     return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "OPEN_FILE_FAILED", message: "无法读取待发送文件", diagnostic: diagnostic))
                 }
@@ -271,13 +272,13 @@ final class NativeP2PTransferClient {
                 var chunkIndex = 0
                 while stream.hasBytesAvailable {
                     if Task.isCancelled {
-                        let diagnostic = session.diagnosticSnapshot
+                        let diagnostic = await session.diagnosticSnapshotWithStats()
                         closeSession(config.sessionId)
                         return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "TRANSFER_CANCELLED", message: "传输已取消", diagnostic: diagnostic))
                     }
                     let read = stream.read(&buffer, maxLength: buffer.count)
                     guard read >= 0 else {
-                        let diagnostic = session.diagnosticSnapshot
+                        let diagnostic = await session.diagnosticSnapshotWithStats()
                         closeSession(config.sessionId)
                         return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "READ_FILE_FAILED", message: "文件分片读取失败", diagnostic: diagnostic))
                     }
@@ -303,7 +304,7 @@ final class NativeP2PTransferClient {
                         plain: Data(buffer.prefix(read))
                     ),
                     await session.send(chunkFrame) else {
-                        let diagnostic = session.diagnosticSnapshot
+                        let diagnostic = await session.diagnosticSnapshotWithStats()
                         closeSession(config.sessionId)
                         return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
                     }
@@ -313,7 +314,7 @@ final class NativeP2PTransferClient {
                     let ackTarget = queuedChunks - maxInFlightChunks + 1
                     if ackTarget > 0, !Task.isCancelled {
                         guard await ackTracker.waitForAckedCount(ackTarget, seconds: 30) else {
-                            let diagnostic = session.diagnosticSnapshot
+                            let diagnostic = await session.diagnosticSnapshotWithStats()
                             let abortedByPeer = ackTracker.isAborted
                             closeSession(config.sessionId)
                             return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
@@ -323,7 +324,7 @@ final class NativeP2PTransferClient {
             }
 
             guard await ackTracker.waitForAll(seconds: 30) else {
-                let diagnostic = session.diagnosticSnapshot
+                let diagnostic = await session.diagnosticSnapshotWithStats()
                 let abortedByPeer = ackTracker.isAborted
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))

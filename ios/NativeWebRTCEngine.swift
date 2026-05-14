@@ -17,6 +17,7 @@ struct NativeWebRTCDiagnostic {
     let dataChannelState: String
     let iceCandidateErrors: String
     let selectedCandidatePair: String
+    let iceCandidatePairStats: String
 
     static let empty = NativeWebRTCDiagnostic(
         offerSent: false,
@@ -33,7 +34,8 @@ struct NativeWebRTCDiagnostic {
         signalingState: "unknown",
         dataChannelState: "unknown",
         iceCandidateErrors: "none",
-        selectedCandidatePair: "none"
+        selectedCandidatePair: "none",
+        iceCandidatePairStats: "none"
     )
 }
 
@@ -73,6 +75,7 @@ final class NativeWebRTCSession: NSObject {
     private var dataChannelState = "unknown"
     private var iceCandidateErrors: [String] = []
     private var selectedCandidatePair = "none"
+    private var iceCandidatePairStats = "none"
     private var peerEphemeralPublicB64: String?
     private(set) var peerAcceptSignatureB64: String?
     private(set) var peerCompletedBitmapB64: String?
@@ -93,7 +96,8 @@ final class NativeWebRTCSession: NSObject {
             signalingState: signalingState,
             dataChannelState: dataChannelState,
             iceCandidateErrors: iceCandidateErrors.joined(separator: ";").nilIfBlank ?? "none",
-            selectedCandidatePair: selectedCandidatePair
+            selectedCandidatePair: selectedCandidatePair,
+            iceCandidatePairStats: iceCandidatePairStats
         )
     }
 
@@ -193,6 +197,11 @@ final class NativeWebRTCSession: NSObject {
             offerSent = true
         }
         return restarted
+    }
+
+    func diagnosticSnapshotWithStats() async -> NativeWebRTCDiagnostic {
+        _ = await evaluate("return await collectIceCandidatePairStats();")
+        return diagnosticSnapshot
     }
 
     func waitUntilOpen(seconds: TimeInterval) async -> Bool {
@@ -407,6 +416,76 @@ final class NativeWebRTCSession: NSObject {
       const match = candidate.match(/ typ ([A-Za-z0-9_-]+)/);
       return match ? match[1].toLowerCase() : "unknown";
     }
+    function addressKind(value) {
+      const lower = String(value || "unknown").toLowerCase();
+      if (lower.includes(":")) {
+        if (lower === "::1") { return "loopback-ipv6"; }
+        if (lower.startsWith("fe80:")) { return "link-local-ipv6"; }
+        if (lower.startsWith("fd") || lower.startsWith("fc")) { return "ula-ipv6"; }
+        return "public-ipv6";
+      }
+      const octets = lower.split(".").map((part) => Number.parseInt(part, 10));
+      if (octets.length !== 4 || octets.some((part) => Number.isNaN(part))) { return "unknown"; }
+      if (octets[0] === 10) { return "private-ipv4"; }
+      if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) { return "private-ipv4"; }
+      if (octets[0] === 192 && octets[1] === 168) { return "private-ipv4"; }
+      if (octets[0] === 169 && octets[1] === 254) { return "link-local-ipv4"; }
+      if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) { return "cgnat-ipv4"; }
+      if (octets[0] === 127) { return "loopback-ipv4"; }
+      return "public-ipv4";
+    }
+    function candidateStatsSummary(stat) {
+      const address = stat.address || stat.ip || stat.relatedAddress || "unknown";
+      return [
+        `type=${stat.candidateType || "unknown"}`,
+        `proto=${stat.protocol || "unknown"}`,
+        `addr=${addressKind(address)}`,
+        `port=${stat.port || "unknown"}`,
+        `network=${stat.networkType || "unknown"}`
+      ].join("/");
+    }
+    async function collectIceCandidatePairStats() {
+      if (!pc || !pc.getStats) {
+        post({ kind: "ice_candidate_pair_stats", value: "stats_unavailable", selected_pair: "none" });
+        return true;
+      }
+      try {
+        const report = await pc.getStats();
+        const candidates = new Map();
+        const pairs = [];
+        report.forEach((stat) => {
+          if (stat.type === "local-candidate" || stat.type === "remote-candidate") {
+            candidates.set(stat.id, stat);
+          }
+        });
+        report.forEach((stat) => {
+          if (stat.type !== "candidate-pair") { return; }
+          const local = candidates.get(stat.localCandidateId);
+          const remote = candidates.get(stat.remoteCandidateId);
+          pairs.push({
+            selected: stat.selected === true || (stat.nominated === true && stat.state === "succeeded"),
+            text: [
+              `id=${stat.id}`,
+              `state=${stat.state || "unknown"}`,
+              `nominated=${stat.nominated ?? "unknown"}`,
+              `selected=${stat.selected ?? "unknown"}`,
+              `rtt=${stat.currentRoundTripTime ?? "unknown"}`,
+              `sent=${stat.bytesSent ?? "unknown"}`,
+              `recv=${stat.bytesReceived ?? "unknown"}`,
+              `local=${local ? candidateStatsSummary(local) : "unknown"}`,
+              `remote=${remote ? candidateStatsSummary(remote) : "unknown"}`
+            ].join("|")
+          });
+        });
+        pairs.sort((a, b) => Number(b.selected) - Number(a.selected));
+        const value = pairs.slice(0, 12).map((pair) => pair.text).join(";") || "none";
+        const selected = pairs.find((pair) => pair.selected)?.text || "none";
+        post({ kind: "ice_candidate_pair_stats", value, selected_pair: selected });
+      } catch (error) {
+        post({ kind: "ice_candidate_pair_stats", value: `stats_error=${error && error.name ? error.name : "unknown"}`, selected_pair: "none" });
+      }
+      return true;
+    }
     function attachDataChannel(nextChannel) {
       channel = nextChannel;
       channel.binaryType = "arraybuffer";
@@ -589,6 +668,14 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             let code = body["error_code"] as? Int ?? 0
             let text = (body["error_text"] as? String)?.nilIfBlank ?? "unknown-error"
             iceCandidateErrors.append("url=\(url)|address=\(address):\(port)|code=\(code)|text=\(text)")
+        case "ice_candidate_pair_stats":
+            if let value = (body["value"] as? String)?.nilIfBlank {
+                iceCandidatePairStats = value
+            }
+            if let selectedPair = (body["selected_pair"] as? String)?.nilIfBlank,
+               selectedPair != "none" {
+                selectedCandidatePair = selectedPair
+            }
         case "binary":
             guard let base64 = body["data"] as? String,
                   let data = Data(base64Encoded: base64) else {

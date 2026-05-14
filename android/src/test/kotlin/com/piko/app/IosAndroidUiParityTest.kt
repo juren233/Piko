@@ -385,6 +385,7 @@ class IosAndroidUiParityTest {
             "data_channel_state：",
             "ice_candidate_errors：",
             "selected_candidate_pair：",
+            "ice_candidate_pair_stats：",
         )
         p2pFailureDialogFields.forEach { field ->
             assertTrue(field in androidSendActions, "Android P2P failure dialog must include $field")
@@ -414,6 +415,9 @@ class IosAndroidUiParityTest {
             "onSelectedCandidatePairChanged(event: CandidatePairChangeEvent)",
             "iceCandidateErrors = iceCandidateErrors.joinToString",
             "selectedCandidatePair = selectedCandidatePair",
+            "iceCandidatePairStats = refreshIceCandidatePairStats()",
+            "peerConnection.getStats",
+            "iceCandidatePairStatsDescription()",
         ).forEach { marker ->
             assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
         }
@@ -436,6 +440,9 @@ class IosAndroidUiParityTest {
             "iceCandidateErrors.append",
             "iceCandidateErrors: iceCandidateErrors.joined",
             "selectedCandidatePair: selectedCandidatePair",
+            "iceCandidatePairStats: iceCandidatePairStats",
+            "diagnosticSnapshotWithStats()",
+            "collectIceCandidatePairStats()",
             "candidateType(event.candidate.candidate)",
             "candidateSummary(candidate)",
         ).forEach { marker ->

@@ -55,6 +55,7 @@ private struct NativeP2PFailureDiagnostic {
     let dataChannelState: String
     let iceCandidateErrors: String
     let selectedCandidatePair: String
+    let iceCandidatePairStats: String
 }
 
 final class NativePikoModel: ObservableObject {
@@ -398,7 +399,8 @@ final class NativePikoModel: ObservableObject {
             "signaling_state：\(diagnostic.signalingState)",
             "data_channel_state：\(diagnostic.dataChannelState)",
             "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
-            "selected_candidate_pair：\(diagnostic.selectedCandidatePair)"
+            "selected_candidate_pair：\(diagnostic.selectedCandidatePair)",
+            "ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)"
         ].joined(separator: "\n")
     }
 
@@ -428,7 +430,8 @@ final class NativePikoModel: ObservableObject {
                 signalingState: fields["signaling_state"]?.nilIfBlank ?? "unknown",
                 dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown",
                 iceCandidateErrors: fields["ice_candidate_errors"]?.nilIfBlank ?? "none",
-                selectedCandidatePair: fields["selected_candidate_pair"]?.nilIfBlank ?? "none"
+                selectedCandidatePair: fields["selected_candidate_pair"]?.nilIfBlank ?? "none",
+                iceCandidatePairStats: fields["ice_candidate_pair_stats"]?.nilIfBlank ?? "none"
             )
         default:
             return NativeP2PFailureDiagnostic(
@@ -449,7 +452,8 @@ final class NativePikoModel: ObservableObject {
                 signalingState: "unknown",
                 dataChannelState: "unknown",
                 iceCandidateErrors: "none",
-                selectedCandidatePair: "none"
+                selectedCandidatePair: "none",
+                iceCandidatePairStats: "none"
             )
         }
     }
