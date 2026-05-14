@@ -13,6 +13,7 @@ final class NativeP2PTransferClient {
     private let onReceiveCompleted: (NativeReceiveHistoryItem) -> Void
     private var sessions: [String: NativeWebRTCSession] = [:]
     private var receivers: [String: NativeP2PReceiver] = [:]
+    private var pendingSignals: [String: [[String: Any]]] = [:]
     private let progressStore = NativeTransferProgressStore()
 
     init(
@@ -316,15 +317,18 @@ final class NativeP2PTransferClient {
                 iceServers: NativeIceServerConfig.parse(message["ice_servers"] as? [[String: Any]]),
                 autoAccept: (message["same_account"] as? Bool) ?? false
             )
+            flushPendingSignals(for: sessionId)
         case "offer":
             guard let sdp = message["sdp"] as? String else {
                 return
             }
             guard let receiver = receivers[sessionId] else {
+                bufferSignal(message, for: sessionId)
                 return
             }
             let session = sessions[sessionId] ?? makeReceiverSession(sessionId: sessionId, receiver: receiver)
             sessions[sessionId] = session
+            flushPendingSignals(for: sessionId)
             Task {
                 _ = await session.acceptOffer(sdp)
             }
@@ -332,8 +336,12 @@ final class NativeP2PTransferClient {
             guard let sdp = message["sdp"] as? String else {
                 return
             }
+            guard let session = sessions[sessionId] else {
+                bufferSignal(message, for: sessionId)
+                return
+            }
             Task {
-                await sessions[sessionId]?.acceptAnswer(
+                await session.acceptAnswer(
                     sdp,
                     peerEphemeralPublicB64: message["receiver_x25519_eph_pub_b64"] as? String,
                     peerAcceptSignatureB64: message["receiver_accept_signature_b64"] as? String,
@@ -341,14 +349,29 @@ final class NativeP2PTransferClient {
                 )
             }
         case "ice_candidate":
+            guard let session = sessions[sessionId] else {
+                bufferSignal(message, for: sessionId)
+                return
+            }
             Task {
-                await sessions[sessionId]?.addCandidate(message)
+                await session.addCandidate(message)
             }
         case "bye":
             closeSession(sessionId)
         default:
             break
         }
+    }
+
+    private func bufferSignal(_ message: [String: Any], for sessionId: String) {
+        pendingSignals[sessionId, default: []].append(message)
+    }
+
+    private func flushPendingSignals(for sessionId: String) {
+        guard let signals = pendingSignals.removeValue(forKey: sessionId) else {
+            return
+        }
+        signals.forEach { handle($0) }
     }
 
     private func makeReceiverSession(sessionId: String, receiver: NativeP2PReceiver) -> NativeWebRTCSession {

@@ -71,6 +71,7 @@ class P2PTransferClient(
 ) {
     private val peers = ConcurrentHashMap<String, P2PPeer>()
     private val receiversByTransferId = ConcurrentHashMap<String, P2PReceiver>()
+    private val pendingSignalsBySessionId = ConcurrentHashMap<String, ConcurrentLinkedQueue<JSONObject>>()
     private val progressStore = TransferProgressStore(context)
 
     init {
@@ -432,28 +433,59 @@ class P2PTransferClient(
     private fun handleSignal(message: JSONObject) {
         val sessionId = message.optString("session_id").takeIf { it.isNotBlank() } ?: return
         when (message.optString("type")) {
-            "invite" -> peers.putIfAbsent(
-                sessionId,
-                receiverPeer(
-                sessionId = sessionId,
-                transferId = message.optString("transfer_id", sessionId),
-                manifestHashB64 = message.optString("manifest_hash_b64"),
-                iceServers = message.optIceServers(),
-                completedBitmapB64 = progressStore.completedBitmapB64(
-                    transferId = message.optString("transfer_id", sessionId),
-                    manifestHashB64 = message.optString("manifest_hash_b64"),
-                ),
-                senderEphemeralPublicB64 = message.optString("sender_x25519_eph_pub_b64"),
-                    senderInviteSignatureB64 = message.optString("sender_invite_signature_b64"),
-                    senderEd25519PublicB64 = message.optString("sender_ed25519_pub_b64"),
-                    senderX25519PublicB64 = message.optString("sender_x25519_pub_b64"),
-                    autoAccept = message.optBoolean("same_account", false),
-                ),
-            )
-            "offer" -> peers[sessionId]?.acceptOffer(message.getString("sdp"))
-            "answer" -> peers[sessionId]?.acceptAnswer(message)
-            "ice_candidate" -> peers[sessionId]?.addCandidate(message)
-            "bye" -> peers.remove(sessionId)?.close()
+            "invite" -> {
+                val peer = peers.getOrPut(sessionId) {
+                    receiverPeer(
+                        sessionId = sessionId,
+                        transferId = message.optString("transfer_id", sessionId),
+                        manifestHashB64 = message.optString("manifest_hash_b64"),
+                        iceServers = message.optIceServers(),
+                        completedBitmapB64 = progressStore.completedBitmapB64(
+                            transferId = message.optString("transfer_id", sessionId),
+                            manifestHashB64 = message.optString("manifest_hash_b64"),
+                        ),
+                        senderEphemeralPublicB64 = message.optString("sender_x25519_eph_pub_b64"),
+                        senderInviteSignatureB64 = message.optString("sender_invite_signature_b64"),
+                        senderEd25519PublicB64 = message.optString("sender_ed25519_pub_b64"),
+                        senderX25519PublicB64 = message.optString("sender_x25519_pub_b64"),
+                        autoAccept = message.optBoolean("same_account", false),
+                    )
+                }
+                flushPendingSignals(sessionId, peer)
+            }
+            "offer", "answer", "ice_candidate" -> {
+                val peer = peers[sessionId]
+                if (peer == null) {
+                    bufferSignal(sessionId, message)
+                } else {
+                    dispatchSignal(peer, message)
+                }
+            }
+            "bye" -> {
+                pendingSignalsBySessionId.remove(sessionId)
+                peers.remove(sessionId)?.close()
+            }
+        }
+    }
+
+    private fun bufferSignal(sessionId: String, message: JSONObject) {
+        pendingSignalsBySessionId
+            .computeIfAbsent(sessionId) { ConcurrentLinkedQueue() }
+            .add(JSONObject(message.toString()))
+    }
+
+    private fun flushPendingSignals(sessionId: String, peer: P2PPeer) {
+        val pending = pendingSignalsBySessionId.remove(sessionId) ?: return
+        while (true) {
+            dispatchSignal(peer, pending.poll() ?: return)
+        }
+    }
+
+    private fun dispatchSignal(peer: P2PPeer, message: JSONObject) {
+        when (message.optString("type")) {
+            "offer" -> peer.acceptOffer(message.getString("sdp"))
+            "answer" -> peer.acceptAnswer(message)
+            "ice_candidate" -> peer.addCandidate(message)
         }
     }
 
