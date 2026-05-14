@@ -143,9 +143,6 @@ final class NativeP2PTransferClient {
             return .failure(error)
         case .success(let sessionContext):
             let config = sessionContext.config
-            guard config.iceServers.allSatisfy({ !$0.urls.localizedCaseInsensitiveContains("google") }) else {
-                return .failure(p2pError(stage: "create_session", sessionId: config.sessionId, code: "INVALID_ICE_CONFIG", message: "ICE 配置包含非 Cloudflare STUN"))
-            }
             let receiverReadyTracker = NativeReceiverReadyTracker()
             let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
             var sentFrames: [String: Data] = [:]

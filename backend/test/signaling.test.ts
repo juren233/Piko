@@ -58,6 +58,12 @@ interface DeviceItem {
 const KEY_A = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 const KEY_B = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
 const SIGNATURE_A = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+const P2P_ICE_SERVERS = [
+  { urls: "stun:piko-ipv6.juren233.top:3478" },
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun.cloudflare.com:3478" },
+  { urls: "stun:stun.cloudflare.com:53" },
+];
 
 async function register(label: string): Promise<AuthSuccess> {
   const res = await call<AuthSuccess>("POST", "/v1/auth/register", {
@@ -220,19 +226,13 @@ function transferSessionBody(receiverUserId: string, receiverDeviceId: string, s
 }
 
 describe("cross-network signaling control plane", () => {
-  it("returns Cloudflare STUN endpoints from ice config", async () => {
+  it("returns Piko IPv6, Google, and Cloudflare STUN endpoints from ice config", async () => {
     const alice = await register("iceconfigalice");
 
     const res = await call<IceConfigEnvelope>("GET", "/v1/ice-config", { bearer: alice.token });
 
     expect(res.status).toBe(200);
-    expect(res.json.ice_servers).toEqual([
-      { urls: "stun:stun.cloudflare.com:3478" },
-      { urls: "stun:stun.cloudflare.com:53" },
-    ]);
-    expect(res.json.ice_servers.map((server) => server.urls)).not.toContain(
-      "stun:stun.l.google.com:19302",
-    );
+    expect(res.json.ice_servers).toEqual(P2P_ICE_SERVERS);
     expect(res.json.ttl_seconds).toBe(3600);
   });
 
@@ -415,10 +415,7 @@ describe("cross-network signaling control plane", () => {
       body: transferSessionBody(bob.user.id, "01HR0A9S9Y1N2Z3X4W5V6T7S8S", "01HR0A9S9Y1N2Z3X4W5V6T7S8R"),
     });
     expect(created.status).toBe(201);
-    expect(created.json.ice_servers).toEqual([
-      { urls: "stun:stun.cloudflare.com:3478" },
-      { urls: "stun:stun.cloudflare.com:53" },
-    ]);
+    expect(created.json.ice_servers).toEqual(P2P_ICE_SERVERS);
     expect(receiverWs.sent.at(-1)).toMatchObject({
       type: "invite",
       session_id: created.json.session_id,

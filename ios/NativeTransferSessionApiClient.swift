@@ -4,6 +4,8 @@ struct NativeIceServerConfig: Equatable {
     let urls: String
 
     static let defaultP2P: [NativeIceServerConfig] = [
+        NativeIceServerConfig(urls: "stun:piko-ipv6.juren233.top:3478"),
+        NativeIceServerConfig(urls: "stun:stun.l.google.com:19302"),
         NativeIceServerConfig(urls: "stun:stun.cloudflare.com:3478"),
         NativeIceServerConfig(urls: "stun:stun.cloudflare.com:53")
     ]

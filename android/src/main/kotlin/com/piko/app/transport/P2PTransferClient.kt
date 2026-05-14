@@ -134,14 +134,6 @@ class P2PTransferClient(
             )
         }
         val session = sessionContext.config
-        if (session.iceServers.any { it.urls.contains("google", ignoreCase = true) }) {
-            throw P2PTransferFailure(
-                stage = "create_session",
-                transferId = transferId,
-                sessionId = session.sessionId,
-                originalReason = "ICE 配置包含非 Cloudflare STUN",
-            )
-        }
         val sentFrames = ConcurrentHashMap<ChunkKey, ByteArray>()
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
         val chunkByteCounts = ConcurrentHashMap<ChunkKey, Long>()

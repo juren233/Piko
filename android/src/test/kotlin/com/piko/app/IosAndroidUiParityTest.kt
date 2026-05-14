@@ -164,17 +164,34 @@ class IosAndroidUiParityTest {
         assertTrue("if (socket !== webSocket) return" in androidSignaling)
         assertTrue("receiveLoop(nextTask)" in iosSignaling)
         assertTrue("self.task === currentTask" in iosSignaling)
-        assertTrue("stun:stun.cloudflare.com:3478" in backendIce)
-        assertTrue("stun:stun.cloudflare.com:53" in backendIce)
+        val expectedIceServers = listOf(
+            "stun:piko-ipv6.juren233.top:3478",
+            "stun:stun.l.google.com:19302",
+            "stun:stun.cloudflare.com:3478",
+            "stun:stun.cloudflare.com:53",
+        )
+        fun assertIceOrder(source: String) {
+            var lastIndex = -1
+            expectedIceServers.forEach { server ->
+                val index = source.indexOf(server)
+                assertTrue(index > lastIndex, "$server must appear after previous STUN server")
+                lastIndex = index
+            }
+        }
+        assertIceOrder(backendIce)
         assertFalse("turn:" in backendIce)
         assertTrue("fun defaultP2PIceServers()" in androidSessionApi)
         assertTrue("optJSONArray(\"ice_servers\")" in androidSessionApi)
-        assertTrue("IceServerConfig(\"stun:stun.cloudflare.com:3478\")" in androidSessionApi)
-        assertTrue("IceServerConfig(\"stun:stun.cloudflare.com:53\")" in androidSessionApi)
+        expectedIceServers.forEach { server ->
+            assertTrue("IceServerConfig(\"$server\")" in androidSessionApi)
+        }
+        assertIceOrder(androidSessionApi)
         assertTrue("static let defaultP2P" in iosSessionApi)
         assertTrue("NativeIceServerConfig.parse(json[\"ice_servers\"] as? [[String: Any]])" in iosSessionApi)
-        assertTrue("NativeIceServerConfig(urls: \"stun:stun.cloudflare.com:3478\")" in iosSessionApi)
-        assertTrue("NativeIceServerConfig(urls: \"stun:stun.cloudflare.com:53\")" in iosSessionApi)
+        expectedIceServers.forEach { server ->
+            assertTrue("NativeIceServerConfig(urls: \"$server\")" in iosSessionApi)
+        }
+        assertIceOrder(iosSessionApi)
         assertTrue("PeerConnectionFactory" in androidP2P)
         assertTrue("createDataChannel(\"piko-v3\"" in androidP2P)
         assertTrue("TransferProtocolV3.encodeManifest(" in androidP2P)
