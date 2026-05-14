@@ -212,6 +212,12 @@ class IosAndroidUiParityTest {
         assertTrue("NativeWebRTCSession" in iosWebRTC)
         assertTrue("new RTCPeerConnection" in iosWebRTC)
         assertTrue("pc.createDataChannel(\"piko-v3\"" in iosWebRTC)
+        assertTrue("callAsyncJavaScript" in iosWebRTC)
+        assertFalse("evaluateJavaScript" in iosWebRTC)
+        assertTrue("return await createOfferer();" in iosWebRTC)
+        assertTrue("return await acceptOffer(" in iosWebRTC)
+        assertTrue("return await acceptAnswer(" in iosWebRTC)
+        assertTrue("return await addCandidate(" in iosWebRTC)
         assertTrue("const pendingIceCandidates = []" in iosWebRTC)
         assertInOrder(
             iosWebRTC,

@@ -87,7 +87,7 @@ final class NativeWebRTCSession: NSObject {
         guard await prepare() else {
             return false
         }
-        let created = await evaluate("createOfferer();")
+        let created = await evaluate("return await createOfferer();")
         if created {
             offerSent = true
         }
@@ -98,7 +98,7 @@ final class NativeWebRTCSession: NSObject {
         guard await prepare() else {
             return false
         }
-        return await evaluate("acceptOffer(\(Self.jsonString(sdp)), \(answerExtrasJSON()));")
+        return await evaluate("return await acceptOffer(\(Self.jsonString(sdp)), \(answerExtrasJSON()));")
     }
 
     func acceptAnswer(
@@ -120,7 +120,7 @@ final class NativeWebRTCSession: NSObject {
             self.peerCompletedBitmapB64 = peerCompletedBitmapB64
         }
         _ = await prepare()
-        _ = await evaluate("acceptAnswer(\(Self.jsonString(sdp)));")
+        _ = await evaluate("return await acceptAnswer(\(Self.jsonString(sdp)));")
     }
 
     func addCandidate(_ message: [String: Any]) async {
@@ -132,7 +132,7 @@ final class NativeWebRTCSession: NSObject {
         let sdpMid = message["sdp_mid"] as? String
         let sdpMLineIndex = message["sdp_m_line_index"] as? Int ?? 0
         _ = await evaluate(
-            "addCandidate(\(Self.jsonString(candidate)), \(Self.jsonString(sdpMid)), \(sdpMLineIndex));"
+            "return await addCandidate(\(Self.jsonString(candidate)), \(Self.jsonString(sdpMid)), \(sdpMLineIndex));"
         )
     }
 
@@ -140,7 +140,7 @@ final class NativeWebRTCSession: NSObject {
         guard await waitUntilOpen(seconds: 15) else {
             return false
         }
-        return await evaluate("sendBase64(\(Self.jsonString(data.base64EncodedString())));")
+        return await evaluate("return sendBase64(\(Self.jsonString(data.base64EncodedString())));")
     }
 
     func waitUntilOpen(seconds: TimeInterval) async -> Bool {
@@ -181,7 +181,7 @@ final class NativeWebRTCSession: NSObject {
 
     func close() {
         _ = Task { @MainActor in
-            _ = await evaluate("closePeer();")
+            _ = await evaluate("closePeer(); return true;")
             userContentController.removeScriptMessageHandler(forName: "pikoWebRTC")
             openContinuation?.resume(returning: false)
             openContinuation = nil
@@ -192,7 +192,7 @@ final class NativeWebRTCSession: NSObject {
 
     private func prepare() async -> Bool {
         if isReady {
-            return await evaluate("setupPeer(\(iceServersJSON()));")
+            return await evaluate("return setupPeer(\(iceServersJSON()));")
         }
         let didLoad = await withCheckedContinuation { continuation in
             readyContinuation = continuation
@@ -200,7 +200,7 @@ final class NativeWebRTCSession: NSObject {
         guard didLoad else {
             return false
         }
-        return await evaluate("setupPeer(\(iceServersJSON()));")
+        return await evaluate("return setupPeer(\(iceServersJSON()));")
     }
 
     private func markReady() {
@@ -218,8 +218,19 @@ final class NativeWebRTCSession: NSObject {
 
     private func evaluate(_ script: String) async -> Bool {
         await withCheckedContinuation { continuation in
-            webView.evaluateJavaScript(script) { _, error in
-                continuation.resume(returning: error == nil)
+            webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page) { result in
+                switch result {
+                case .success(let value):
+                    if let bool = value as? Bool {
+                        continuation.resume(returning: bool)
+                    } else if let number = value as? NSNumber {
+                        continuation.resume(returning: number.boolValue)
+                    } else {
+                        continuation.resume(returning: true)
+                    }
+                case .failure:
+                    continuation.resume(returning: false)
+                }
             }
         }
     }
