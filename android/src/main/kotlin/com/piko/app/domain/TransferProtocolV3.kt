@@ -25,6 +25,7 @@ object TransferProtocolV3 {
     const val chunkSize: Int = 64 * 1024
     private val magic = byteArrayOf(0x50, 0x49, 0x4B, 0x33)
     private const val frameManifest = 0x01
+    private const val frameReady = 0x02
     private const val frameChunk = 0x03
     private const val frameAck = 0x04
     private const val frameRetry = 0x05
@@ -160,31 +161,13 @@ object TransferProtocolV3 {
         plain: ByteArray,
     ): ByteArray = encodeEncryptedFrame(sessionKey, sessionId, transferId, frameChunk, fileIndex, chunkIndex, plain)
 
+    fun encodeReady(): ByteArray = encodeControlFrame(frameReady, -1, -1)
+
     fun encodeAck(fileIndex: Int, chunkIndex: Int): ByteArray =
-        ByteArrayOutputStream().also { bytes ->
-            DataOutputStream(bytes).use { output ->
-                output.write(magic)
-                output.writeByte(frameAck)
-                output.writeInt(fileIndex)
-                output.writeInt(chunkIndex)
-                output.writeInt(0)
-                output.write(ByteArray(32))
-                output.writeInt(0)
-            }
-        }.toByteArray()
+        encodeControlFrame(frameAck, fileIndex, chunkIndex)
 
     fun encodeRetry(fileIndex: Int, chunkIndex: Int): ByteArray =
-        ByteArrayOutputStream().also { bytes ->
-            DataOutputStream(bytes).use { output ->
-                output.write(magic)
-                output.writeByte(frameRetry)
-                output.writeInt(fileIndex)
-                output.writeInt(chunkIndex)
-                output.writeInt(0)
-                output.write(ByteArray(32))
-                output.writeInt(0)
-            }
-        }.toByteArray()
+        encodeControlFrame(frameRetry, fileIndex, chunkIndex)
 
     fun decodeFrame(
         sessionKey: ByteArray,
@@ -215,6 +198,7 @@ object TransferProtocolV3 {
                 require(sha256(plain).contentEquals(hash)) { "chunk hash 不匹配" }
                 TransferV3Frame.Chunk(fileIndex, chunkIndex, plain)
             }
+            frameReady -> TransferV3Frame.Ready
             frameAck -> TransferV3Frame.Ack(fileIndex, chunkIndex)
             frameRetry -> TransferV3Frame.Retry(fileIndex, chunkIndex)
             else -> error("未知 v3 frame 类型: $type")
@@ -264,6 +248,19 @@ object TransferProtocolV3 {
             }
         }.toByteArray()
     }
+
+    private fun encodeControlFrame(type: Int, fileIndex: Int, chunkIndex: Int): ByteArray =
+        ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.write(magic)
+                output.writeByte(type)
+                output.writeInt(fileIndex)
+                output.writeInt(chunkIndex)
+                output.writeInt(0)
+                output.write(ByteArray(32))
+                output.writeInt(0)
+            }
+        }.toByteArray()
 
     private fun parseManifest(bytes: ByteArray): TransferV3Manifest {
         val input = DataInputStream(ByteArrayInputStream(bytes))
@@ -503,6 +500,7 @@ sealed class TransferV3Frame {
             return result
         }
     }
+    data object Ready : TransferV3Frame()
     data class Ack(val fileIndex: Int, val chunkIndex: Int) : TransferV3Frame()
     data class Retry(val fileIndex: Int, val chunkIndex: Int) : TransferV3Frame()
 }

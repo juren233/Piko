@@ -242,6 +242,16 @@ data class ReceiveTransferState(
     val subtitle: String
         get() = "${completedBytes.sizeLabel}/${totalBytes.sizeLabel}"
 
+    val receiveConfirmationMessage: String
+        get() {
+            val file = files.singleOrNull()
+            return if (file != null) {
+                "${senderName.visibleDeviceName}想发送${file.displayName}，大小${totalBytes.sizeLabel}"
+            } else {
+                "${senderName.visibleDeviceName}想发送${files.size}个文件，合计${totalBytes.sizeLabel}"
+            }
+        }
+
     val primaryFileType: ReceiveFileType
         get() = files.firstOrNull()?.fileType ?: ReceiveFileType.Other
 

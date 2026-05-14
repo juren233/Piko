@@ -124,6 +124,7 @@ class P2PTransferClient(
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
         val totalChunks = manifestFiles.sumOf { TransferProtocolV3.chunkCount(it.sizeBytes) }
         val ackLatch = CountDownLatch(totalChunks)
+        val receiverReadyLatch = CountDownLatch(1)
         val peer = P2PPeer(
             session.sessionId,
             session.iceServers,
@@ -139,6 +140,7 @@ class P2PTransferClient(
                     sentFrames = sentFrames,
                     ackedChunks = ackedChunks,
                     ackLatch = ackLatch,
+                    receiverReadyLatch = receiverReadyLatch,
                 )
             },
         )
@@ -260,6 +262,17 @@ class P2PTransferClient(
                 originalReason = error.message ?: "传输清单发送失败",
                 diagnostic = peer.diagnosticSnapshot(),
                 cause = error,
+            )
+        }
+        if (!receiverReadyLatch.await(120, TimeUnit.SECONDS)) {
+            peer.close()
+            peers.remove(session.sessionId)
+            throw P2PTransferFailure(
+                stage = "receiver_ready",
+                transferId = transferId,
+                sessionId = session.sessionId,
+                originalReason = "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时",
+                diagnostic = peer.diagnosticSnapshot(),
             )
         }
         var sentBytes = 0L
@@ -751,9 +764,11 @@ private class P2PReceiver(
     private val pendingChunkFrames = mutableListOf<Pair<ByteArray, DataChannel>>()
     private val receivedFiles = mutableListOf<ReceiveHistoryFile>()
     private var confirmed = false
+    private var activeChannel: DataChannel? = null
     private var didComplete = false
 
     fun attach(sessionId: String, channel: DataChannel) {
+        activeChannel = channel
         channel.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) = Unit
             override fun onStateChange() {
@@ -810,6 +825,9 @@ private class P2PReceiver(
                         requiresConfirmation = !autoAccept,
                     ),
                 )
+                if (autoAccept) {
+                    sendReady(channel)
+                }
             }
             is TransferV3Frame.Chunk -> {
                 if (!confirmed) {
@@ -839,6 +857,7 @@ private class P2PReceiver(
                 onReceiveTransferEvent(ReceiveTransferEvent.Progress(transferId, completedBytes, totalBytes))
                 finishIfComplete(channel)
             }
+            is TransferV3Frame.Ready,
             is TransferV3Frame.Ack,
             is TransferV3Frame.Retry,
             -> Unit
@@ -857,6 +876,7 @@ private class P2PReceiver(
                 requiresConfirmation = false,
             ),
         )
+        activeChannel?.let(::sendReady)
         val pending = pendingChunkFrames.toList()
         pendingChunkFrames.clear()
         pending.forEach { (bytes, channel) -> handle(bytes, channel) }
@@ -934,6 +954,12 @@ private class P2PReceiver(
     private fun sendAck(channel: DataChannel, fileIndex: Int, chunkIndex: Int) {
         require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeAck(fileIndex, chunkIndex)), true))) {
             "DataChannel ACK 发送失败"
+        }
+    }
+
+    private fun sendReady(channel: DataChannel) {
+        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeReady()), true))) {
+            "DataChannel READY 发送失败"
         }
     }
 
@@ -1023,12 +1049,14 @@ private fun handleSenderControlFrame(
     sentFrames: Map<ChunkKey, ByteArray>,
     ackedChunks: MutableSet<ChunkKey>,
     ackLatch: CountDownLatch,
+    receiverReadyLatch: CountDownLatch,
 ) {
     when (
         val frame = runCatching {
             TransferProtocolV3.decodeFrame(sessionKey, sessionId, transferId, bytes)
         }.getOrNull()
     ) {
+        is TransferV3Frame.Ready -> receiverReadyLatch.countDown()
         is TransferV3Frame.Ack -> {
             if (ackedChunks.add(ChunkKey(frame.fileIndex, frame.chunkIndex))) {
                 ackLatch.countDown()

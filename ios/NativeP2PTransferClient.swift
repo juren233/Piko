@@ -136,6 +136,7 @@ final class NativeP2PTransferClient {
             guard config.iceServers.allSatisfy({ !$0.urls.localizedCaseInsensitiveContains("google") }) else {
                 return .failure(p2pError(stage: "create_session", sessionId: config.sessionId, code: "INVALID_ICE_CONFIG", message: "ICE 配置包含非 Cloudflare STUN"))
             }
+            let receiverReadyTracker = NativeReceiverReadyTracker()
             let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
             var sentFrames: [String: Data] = [:]
             var negotiatedSessionKey: Data?
@@ -156,6 +157,8 @@ final class NativeP2PTransferClient {
                         return
                     }
                     switch frame {
+                    case .ready:
+                        receiverReadyTracker.markReady()
                     case .ack(let fileIndex, let chunkIndex):
                         ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex)
                     case .retry(let fileIndex, let chunkIndex):
@@ -214,6 +217,11 @@ final class NativeP2PTransferClient {
                 let diagnostic = session.diagnosticSnapshot
                 closeSession(config.sessionId)
                 return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: "传输清单发送失败", diagnostic: diagnostic))
+            }
+            guard await receiverReadyTracker.wait(seconds: 120) else {
+                let diagnostic = session.diagnosticSnapshot
+                closeSession(config.sessionId)
+                return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: "P2P_RECEIVER_READY_TIMEOUT", message: "等待接收端确认超时", diagnostic: diagnostic))
             }
 
             var sentBytes = 0
@@ -560,6 +568,9 @@ private final class NativeP2PReceiver {
             progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
             confirmed = autoAccept
             publishReceiveState(requiresConfirmation: !autoAccept)
+            if autoAccept {
+                sendReady()
+            }
         case .chunk(let fileIndex, let chunkIndex, let bytes):
             guard confirmed else {
                 pendingChunkFrames.append(data)
@@ -582,7 +593,7 @@ private final class NativeP2PReceiver {
             sendAck(fileIndex: fileIndex, chunkIndex: chunkIndex)
             publishReceiveState()
             finishIfComplete()
-        case .ack, .retry:
+        case .ready, .ack, .retry:
             break
         }
     }
@@ -593,6 +604,7 @@ private final class NativeP2PReceiver {
         }
         confirmed = true
         publishReceiveState(requiresConfirmation: false)
+        sendReady()
         let pending = pendingChunkFrames
         pendingChunkFrames.removeAll(keepingCapacity: false)
         pending.forEach(receive)
@@ -689,6 +701,10 @@ private final class NativeP2PReceiver {
 
     private func sendAck(fileIndex: Int, chunkIndex: Int) {
         sendControl(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))
+    }
+
+    private func sendReady() {
+        sendControl(NativeTransferProtocolV3.encodeReady())
     }
 
     private func sendRetry(fileIndex: Int, chunkIndex: Int) {
@@ -946,6 +962,36 @@ private extension Array where Element == NativeTransferV3ManifestInput {
             hasher.update(data: Data([0]))
         }
         return Data(hasher.finalize()).base64EncodedString()
+    }
+}
+
+@MainActor
+private final class NativeReceiverReadyTracker {
+    private var isReady = false
+    private var continuation: CheckedContinuation<Bool, Never>?
+
+    func markReady() {
+        isReady = true
+        continuation?.resume(returning: true)
+        continuation = nil
+    }
+
+    func wait(seconds: TimeInterval) async -> Bool {
+        guard !isReady else {
+            return true
+        }
+        return await withCheckedContinuation { continuation in
+            self.continuation = continuation
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                Task { @MainActor in
+                    guard let self, !self.isReady else {
+                        return
+                    }
+                    self.continuation?.resume(returning: false)
+                    self.continuation = nil
+                }
+            }
+        }
     }
 }
 

@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -56,6 +58,8 @@ import com.piko.app.domain.AccountResult
 import com.piko.app.domain.AuthState
 import com.piko.app.domain.PikoHomeState
 import com.piko.app.domain.ReceiveHistoryItem
+import com.piko.app.domain.ReceiveTransferEvent
+import com.piko.app.domain.ReceiveTransferState
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.glass.LiquidBottomTab
 import com.piko.app.glass.LiquidBottomTabs
@@ -324,6 +328,23 @@ fun AndroidPikoApp() {
                     .fillMaxWidth(),
             )
 
+            state.activeReceive
+                .takeIf { it.requiresConfirmation && it.transferId != null }
+                ?.let { pendingReceive ->
+                    ReceiveConfirmDialog(
+                        transfer = pendingReceive,
+                        onAccept = {
+                            val transferId = pendingReceive.transferId ?: return@ReceiveConfirmDialog
+                            sendPlatformActions.acceptReceiveTransfer(transferId)
+                        },
+                        onReject = {
+                            val transferId = pendingReceive.transferId ?: return@ReceiveConfirmDialog
+                            sendPlatformActions.cancelReceiveTransfer(transferId)
+                            mutateState { current -> current.applyReceiveTransferEvent(ReceiveTransferEvent.Canceled(transferId)) }
+                        },
+                    )
+                }
+
             LiquidBottomTabs(
                 selectedTabIndex = { selectedTab.ordinal },
                 onTabSelected = { index -> selectedTab = PikoTab.entries[index] },
@@ -399,6 +420,29 @@ fun AndroidPikoApp() {
             }
         }
     }
+}
+
+@Composable
+private fun ReceiveConfirmDialog(
+    transfer: ReceiveTransferState,
+    onAccept: () -> Unit,
+    onReject: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = {},
+        title = { Text(text = "确认接收") },
+        text = { Text(text = transfer.receiveConfirmationMessage) },
+        dismissButton = {
+            TextButton(onClick = onReject) {
+                Text(text = "拒绝")
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAccept) {
+                Text(text = "接收")
+            }
+        },
+    )
 }
 
 @Composable

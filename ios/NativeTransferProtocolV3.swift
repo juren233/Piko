@@ -5,6 +5,7 @@ enum NativeTransferProtocolV3 {
     static let chunkSize = 64 * 1024
     private static let magic = Data([0x50, 0x49, 0x4B, 0x33])
     private static let frameManifest = 0x01
+    private static let frameReady = 0x02
     private static let frameChunk = 0x03
     private static let frameAck = 0x04
     private static let frameRetry = 0x05
@@ -172,6 +173,10 @@ enum NativeTransferProtocolV3 {
         )
     }
 
+    static func encodeReady() -> Data {
+        encodeControlFrame(frameType: frameReady, fileIndex: -1, chunkIndex: -1)
+    }
+
     static func encodeAck(fileIndex: Int, chunkIndex: Int) -> Data {
         encodeControlFrame(frameType: frameAck, fileIndex: fileIndex, chunkIndex: chunkIndex)
     }
@@ -215,6 +220,8 @@ enum NativeTransferProtocolV3 {
                 throw NativeTransferProtocolV3Error.hashMismatch
             }
             return .chunk(fileIndex: fileIndex, chunkIndex: chunkIndex, bytes: plain)
+        case frameReady:
+            return .ready
         case frameAck:
             return .ack(fileIndex: fileIndex, chunkIndex: chunkIndex)
         case frameRetry:
@@ -462,6 +469,7 @@ struct NativeTransferV3File {
 enum NativeTransferV3Frame {
     case manifest(NativeTransferV3Manifest)
     case chunk(fileIndex: Int, chunkIndex: Int, bytes: Data)
+    case ready
     case ack(fileIndex: Int, chunkIndex: Int)
     case retry(fileIndex: Int, chunkIndex: Int)
 }

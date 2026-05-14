@@ -37,6 +37,13 @@ struct PikoRootView: View {
         }
     }
 
+    private var receiveConfirmationPresented: Binding<Bool> {
+        Binding(
+            get: { model.activeReceive?.requiresConfirmation == true },
+            set: { _ in }
+        )
+    }
+
     var body: some View {
         ZStack {
             PikoPalette.pageBackground
@@ -115,6 +122,16 @@ struct PikoRootView: View {
             if tab == .send {
                 model.refreshFriendsPresence()
             }
+        }
+        .alert("确认接收", isPresented: receiveConfirmationPresented) {
+            Button("拒绝", role: .cancel) {
+                model.cancelReceiveTransfer()
+            }
+            Button("接收") {
+                model.acceptReceiveTransfer()
+            }
+        } message: {
+            Text(model.activeReceive?.receiveConfirmationMessage ?? "")
         }
     }
 }

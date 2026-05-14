@@ -143,6 +143,14 @@ struct NativeReceiveTransferState: Identifiable {
         "\(ByteCountFormatter.string(fromByteCount: Int64(receivedBytes), countStyle: .file))/\(ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))"
     }
 
+    var receiveConfirmationMessage: String {
+        let size = ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
+        if files.count == 1, let file = files.first {
+            return "\(senderName.visibleDeviceName)想发送\(file.displayName)，大小\(size)"
+        }
+        return "\(senderName.visibleDeviceName)想发送\(files.count)个文件，合计\(size)"
+    }
+
     var progress: Double {
         guard totalBytes > 0 else {
             return 0

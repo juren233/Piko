@@ -73,11 +73,13 @@ class TransferProtocolV3Test {
     }
 
     @Test
-    fun ackAndRetryFramesRoundTripWithoutPayload() {
+    fun readyAckAndRetryFramesRoundTripWithoutPayload() {
         val key = sessionKey("session-001", "transfer-001")
+        val ready = TransferProtocolV3.decodeFrame(key, "session-001", "transfer-001", TransferProtocolV3.encodeReady())
         val ack = TransferProtocolV3.decodeFrame(key, "session-001", "transfer-001", TransferProtocolV3.encodeAck(2, 8))
         val retry = TransferProtocolV3.decodeFrame(key, "session-001", "transfer-001", TransferProtocolV3.encodeRetry(3, 9))
 
+        assertEquals(TransferV3Frame.Ready, ready)
         assertEquals(TransferV3Frame.Ack(fileIndex = 2, chunkIndex = 8), ack)
         assertEquals(TransferV3Frame.Retry(fileIndex = 3, chunkIndex = 9), retry)
     }

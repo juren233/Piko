@@ -157,6 +157,7 @@ class IosAndroidUiParityTest {
         val iosP2P = readIos("NativeP2PTransferClient.swift")
         val iosWebRTC = readIos("NativeWebRTCEngine.swift")
         val iosTransferV3 = readIos("NativeTransferProtocolV3.swift")
+        val iosTransferModels = readIos("NativeTransferModels.swift")
         val backendIce = File(rootDir, "backend/src/ice.ts").readText()
         assertTrue(androidSignaling.contains("/v1/signaling/ws?device_id="))
         assertTrue("fun addListener(listener: (JSONObject) -> Unit)" in androidSignaling)
@@ -214,6 +215,7 @@ class IosAndroidUiParityTest {
         assertTrue("Signature.getInstance(\"Ed25519\", curveProvider)" in androidTransferV3)
         assertTrue("enum class TransferV3KeyAgreementRole" in androidTransferV3)
         assertTrue("AES/GCM/NoPadding" in androidTransferV3)
+        assertTrue("frameReady = 0x02" in androidTransferV3)
         assertTrue("frameAck = 0x04" in androidTransferV3)
         assertTrue("data class TransferV3ManifestInput" in androidTransferV3)
         assertTrue("TransferProtocolV3.generateSigningKeyPair()" in androidIdentityStore)
@@ -261,6 +263,19 @@ class IosAndroidUiParityTest {
         assertTrue("chunkData(transferId: transferId, fileIndex: index, chunkIndex: chunkIndex)?.count" in iosP2P)
         assertTrue("autoAccept: (message[\"same_account\"] as? Bool) ?? false" in iosP2P)
         assertTrue("publishReceiveState(requiresConfirmation: !autoAccept)" in iosP2P)
+        assertTrue("ReceiveConfirmDialog(" in androidApp)
+        assertTrue("receiveConfirmationMessage" in androidHomeState)
+        assertTrue("sendPlatformActions.acceptReceiveTransfer(transferId)" in androidApp)
+        assertTrue("ReceiveTransferEvent.Canceled(transferId)" in androidApp)
+        assertTrue(".alert(\"确认接收\"" in iosRoot)
+        assertTrue("receiveConfirmationPresented" in iosRoot)
+        assertTrue("model.acceptReceiveTransfer()" in iosRoot)
+        assertTrue("model.cancelReceiveTransfer()" in iosRoot)
+        assertTrue("receiveConfirmationMessage" in iosTransferModels)
+        assertTrue("TransferProtocolV3.encodeReady()" in androidP2P)
+        assertTrue("NativeTransferProtocolV3.encodeReady()" in iosP2P)
+        assertTrue("receiverReadyLatch.await" in androidP2P)
+        assertTrue("NativeReceiverReadyTracker" in iosP2P)
         assertTrue("verifyInviteSignature(" in iosP2P)
         assertTrue("verifyAcceptSignature(" in iosP2P)
         assertTrue("waitForPeerEphemeralPublic(seconds: 10)" in iosP2P)
@@ -276,6 +291,7 @@ class IosAndroidUiParityTest {
         assertTrue("Curve25519.Signing.PrivateKey" in iosTransferV3)
         assertTrue("enum NativeTransferV3KeyAgreementRole" in iosTransferV3)
         assertTrue("AES.GCM.seal" in iosTransferV3)
+        assertTrue("frameReady = 0x02" in iosTransferV3)
         assertTrue("frameAck = 0x04" in iosTransferV3)
         assertTrue("struct NativeTransferV3ManifestInput" in iosTransferV3)
         assertTrue("@MainActor\n    func sendSelectedItems()" in iosModel)
@@ -339,7 +355,7 @@ class IosAndroidUiParityTest {
         ).forEach { marker ->
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }
-        listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "send_chunk", "ack").forEach { stage ->
+        listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "receiver_ready", "send_chunk", "ack").forEach { stage ->
             assertTrue(stage in androidP2P, "Android P2P must keep failure stage $stage")
             assertTrue(stage in iosP2P, "iOS P2P must keep failure stage $stage")
         }
