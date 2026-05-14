@@ -40,6 +40,8 @@ import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 
 data class P2PTransferDiagnostic(
@@ -73,10 +75,13 @@ class P2PTransferClient(
     private val receiversByTransferId = ConcurrentHashMap<String, P2PReceiver>()
     private val pendingSignalsBySessionId = ConcurrentHashMap<String, ConcurrentLinkedQueue<JSONObject>>()
     private val progressStore = TransferProgressStore(context)
+    private val signalExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "piko-p2p-signal").apply { isDaemon = true }
+    }
 
     init {
         initializeFactory(context)
-        signalingClient.addListener(::handleSignal)
+        signalingClient.addListener { message -> signalExecutor.execute { handleSignal(message) } }
     }
 
     fun send(
@@ -434,23 +439,34 @@ class P2PTransferClient(
         val sessionId = message.optString("session_id").takeIf { it.isNotBlank() } ?: return
         when (message.optString("type")) {
             "invite" -> {
-                val peer = peers.getOrPut(sessionId) {
+                val autoAccept = message.optBoolean("same_account", false)
+                val transferId = message.optString("transfer_id", sessionId)
+                val peer = peers[sessionId] ?: runCatching {
                     receiverPeer(
                         sessionId = sessionId,
-                        transferId = message.optString("transfer_id", sessionId),
+                        transferId = transferId,
                         manifestHashB64 = message.optString("manifest_hash_b64"),
                         iceServers = message.optIceServers(),
                         completedBitmapB64 = progressStore.completedBitmapB64(
-                            transferId = message.optString("transfer_id", sessionId),
+                            transferId = transferId,
                             manifestHashB64 = message.optString("manifest_hash_b64"),
                         ),
                         senderEphemeralPublicB64 = message.optString("sender_x25519_eph_pub_b64"),
                         senderInviteSignatureB64 = message.optString("sender_invite_signature_b64"),
                         senderEd25519PublicB64 = message.optString("sender_ed25519_pub_b64"),
                         senderX25519PublicB64 = message.optString("sender_x25519_pub_b64"),
-                        autoAccept = message.optBoolean("same_account", false),
-                    )
-                }
+                        autoAccept = autoAccept,
+                    ).also { created -> peers[sessionId] = created }
+                }.getOrNull() ?: return
+                onReceiveTransferEvent(
+                    ReceiveTransferEvent.Started(
+                        transferId = transferId,
+                        senderName = "",
+                        files = emptyList(),
+                        totalBytes = 0L,
+                        requiresConfirmation = !autoAccept,
+                    ),
+                )
                 flushPendingSignals(sessionId, peer)
             }
             "offer", "answer", "ice_candidate" -> {

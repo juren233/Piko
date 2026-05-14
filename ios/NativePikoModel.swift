@@ -935,7 +935,7 @@ extension String {
 
     var visibleDeviceName: String {
         let name = components(separatedBy: "@").first?.nilIfBlank ?? self
-        return name.nilIfBlank ?? "局域网设备"
+        return name.nilIfBlank ?? "对方"
     }
 
     var urlEncoded: String {

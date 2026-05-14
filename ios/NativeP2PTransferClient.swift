@@ -306,9 +306,10 @@ final class NativeP2PTransferClient {
                   let senderX25519PublicB64 = message["sender_x25519_pub_b64"] as? String else {
                 return
             }
-            _ = receiver(
+            let transferId = (message["transfer_id"] as? String) ?? sessionId
+            guard receiver(
                 for: sessionId,
-                transferId: (message["transfer_id"] as? String) ?? sessionId,
+                transferId: transferId,
                 manifestHashB64: manifestHashB64,
                 senderEphemeralPublicB64: senderEphemeralPublic,
                 senderInviteSignatureB64: senderInviteSignatureB64,
@@ -316,6 +317,18 @@ final class NativeP2PTransferClient {
                 senderX25519PublicB64: senderX25519PublicB64,
                 iceServers: NativeIceServerConfig.parse(message["ice_servers"] as? [[String: Any]]),
                 autoAccept: (message["same_account"] as? Bool) ?? false
+            ) != nil else {
+                return
+            }
+            onReceiveState(
+                NativeReceiveTransferState(
+                    id: transferId,
+                    senderName: "",
+                    files: [],
+                    totalBytes: 0,
+                    receivedBytes: 0,
+                    requiresConfirmation: !((message["same_account"] as? Bool) ?? false)
+                )
             )
             flushPendingSignals(for: sessionId)
         case "offer":

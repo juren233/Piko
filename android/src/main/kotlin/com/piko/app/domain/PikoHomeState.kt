@@ -233,17 +233,21 @@ data class ReceiveTransferState(
         get() = if (totalBytes <= 0L) 0f else (completedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
 
     val title: String
-        get() = if (requiresConfirmation) {
-            "${senderName.visibleDeviceName}想发送${files.size}个文件"
-        } else {
-            "正在从${senderName.visibleDeviceName}接收${files.size}个文件"
+        get() = when {
+            files.isEmpty() && requiresConfirmation -> "${senderName.visibleDeviceName}想发送文件"
+            files.isEmpty() -> "正在准备从${senderName.visibleDeviceName}接收"
+            requiresConfirmation -> "${senderName.visibleDeviceName}想发送${files.size}个文件"
+            else -> "正在从${senderName.visibleDeviceName}接收${files.size}个文件"
         }
 
     val subtitle: String
-        get() = "${completedBytes.sizeLabel}/${totalBytes.sizeLabel}"
+        get() = if (files.isEmpty()) "等待文件清单…" else "${completedBytes.sizeLabel}/${totalBytes.sizeLabel}"
 
     val receiveConfirmationMessage: String
         get() {
+            if (files.isEmpty()) {
+                return "${senderName.visibleDeviceName}想给你发送文件，等待文件清单…"
+            }
             val file = files.singleOrNull()
             return if (file != null) {
                 "${senderName.visibleDeviceName}想发送${file.displayName}，大小${totalBytes.sizeLabel}"
@@ -297,7 +301,7 @@ sealed class ReceiveTransferEvent {
 }
 
 private val String.visibleDeviceName: String
-    get() = substringBefore("@").trim().ifBlank { "局域网设备" }
+    get() = substringBefore("@").trim().ifBlank { ReceivePreparingPlaceholder }
 
 enum class ReceiveFileType(
     val label: String,

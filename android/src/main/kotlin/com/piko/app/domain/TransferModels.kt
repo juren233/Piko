@@ -5,6 +5,8 @@ enum class TransferRelationship {
     Friend,
 }
 
+internal const val ReceivePreparingPlaceholder = "对方"
+
 enum class TransferStatus {
     PendingConfirmation,
     Queued,

@@ -133,6 +133,11 @@ struct NativeReceiveTransferState: Identifiable {
     let requiresConfirmation: Bool
 
     var title: String {
+        if files.isEmpty {
+            return requiresConfirmation
+                ? "\(senderName.visibleDeviceName)想发送文件"
+                : "正在准备从\(senderName.visibleDeviceName)接收"
+        }
         if requiresConfirmation {
             return "\(senderName.visibleDeviceName)想发送\(files.count)个文件"
         }
@@ -140,10 +145,16 @@ struct NativeReceiveTransferState: Identifiable {
     }
 
     var subtitle: String {
-        "\(ByteCountFormatter.string(fromByteCount: Int64(receivedBytes), countStyle: .file))/\(ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))"
+        if files.isEmpty {
+            return "等待文件清单…"
+        }
+        return "\(ByteCountFormatter.string(fromByteCount: Int64(receivedBytes), countStyle: .file))/\(ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file))"
     }
 
     var receiveConfirmationMessage: String {
+        if files.isEmpty {
+            return "\(senderName.visibleDeviceName)想给你发送文件，等待文件清单…"
+        }
         let size = ByteCountFormatter.string(fromByteCount: Int64(totalBytes), countStyle: .file)
         if files.count == 1, let file = files.first {
             return "\(senderName.visibleDeviceName)想发送\(file.displayName)，大小\(size)"

@@ -4,7 +4,11 @@ final class NativeSignalingClient {
     private let baseURL: URL
     private let session: URLSession
     private var task: URLSessionWebSocketTask?
+    private var activeToken: String?
     private var activeDeviceId: String?
+    private var reconnectAttempts = 0
+    private var reconnectWorkItem: DispatchWorkItem?
+    private var closedByUser = false
     var onMessage: (([String: Any]) -> Void)?
 
     init(baseURL: URL = NativeAppConfig.apiBaseURL, session: URLSession = .shared) {
@@ -13,10 +17,20 @@ final class NativeSignalingClient {
     }
 
     func connect(token: String, deviceId: String) {
-        if task != nil, activeDeviceId == deviceId {
+        if task != nil, activeDeviceId == deviceId, activeToken == token {
             return
         }
-        close()
+        closedByUser = false
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
+        reconnectAttempts = 0
+        connectInternal(token: token, deviceId: deviceId)
+    }
+
+    private func connectInternal(token: String, deviceId: String) {
+        task?.cancel(with: .normalClosure, reason: nil)
+        task = nil
+        activeToken = token
         activeDeviceId = deviceId
         guard let url = signalingURL(deviceId: deviceId) else {
             return
@@ -39,8 +53,12 @@ final class NativeSignalingClient {
     }
 
     func close() {
+        closedByUser = true
+        reconnectWorkItem?.cancel()
+        reconnectWorkItem = nil
         task?.cancel(with: .normalClosure, reason: nil)
         task = nil
+        activeToken = nil
         activeDeviceId = nil
     }
 
@@ -57,8 +75,30 @@ final class NativeSignalingClient {
                 self.receiveLoop()
             case .failure:
                 self.task = nil
+                self.scheduleReconnect()
             }
         }
+    }
+
+    private func scheduleReconnect() {
+        if closedByUser {
+            return
+        }
+        guard let token = activeToken, let deviceId = activeDeviceId else {
+            return
+        }
+        reconnectWorkItem?.cancel()
+        let attempt = min(reconnectAttempts, 6)
+        reconnectAttempts += 1
+        let delaySeconds = min(Double(500 << attempt) / 1000.0, 30.0)
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, !self.closedByUser else {
+                return
+            }
+            self.connectInternal(token: token, deviceId: deviceId)
+        }
+        reconnectWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + delaySeconds, execute: workItem)
     }
 
     private func handle(_ text: String) {
@@ -68,9 +108,10 @@ final class NativeSignalingClient {
         }
         if object["type"] as? String == "ping" {
             send(["type": "pong"])
-        } else {
-            onMessage?(object)
+            return
         }
+        reconnectAttempts = 0
+        onMessage?(object)
     }
 
     private func signalingURL(deviceId: String) -> URL? {
