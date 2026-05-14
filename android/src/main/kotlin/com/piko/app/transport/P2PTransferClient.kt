@@ -23,8 +23,10 @@ import com.piko.app.domain.TransferV3Frame
 import com.piko.app.domain.TransferV3KeyAgreementRole
 import com.piko.app.domain.TransferV3ManifestInput
 import org.json.JSONObject
+import org.webrtc.CandidatePairChangeEvent
 import org.webrtc.DataChannel
 import org.webrtc.IceCandidate
+import org.webrtc.IceCandidateErrorEvent
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
@@ -60,6 +62,8 @@ data class P2PTransferDiagnostic(
     val iceGatheringState: String = "unknown",
     val signalingState: String = "unknown",
     val dataChannelState: String = "unknown",
+    val iceCandidateErrors: String = "none",
+    val selectedCandidatePair: String = "none",
 )
 
 class P2PTransferFailure(
@@ -688,7 +692,9 @@ class P2PTransferClient(
         private var signalingState = "unknown"
         @Volatile
         private var dataChannelState = "unknown"
+        private val iceCandidateErrors = ConcurrentLinkedQueue<String>()
         @Volatile
+        private var selectedCandidatePair = "none"
         private var aborted = false
         @Volatile
         private var abortCallback: (() -> Unit)? = null
@@ -727,6 +733,25 @@ class P2PTransferClient(
                                 .put("sdp_mid", candidate.sdpMid)
                                 .put("sdp_m_line_index", candidate.sdpMLineIndex),
                         )
+                    }
+
+                    override fun onIceCandidateError(event: IceCandidateErrorEvent) {
+                        iceCandidateErrors.add(
+                            listOf(
+                                "url=${event.url}",
+                                "address=${event.address}:${event.port}",
+                                "code=${event.errorCode}",
+                                "text=${event.errorText}",
+                            ).joinToString("|"),
+                        )
+                    }
+
+                    override fun onSelectedCandidatePairChanged(event: CandidatePairChangeEvent) {
+                        selectedCandidatePair = listOf(
+                            "local=${event.local.sdp.iceCandidateType()}",
+                            "remote=${event.remote.sdp.iceCandidateType()}",
+                            "reason=${event.reason}",
+                        ).joinToString("|")
                     }
 
                     override fun onDataChannel(channel: DataChannel) {
@@ -837,6 +862,8 @@ class P2PTransferClient(
                 iceGatheringState = iceGatheringState,
                 signalingState = signalingState,
                 dataChannelState = dataChannelState,
+                iceCandidateErrors = iceCandidateErrors.joinToString(";").ifBlank { "none" },
+                selectedCandidatePair = selectedCandidatePair,
             )
 
         fun close() {
@@ -1123,6 +1150,8 @@ private object NoopPeerObserver : PeerConnection.Observer {
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
     override fun onIceCandidate(candidate: IceCandidate) = Unit
+    override fun onIceCandidateError(event: IceCandidateErrorEvent) = Unit
+    override fun onSelectedCandidatePairChanged(event: CandidatePairChangeEvent) = Unit
     override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
     override fun onAddStream(stream: MediaStream) = Unit
     override fun onRemoveStream(stream: MediaStream) = Unit

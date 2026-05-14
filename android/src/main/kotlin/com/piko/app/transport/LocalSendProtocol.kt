@@ -44,7 +44,6 @@ enum class TransferTransportKind(
 ) {
     LanDirect("lan-direct", true),
     P2pDirect("p2p-direct", false),
-    Relay("relay", false),
 }
 
 interface TransferTransport {

@@ -119,7 +119,9 @@ final class NativeP2PTransferClient {
                 "ice_connection_state：\(diagnostic.iceConnectionState)",
                 "ice_gathering_state：\(diagnostic.iceGatheringState)",
                 "signaling_state：\(diagnostic.signalingState)",
-                "data_channel_state：\(diagnostic.dataChannelState)"
+                "data_channel_state：\(diagnostic.dataChannelState)",
+                "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
+                "selected_candidate_pair：\(diagnostic.selectedCandidatePair)"
             ].joined(separator: "\n")
         )
     }

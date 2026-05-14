@@ -51,6 +51,8 @@ private struct NativeP2PFailureDiagnostic {
     let iceGatheringState: String
     let signalingState: String
     let dataChannelState: String
+    let iceCandidateErrors: String
+    let selectedCandidatePair: String
 }
 
 final class NativePikoModel: ObservableObject {
@@ -390,7 +392,9 @@ final class NativePikoModel: ObservableObject {
             "ice_connection_state：\(diagnostic.iceConnectionState)",
             "ice_gathering_state：\(diagnostic.iceGatheringState)",
             "signaling_state：\(diagnostic.signalingState)",
-            "data_channel_state：\(diagnostic.dataChannelState)"
+            "data_channel_state：\(diagnostic.dataChannelState)",
+            "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
+            "selected_candidate_pair：\(diagnostic.selectedCandidatePair)"
         ].joined(separator: "\n")
     }
 
@@ -416,7 +420,9 @@ final class NativePikoModel: ObservableObject {
                 iceConnectionState: fields["ice_connection_state"]?.nilIfBlank ?? "unknown",
                 iceGatheringState: fields["ice_gathering_state"]?.nilIfBlank ?? "unknown",
                 signalingState: fields["signaling_state"]?.nilIfBlank ?? "unknown",
-                dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown"
+                dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown",
+                iceCandidateErrors: fields["ice_candidate_errors"]?.nilIfBlank ?? "none",
+                selectedCandidatePair: fields["selected_candidate_pair"]?.nilIfBlank ?? "none"
             )
         default:
             return NativeP2PFailureDiagnostic(
@@ -433,7 +439,9 @@ final class NativePikoModel: ObservableObject {
                 iceConnectionState: "unknown",
                 iceGatheringState: "unknown",
                 signalingState: "unknown",
-                dataChannelState: "unknown"
+                dataChannelState: "unknown",
+                iceCandidateErrors: "none",
+                selectedCandidatePair: "none"
             )
         }
     }

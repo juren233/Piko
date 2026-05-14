@@ -13,6 +13,8 @@ struct NativeWebRTCDiagnostic {
     let iceGatheringState: String
     let signalingState: String
     let dataChannelState: String
+    let iceCandidateErrors: String
+    let selectedCandidatePair: String
 
     static let empty = NativeWebRTCDiagnostic(
         offerSent: false,
@@ -25,7 +27,9 @@ struct NativeWebRTCDiagnostic {
         iceConnectionState: "unknown",
         iceGatheringState: "unknown",
         signalingState: "unknown",
-        dataChannelState: "unknown"
+        dataChannelState: "unknown",
+        iceCandidateErrors: "none",
+        selectedCandidatePair: "none"
     )
 }
 
@@ -61,6 +65,8 @@ final class NativeWebRTCSession: NSObject {
     private var iceGatheringState = "unknown"
     private var signalingState = "unknown"
     private var dataChannelState = "unknown"
+    private var iceCandidateErrors: [String] = []
+    private var selectedCandidatePair = "none"
     private var peerEphemeralPublicB64: String?
     private(set) var peerAcceptSignatureB64: String?
     private(set) var peerCompletedBitmapB64: String?
@@ -77,7 +83,9 @@ final class NativeWebRTCSession: NSObject {
             iceConnectionState: iceConnectionState,
             iceGatheringState: iceGatheringState,
             signalingState: signalingState,
-            dataChannelState: dataChannelState
+            dataChannelState: dataChannelState,
+            iceCandidateErrors: iceCandidateErrors.joined(separator: ";").nilIfBlank ?? "none",
+            selectedCandidatePair: selectedCandidatePair
         )
     }
 
@@ -348,6 +356,16 @@ final class NativeWebRTCSession: NSObject {
       pc.oniceconnectionstatechange = () => post({ kind: "ice_state", value: pc.iceConnectionState });
       pc.onicegatheringstatechange = () => post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
       pc.onsignalingstatechange = () => post({ kind: "signaling_state", value: pc.signalingState });
+      pc.onicecandidateerror = (event) => {
+        post({
+          kind: "ice_candidate_error",
+          url: event.url || "",
+          address: event.address || "",
+          port: event.port || 0,
+          error_code: event.errorCode || 0,
+          error_text: event.errorText || ""
+        });
+      };
       pc.onicecandidate = (event) => {
         if (!event.candidate) { return; }
         post({
@@ -468,6 +486,13 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             if let value = body["value"] as? String {
                 dataChannelState = value
             }
+        case "ice_candidate_error":
+            let url = (body["url"] as? String)?.nilIfBlank ?? "unknown-url"
+            let address = (body["address"] as? String)?.nilIfBlank ?? "unknown-address"
+            let port = body["port"] as? Int ?? 0
+            let code = body["error_code"] as? Int ?? 0
+            let text = (body["error_text"] as? String)?.nilIfBlank ?? "unknown-error"
+            iceCandidateErrors.append("url=\(url)|address=\(address):\(port)|code=\(code)|text=\(text)")
         case "binary":
             guard let base64 = body["data"] as? String,
                   let data = Data(base64Encoded: base64) else {

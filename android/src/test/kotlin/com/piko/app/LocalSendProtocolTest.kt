@@ -155,10 +155,10 @@ class LocalSendProtocolTest {
     }
 
     @Test
-    fun transportKindsReserveP2pAndRelayWithoutASecondTransferApi() {
+    fun transportKindsDoNotReserveRelayTransfer() {
         assertEquals("lan-direct", TransferTransportKind.LanDirect.wireName)
         assertEquals("p2p-direct", TransferTransportKind.P2pDirect.wireName)
-        assertEquals("relay", TransferTransportKind.Relay.wireName)
         assertFalse(TransferTransportKind.P2pDirect.isImplemented)
+        assertFalse(TransferTransportKind.entries.any { it.wireName == "relay" })
     }
 }
