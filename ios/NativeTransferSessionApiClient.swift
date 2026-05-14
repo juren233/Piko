@@ -2,6 +2,20 @@ import Foundation
 
 struct NativeIceServerConfig: Equatable {
     let urls: String
+
+    static let defaultP2P: [NativeIceServerConfig] = [
+        NativeIceServerConfig(urls: "stun:stun.cloudflare.com:3478"),
+        NativeIceServerConfig(urls: "stun:stun.cloudflare.com:53")
+    ]
+
+    static func parse(_ rawServers: [[String: Any]]?) -> [NativeIceServerConfig] {
+        let servers = rawServers?.compactMap { server in
+            (server["urls"] as? String).flatMap { urls in
+                urls.isEmpty ? nil : NativeIceServerConfig(urls: urls)
+            }
+        } ?? []
+        return servers.isEmpty ? defaultP2P : servers
+    }
 }
 
 struct NativeTransferSessionConfig: Equatable {
@@ -44,15 +58,12 @@ struct NativeTransferSessionApiClient {
             token: token
         ) { json in
             guard let sessionId = json["session_id"] as? String,
-                  let iceServers = json["ice_servers"] as? [[String: Any]],
                   let expiresAt = json["expires_at"] as? Int else {
                 throw NativeAccountError.networkUnavailable
             }
             return NativeTransferSessionConfig(
                 sessionId: sessionId,
-                iceServers: iceServers.compactMap { server in
-                    (server["urls"] as? String).map(NativeIceServerConfig.init(urls:))
-                },
+                iceServers: NativeIceServerConfig.parse(json["ice_servers"] as? [[String: Any]]),
                 expiresAt: expiresAt
             )
         }

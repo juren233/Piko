@@ -1,4 +1,5 @@
 import type { Env } from "../env.js";
+import type { IceServerConfig } from "../ice.js";
 
 interface SessionRoute {
   sender_user_id: string;
@@ -21,6 +22,7 @@ interface InviteDispatch {
   sender_invite_signature_b64: string;
   sender_ed25519_pub_b64: string;
   sender_x25519_pub_b64: string;
+  ice_servers?: IceServerConfig[];
   same_account: boolean;
   expires_at: number;
 }
@@ -80,6 +82,7 @@ export class SignalingHub {
         sender_invite_signature_b64: payload.sender_invite_signature_b64,
         sender_ed25519_pub_b64: payload.sender_ed25519_pub_b64,
         sender_x25519_pub_b64: payload.sender_x25519_pub_b64,
+        ice_servers: payload.ice_servers ?? [],
         same_account: payload.same_account,
       });
       if (delivered) {

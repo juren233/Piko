@@ -16,6 +16,11 @@ data class IceServerConfig(
     val urls: String,
 )
 
+fun defaultP2PIceServers(): List<IceServerConfig> = listOf(
+    IceServerConfig("stun:stun.cloudflare.com:3478"),
+    IceServerConfig("stun:stun.cloudflare.com:53"),
+)
+
 data class TransferSessionConfig(
     val sessionId: String,
     val iceServers: List<IceServerConfig>,
@@ -48,9 +53,9 @@ class TransferSessionApiClient(
         request("POST", "/v1/transfers/sessions", body, token) { json ->
             TransferSessionConfig(
                 sessionId = json.getString("session_id"),
-                iceServers = json.getJSONArray("ice_servers").mapObjects { server ->
-                    IceServerConfig(urls = server.getString("urls"))
-                },
+                iceServers = json.optJSONArray("ice_servers")?.mapObjects { server ->
+                    server.optString("urls").takeIf { it.isNotBlank() }?.let(::IceServerConfig)
+                }?.filterNotNull().orEmpty().ifEmpty { defaultP2PIceServers() },
                 expiresAt = json.getLong("expires_at"),
             )
         }

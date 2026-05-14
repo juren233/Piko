@@ -5,6 +5,7 @@ import { AppError } from "../errors.js";
 import { areFriends } from "../db/friendships.js";
 import { blobToBase64, findActiveDevice } from "../db/devices.js";
 import { parseTransferSessionBody } from "../validation/schemas.js";
+import { p2pIceServers } from "../ice.js";
 
 export const transferSessionsRoute = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
@@ -41,6 +42,7 @@ transferSessionsRoute.post("/", async (c) => {
 
   const sessionId = crypto.randomUUID();
   const expiresAt = Date.now() + 30 * 60 * 1000;
+  const iceServers = p2pIceServers();
   const route: StoredTransferSession = {
     sender_user_id: currentUser.id,
     sender_device_id: senderDeviceId,
@@ -79,6 +81,7 @@ transferSessionsRoute.post("/", async (c) => {
       sender_invite_signature_b64: input.senderInviteSignatureB64,
       sender_ed25519_pub_b64: blobToBase64(senderDevice.ed25519_pub),
       sender_x25519_pub_b64: blobToBase64(senderDevice.x25519_pub),
+      ice_servers: iceServers,
       same_account: input.receiverUserId === currentUser.id,
       expires_at: expiresAt,
     }),
@@ -101,7 +104,7 @@ transferSessionsRoute.post("/", async (c) => {
   return c.json(
     {
       session_id: sessionId,
-      ice_servers: [{ urls: "stun:stun.cloudflare.com:3478" }],
+      ice_servers: iceServers,
       expires_at: expiresAt,
     },
     201,

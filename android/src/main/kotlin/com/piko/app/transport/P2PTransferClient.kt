@@ -425,6 +425,7 @@ class P2PTransferClient(
                 sessionId = sessionId,
                 transferId = message.optString("transfer_id", sessionId),
                 manifestHashB64 = message.optString("manifest_hash_b64"),
+                iceServers = message.optIceServers(),
                 completedBitmapB64 = progressStore.completedBitmapB64(
                     transferId = message.optString("transfer_id", sessionId),
                     manifestHashB64 = message.optString("manifest_hash_b64"),
@@ -447,6 +448,7 @@ class P2PTransferClient(
         sessionId: String,
         transferId: String,
         manifestHashB64: String,
+        iceServers: List<IceServerConfig>,
         completedBitmapB64: String?,
         senderEphemeralPublicB64: String,
         senderInviteSignatureB64: String,
@@ -498,7 +500,7 @@ class P2PTransferClient(
         }.let { receiver ->
             P2PPeer(
                 sessionId = sessionId,
-                iceServers = listOf(IceServerConfig("stun:stun.cloudflare.com:3478")),
+                iceServers = iceServers,
                 signalingClient = signalingClient,
                 receiver = receiver,
                 receiverEphemeralPublicB64 = receiverEphemeral.publicKeyB64,
@@ -1094,6 +1096,14 @@ private fun List<SendTransferItem>.toManifestInputs(contentResolver: ContentReso
             fileHash = contentResolver.sha256(Uri.parse(item.sourceUri)),
         )
     }
+
+private fun JSONObject.optIceServers(): List<IceServerConfig> {
+    val servers = optJSONArray("ice_servers") ?: return defaultP2PIceServers()
+    return (0 until servers.length()).mapNotNull { index ->
+        val server = servers.optJSONObject(index) ?: return@mapNotNull null
+        server.optString("urls").takeIf { it.isNotBlank() }?.let(::IceServerConfig)
+    }.ifEmpty { defaultP2PIceServers() }
+}
 
 private fun List<TransferV3ManifestInput>.manifestHashB64(): String {
     val digest = MessageDigest.getInstance("SHA-256")

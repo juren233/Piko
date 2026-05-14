@@ -31,14 +31,18 @@ interface FriendsEnvelope {
 }
 
 interface IceConfigEnvelope {
-  ice_servers: Array<{ urls: string }>;
+  ice_servers: IceServerItem[];
   ttl_seconds: number;
 }
 
 interface SessionEnvelope {
   session_id: string;
-  ice_servers: Array<{ urls: string }>;
+  ice_servers: IceServerItem[];
   expires_at: number;
+}
+
+interface IceServerItem {
+  urls: string;
 }
 
 interface DeviceItem {
@@ -216,13 +220,16 @@ function transferSessionBody(receiverUserId: string, receiverDeviceId: string, s
 }
 
 describe("cross-network signaling control plane", () => {
-  it("returns only Cloudflare STUN from ice config", async () => {
+  it("returns Cloudflare STUN endpoints from ice config", async () => {
     const alice = await register("iceconfigalice");
 
     const res = await call<IceConfigEnvelope>("GET", "/v1/ice-config", { bearer: alice.token });
 
     expect(res.status).toBe(200);
-    expect(res.json.ice_servers).toEqual([{ urls: "stun:stun.cloudflare.com:3478" }]);
+    expect(res.json.ice_servers).toEqual([
+      { urls: "stun:stun.cloudflare.com:3478" },
+      { urls: "stun:stun.cloudflare.com:53" },
+    ]);
     expect(res.json.ice_servers.map((server) => server.urls)).not.toContain(
       "stun:stun.l.google.com:19302",
     );
@@ -408,7 +415,10 @@ describe("cross-network signaling control plane", () => {
       body: transferSessionBody(bob.user.id, "01HR0A9S9Y1N2Z3X4W5V6T7S8S", "01HR0A9S9Y1N2Z3X4W5V6T7S8R"),
     });
     expect(created.status).toBe(201);
-    expect(created.json.ice_servers).toEqual([{ urls: "stun:stun.cloudflare.com:3478" }]);
+    expect(created.json.ice_servers).toEqual([
+      { urls: "stun:stun.cloudflare.com:3478" },
+      { urls: "stun:stun.cloudflare.com:53" },
+    ]);
     expect(receiverWs.sent.at(-1)).toMatchObject({
       type: "invite",
       session_id: created.json.session_id,
@@ -420,6 +430,7 @@ describe("cross-network signaling control plane", () => {
       sender_invite_signature_b64: SIGNATURE_A,
       sender_ed25519_pub_b64: KEY_A,
       sender_x25519_pub_b64: KEY_B,
+      ice_servers: created.json.ice_servers,
       same_account: false,
     });
 

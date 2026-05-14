@@ -305,6 +305,7 @@ final class NativeP2PTransferClient {
                 senderInviteSignatureB64: senderInviteSignatureB64,
                 senderEd25519PublicB64: senderEd25519PublicB64,
                 senderX25519PublicB64: senderX25519PublicB64,
+                iceServers: NativeIceServerConfig.parse(message["ice_servers"] as? [[String: Any]]),
                 autoAccept: (message["same_account"] as? Bool) ?? false
             )
         case "offer":
@@ -351,7 +352,7 @@ final class NativeP2PTransferClient {
         }
         let session = NativeWebRTCSession(
             sessionId: sessionId,
-            iceServers: [NativeIceServerConfig(urls: "stun:stun.cloudflare.com:3478")],
+            iceServers: receiver.iceServers,
             sendSignal: { [weak self] signal in self?.signalingClient.send(signal) },
             onOpen: {},
             onBinary: { data in receiver.receive(data) },
@@ -389,6 +390,7 @@ final class NativeP2PTransferClient {
         senderInviteSignatureB64: String,
         senderEd25519PublicB64: String,
         senderX25519PublicB64: String,
+        iceServers: [NativeIceServerConfig],
         autoAccept: Bool
     ) -> NativeP2PReceiver? {
         if let receiver = receivers[sessionId] {
@@ -432,6 +434,7 @@ final class NativeP2PTransferClient {
             receiverEphemeralPublicB64: receiverEphemeral.publicKeyB64,
             receiverAcceptSignatureB64: acceptSignatureB64,
             completedBitmapB64: completedBitmapB64,
+            iceServers: iceServers,
             manifestHashB64: manifestHashB64,
             progressStore: progressStore,
             autoAccept: autoAccept,
@@ -470,6 +473,7 @@ private final class NativeP2PReceiver {
     let receiverEphemeralPublicB64: String
     let receiverAcceptSignatureB64: String
     let completedBitmapB64: String?
+    let iceServers: [NativeIceServerConfig]
     private let receiveFileStore: NativeReceiveFileStore
     private let manifestHashB64: String
     private let progressStore: NativeTransferProgressStore
@@ -496,6 +500,7 @@ private final class NativeP2PReceiver {
         receiverEphemeralPublicB64: String,
         receiverAcceptSignatureB64: String,
         completedBitmapB64: String?,
+        iceServers: [NativeIceServerConfig],
         manifestHashB64: String,
         progressStore: NativeTransferProgressStore,
         autoAccept: Bool,
@@ -510,6 +515,7 @@ private final class NativeP2PReceiver {
         self.receiverEphemeralPublicB64 = receiverEphemeralPublicB64
         self.receiverAcceptSignatureB64 = receiverAcceptSignatureB64
         self.completedBitmapB64 = completedBitmapB64
+        self.iceServers = iceServers
         self.manifestHashB64 = manifestHashB64
         self.progressStore = progressStore
         self.autoAccept = autoAccept
