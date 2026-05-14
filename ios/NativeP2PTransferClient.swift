@@ -195,11 +195,22 @@ final class NativeP2PTransferClient {
                 receiverReadyTracker?.abort()
                 ackTracker?.abort()
             }
-            guard await session.createOffer(), await session.waitUntilOpen(seconds: 15) else {
+            guard await session.createOffer() else {
+                let diagnostic = session.diagnosticSnapshot
+                closeSession(config.sessionId)
+                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: "OFFER_FAILED", message: "WebRTC offer 创建失败", diagnostic: diagnostic))
+            }
+            var opened = await session.waitUntilOpen(seconds: 15)
+            if !opened && !receiverReadyTracker.isAborted {
+                _ = await session.restartIce()
+                opened = await session.waitUntilOpen(seconds: 15)
+            }
+            guard opened else {
                 let diagnostic = session.diagnosticSnapshot
                 let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
-                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "DATA_CHANNEL_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网直连超时", diagnostic: diagnostic))
+                let message = abortedByPeer ? "对方已取消接收" : Self.crossNetworkDiagnosis(diagnostic)
+                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "DATA_CHANNEL_TIMEOUT", message: message, diagnostic: diagnostic))
             }
             guard let peerHandshake = await session.waitForPeerEphemeralPublic(seconds: 10),
                   NativeTransferProtocolV3.verifyAcceptSignature(
@@ -428,6 +439,11 @@ final class NativeP2PTransferClient {
                 _ = await sessionRef?.send(data)
             }
         }
+        receiver.sendControlBatch = { items in
+            Task { @MainActor in
+                _ = await sessionRef?.sendBatch(items)
+            }
+        }
         let session = NativeWebRTCSession(
             sessionId: sessionId,
             iceServers: receiver.iceServers,
@@ -555,6 +571,24 @@ final class NativeP2PTransferClient {
             "reason": "receiver_canceled",
         ])
     }
+
+    static func crossNetworkDiagnosis(_ diag: NativeWebRTCDiagnostic) -> String {
+        let localTypes = Set(diag.localCandidateTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+        let remoteTypes = Set(diag.remoteCandidateTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
+        let hasRelay = localTypes.contains("relay") || remoteTypes.contains("relay")
+        let allowed: Set<String> = ["host", "srflx", "none"]
+        let onlySrflxAndHost = !hasRelay && localTypes.isSubset(of: allowed) && remoteTypes.isSubset(of: allowed)
+        if onlySrflxAndHost {
+            return "双方 NAT 类型不兼容，直连穿透失败。请尝试连接同一 Wi-Fi"
+        }
+        if diag.localCandidateTypes == "none" {
+            return "本机未能获取任何网络候选，请检查网络连接"
+        }
+        if diag.remoteCandidateTypes == "none" {
+            return "对方未能获取任何网络候选，请确认对方网络正常"
+        }
+        return "跨网直连超时"
+    }
 }
 
 @MainActor
@@ -574,12 +608,15 @@ private final class NativeP2PReceiver {
     private let onReceiveCompleted: (NativeReceiveHistoryItem) -> Void
     private let sessionKey: Data
     var sendControl: (Data) -> Void = { _ in }
+    var sendControlBatch: (([Data]) -> Void)?
     private var senderName = "跨网设备"
     private var files: [NativeTransferV3File] = []
     private var fileChunks: [Int: [Int: Data]] = [:]
     private var completedChunks: [Int: Set<Int>] = [:]
     private var hashRetryCount: [Int: Int] = [:]
     private var pendingChunkFrames: [Data] = []
+    private var pendingAckFrames: [Data] = []
+    private var ackFlushScheduled = false
     private var confirmed = false
     private var canceled = false
     private var readySent = false
@@ -716,6 +753,7 @@ private final class NativeP2PReceiver {
     func cancel() {
         canceled = true
         pendingChunkFrames.removeAll(keepingCapacity: false)
+        pendingAckFrames.removeAll(keepingCapacity: false)
         fileChunks.removeAll(keepingCapacity: false)
         completedChunks.removeAll(keepingCapacity: false)
         progressStore.clear(transferId: transferId)
@@ -804,7 +842,24 @@ private final class NativeP2PReceiver {
     }
 
     private func sendAck(fileIndex: Int, chunkIndex: Int) {
-        sendControl(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))
+        pendingAckFrames.append(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))
+        guard !ackFlushScheduled else { return }
+        ackFlushScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.flushPendingAcks()
+        }
+    }
+
+    private func flushPendingAcks() {
+        ackFlushScheduled = false
+        guard !pendingAckFrames.isEmpty, !canceled else { return }
+        let batch = pendingAckFrames
+        pendingAckFrames.removeAll(keepingCapacity: true)
+        if let sendBatch = sendControlBatch {
+            sendBatch(batch)
+        } else {
+            batch.forEach { sendControl($0) }
+        }
     }
 
     private func sendReady() {

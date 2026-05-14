@@ -171,6 +171,21 @@ final class NativeWebRTCSession: NSObject {
         return await evaluate("return sendBase64(\(Self.jsonString(data.base64EncodedString())));")
     }
 
+    func sendBatch(_ items: [Data]) async -> Bool {
+        guard isOpen, !items.isEmpty else { return false }
+        let elements = items.map { "\"\($0.base64EncodedString())\"" }
+        return await evaluate("return await sendMultipleBase64([\(elements.joined(separator: ","))]);")
+    }
+
+    func restartIce() async -> Bool {
+        isOpen = false
+        let restarted = await evaluate("return await restartIce();")
+        if restarted {
+            offerSent = true
+        }
+        return restarted
+    }
+
     func waitUntilOpen(seconds: TimeInterval) async -> Bool {
         if isOpen {
             return true
@@ -414,6 +429,14 @@ final class NativeWebRTCSession: NSObject {
       await pc.addIceCandidate(iceCandidate);
       return true;
     }
+    async function restartIce() {
+      if (!pc) { return false; }
+      pc.restartIce();
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      post({ kind: "signal", type: "offer", sdp: offer.sdp });
+      return true;
+    }
     async function waitForWritableChannel() {
       if (!channel || channel.readyState !== "open") { return false; }
       const highWaterMark = 512 * 1024;
@@ -437,6 +460,13 @@ final class NativeWebRTCSession: NSObject {
     async function sendBase64(value) {
       if (!await waitForWritableChannel()) { return false; }
       channel.send(fromBase64(value));
+      return true;
+    }
+    async function sendMultipleBase64(arr) {
+      for (const b64 of arr) {
+        if (!await waitForWritableChannel()) { return false; }
+        channel.send(fromBase64(b64));
+      }
       return true;
     }
     function closePeer() {

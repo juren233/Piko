@@ -58,7 +58,10 @@ data class P2PTransferDiagnostic(
     val iceServerUrls: String = "unknown",
     val localCandidateTypes: String = "none",
     val remoteCandidateTypes: String = "none",
+    val localCandidateDetails: String = "none",
+    val remoteCandidateDetails: String = "none",
     val iceConnectionState: String = "unknown",
+    val peerConnectionState: String = "unknown",
     val iceGatheringState: String = "unknown",
     val signalingState: String = "unknown",
     val dataChannelState: String = "unknown",
@@ -193,16 +196,30 @@ class P2PTransferClient(
             )
         }
         if (!peer.awaitOpen()) {
-            val abortedByPeer = peer.isAborted
-            peer.close()
-            peers.remove(session.sessionId)
-            throw P2PTransferFailure(
-                stage = "data_channel_open",
-                transferId = transferId,
-                sessionId = session.sessionId,
-                originalReason = if (abortedByPeer) "对方已取消接收" else "DATA_CHANNEL_TIMEOUT：跨网直连超时",
-                diagnostic = peer.diagnosticSnapshot(),
-            )
+            if (peer.isAborted) {
+                peer.close()
+                peers.remove(session.sessionId)
+                throw P2PTransferFailure(
+                    stage = "data_channel_open",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = "对方已取消接收",
+                    diagnostic = peer.diagnosticSnapshot(),
+                )
+            }
+            peer.triggerIceRestart()
+            if (!peer.awaitOpen()) {
+                val diag = peer.diagnosticSnapshot()
+                peer.close()
+                peers.remove(session.sessionId)
+                throw P2PTransferFailure(
+                    stage = "data_channel_open",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = crossNetworkDiagnosis(diag),
+                    diagnostic = diag,
+                )
+            }
         }
         val peerHandshake = runCatching {
             peer.awaitPeerHandshake()
@@ -662,7 +679,8 @@ class P2PTransferClient(
         private val receiverCompletedBitmapB64: String? = null,
         private val onBinary: ((ByteArray, DataChannel) -> Unit)?,
     ) {
-        private val openLatch = CountDownLatch(1)
+        @Volatile
+        private var openLatch = CountDownLatch(1)
         private val peerEphemeralLatch = CountDownLatch(1)
         @Volatile
         private var peerEphemeralPublicB64: String? = null
@@ -684,8 +702,12 @@ class P2PTransferClient(
         private var iceServerUrls = iceServers.joinToString(",") { it.urls }.ifBlank { "none" }
         private val localCandidateTypes = ConcurrentHashMap.newKeySet<String>()
         private val remoteCandidateTypes = ConcurrentHashMap.newKeySet<String>()
+        private val localCandidateDetails = ConcurrentHashMap.newKeySet<String>()
+        private val remoteCandidateDetails = ConcurrentHashMap.newKeySet<String>()
         @Volatile
         private var iceConnectionState = "unknown"
+        @Volatile
+        private var peerConnectionState = "unknown"
         @Volatile
         private var iceGatheringState = "unknown"
         @Volatile
@@ -707,6 +729,8 @@ class P2PTransferClient(
                     bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
                     rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
                     sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+                    continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+                    iceCandidatePoolSize = 1
                 },
                 object : PeerConnection.Observer by NoopPeerObserver {
                     override fun onSignalingChange(state: PeerConnection.SignalingState) {
@@ -717,6 +741,10 @@ class P2PTransferClient(
                         iceConnectionState = state.name
                     }
 
+                    override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
+                        peerConnectionState = state.name
+                    }
+
                     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
                         iceGatheringState = state.name
                     }
@@ -724,6 +752,7 @@ class P2PTransferClient(
                     override fun onIceCandidate(candidate: IceCandidate) {
                         localIceCount += 1
                         localCandidateTypes.add(candidate.sdp.iceCandidateType())
+                        localCandidateDetails.add(candidate.sdp.iceCandidateSummary())
                         signalingClient.send(
                             JSONObject()
                                 .put("type", "ice_candidate")
@@ -750,6 +779,8 @@ class P2PTransferClient(
                         selectedCandidatePair = listOf(
                             "local=${event.local.sdp.iceCandidateType()}",
                             "remote=${event.remote.sdp.iceCandidateType()}",
+                            "local_detail=${event.local.sdp.iceCandidateSummary()}",
+                            "remote_detail=${event.remote.sdp.iceCandidateSummary()}",
                             "reason=${event.reason}",
                         ).joinToString("|")
                     }
@@ -816,6 +847,7 @@ class P2PTransferClient(
             )
             remoteIceCount += 1
             remoteCandidateTypes.add(message.optString("candidate_type").ifBlank { message.getString("candidate").iceCandidateType() })
+            remoteCandidateDetails.add(message.getString("candidate").iceCandidateSummary())
             if (!hasRemoteDescription) {
                 pendingIceCandidates.add(candidate)
                 if (hasRemoteDescription) {
@@ -829,6 +861,14 @@ class P2PTransferClient(
         fun awaitOpen(): Boolean {
             val opened = openLatch.await(15, TimeUnit.SECONDS)
             return opened && !aborted
+        }
+
+        fun triggerIceRestart() {
+            openLatch = CountDownLatch(1)
+            peerConnection.restartIce()
+            val offer = createSdp { observer -> peerConnection.createOffer(observer, MediaConstraints()) }
+            setLocal(offer)
+            signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
         }
 
         fun awaitPeerHandshake(): P2PPeerHandshake {
@@ -858,7 +898,10 @@ class P2PTransferClient(
                 iceServerUrls = iceServerUrls,
                 localCandidateTypes = localCandidateTypes.candidateTypesDescription(),
                 remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription(),
+                localCandidateDetails = localCandidateDetails.candidateDetailsDescription(),
+                remoteCandidateDetails = remoteCandidateDetails.candidateDetailsDescription(),
                 iceConnectionState = iceConnectionState,
+                peerConnectionState = peerConnectionState,
                 iceGatheringState = iceGatheringState,
                 signalingState = signalingState,
                 dataChannelState = dataChannelState,
@@ -1147,6 +1190,7 @@ private class P2PReceiver(
 private object NoopPeerObserver : PeerConnection.Observer {
     override fun onSignalingChange(state: PeerConnection.SignalingState) = Unit
     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) = Unit
+    override fun onConnectionChange(state: PeerConnection.PeerConnectionState) = Unit
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) = Unit
     override fun onIceCandidate(candidate: IceCandidate) = Unit
@@ -1328,8 +1372,69 @@ private fun JSONObject.optIceServers(): List<IceServerConfig> {
 private fun String.iceCandidateType(): String =
     Regex("""\btyp\s+([A-Za-z0-9_-]+)""").find(this)?.groupValues?.get(1)?.lowercase() ?: "unknown"
 
+private fun String.iceCandidateSummary(): String {
+    val parts = trim().split(Regex("""\s+"""))
+    val protocol = parts.getOrNull(2)?.lowercase()?.ifBlank { null } ?: "unknown"
+    val address = parts.getOrNull(4)?.iceAddressKind() ?: "unknown"
+    val port = parts.getOrNull(5)?.ifBlank { null } ?: "unknown"
+    val relatedAddress = Regex("""\braddr\s+(\S+)""").find(this)?.groupValues?.getOrNull(1)?.iceAddressKind()
+    val relatedPort = Regex("""\brport\s+(\S+)""").find(this)?.groupValues?.getOrNull(1)
+    return buildList {
+        add("type=${iceCandidateType()}")
+        add("proto=$protocol")
+        add("addr=$address")
+        add("port=$port")
+        if (!relatedAddress.isNullOrBlank()) add("raddr=$relatedAddress")
+        if (!relatedPort.isNullOrBlank()) add("rport=$relatedPort")
+    }.joinToString("/")
+}
+
+private fun String.iceAddressKind(): String {
+    val value = lowercase()
+    if (value.endsWith(".local")) return "mdns"
+    if (":" in value) {
+        return when {
+            value.startsWith("fd") || value.startsWith("fc") || value.startsWith("fe80") -> "private-ipv6"
+            else -> "ipv6"
+        }
+    }
+    val octets = value.split(".").mapNotNull { it.toIntOrNull() }
+    if (octets.size != 4) return "unknown"
+    val first = octets[0]
+    val second = octets[1]
+    return when {
+        first == 10 -> "private-ipv4"
+        first == 172 && second in 16..31 -> "private-ipv4"
+        first == 192 && second == 168 -> "private-ipv4"
+        first == 169 && second == 254 -> "link-local-ipv4"
+        first == 100 && second in 64..127 -> "cgnat-ipv4"
+        first == 127 -> "loopback-ipv4"
+        else -> "public-ipv4"
+    }
+}
+
+private fun crossNetworkDiagnosis(diag: P2PTransferDiagnostic): String {
+    val localTypes = diag.localCandidateTypes.split(",").map { it.trim() }.toSet()
+    val remoteTypes = diag.remoteCandidateTypes.split(",").map { it.trim() }.toSet()
+    val hasRelay = "relay" in localTypes || "relay" in remoteTypes
+    val onlySrflxAndHost = !hasRelay &&
+        localTypes.all { it in setOf("host", "srflx", "none") } &&
+        remoteTypes.all { it in setOf("host", "srflx", "none") }
+    val hasCgnat = diag.localCandidateDetails.contains("cgnat") || diag.remoteCandidateDetails.contains("cgnat")
+    return when {
+        onlySrflxAndHost && hasCgnat -> "双方网络均处于运营商 NAT（CGNAT）后方，无法直连。请尝试连接同一 Wi-Fi"
+        onlySrflxAndHost -> "双方 NAT 类型不兼容，直连穿透失败。请尝试连接同一 Wi-Fi"
+        diag.localCandidateTypes == "none" -> "本机未能获取任何网络候选，请检查网络连接"
+        diag.remoteCandidateTypes == "none" -> "对方未能获取任何网络候选，请确认对方网络正常"
+        else -> "跨网直连超时"
+    }
+}
+
 private fun Set<String>.candidateTypesDescription(): String =
     filter { it.isNotBlank() }.sorted().joinToString(",").ifBlank { "none" }
+
+private fun Set<String>.candidateDetailsDescription(): String =
+    filter { it.isNotBlank() }.sorted().take(12).joinToString(";").ifBlank { "none" }
 
 private fun List<TransferV3ManifestInput>.manifestHashB64(): String {
     val digest = MessageDigest.getInstance("SHA-256")
