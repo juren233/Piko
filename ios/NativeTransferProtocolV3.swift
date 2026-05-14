@@ -348,14 +348,23 @@ enum NativeTransferProtocolV3 {
             nonce: try AES.GCM.Nonce(data: nonce),
             authenticating: aad
         )
-        guard let combined = sealed.combined else {
-            throw NativeTransferProtocolV3Error.invalidFrame
-        }
-        return combined
+        var cipherBytes = Data()
+        cipherBytes.append(sealed.ciphertext)
+        cipherBytes.append(sealed.tag)
+        return cipherBytes
     }
 
     private static func decrypt(sessionKey: Data, nonce: Data, aad: Data, cipherBytes: Data) throws -> Data {
-        let sealedBox = try AES.GCM.SealedBox(combined: cipherBytes)
+        guard cipherBytes.count >= 16 else {
+            throw NativeTransferProtocolV3Error.invalidFrame
+        }
+        let tag = Data(cipherBytes.suffix(16))
+        let ciphertext = Data(cipherBytes.prefix(cipherBytes.count - 16))
+        let sealedBox = try AES.GCM.SealedBox(
+            nonce: try AES.GCM.Nonce(data: nonce),
+            ciphertext: ciphertext,
+            tag: tag
+        )
         return try AES.GCM.open(
             sealedBox,
             using: SymmetricKey(data: sessionKey),
