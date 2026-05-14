@@ -217,21 +217,17 @@ final class NativeWebRTCSession: NSObject {
     }
 
     private func evaluate(_ script: String) async -> Bool {
-        await withCheckedContinuation { continuation in
-            webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page) { result in
-                switch result {
-                case .success(let value):
-                    if let bool = value as? Bool {
-                        continuation.resume(returning: bool)
-                    } else if let number = value as? NSNumber {
-                        continuation.resume(returning: number.boolValue)
-                    } else {
-                        continuation.resume(returning: true)
-                    }
-                case .failure:
-                    continuation.resume(returning: false)
-                }
+        do {
+            let value = try await webView.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: .page)
+            if let bool = value as? Bool {
+                return bool
             }
+            if let number = value as? NSNumber {
+                return number.boolValue
+            }
+            return true
+        } catch {
+            return false
         }
     }
 
