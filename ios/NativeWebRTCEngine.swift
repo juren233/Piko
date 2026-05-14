@@ -5,6 +5,78 @@ private enum NativeWebRTCTiming {
     static let sendOpenWaitSeconds: TimeInterval = 30
 }
 
+enum NativeP2PFailureReason: String, CaseIterable {
+    case localNoCandidate = "LOCAL_NO_CANDIDATE"
+    case remoteNoCandidate = "REMOTE_NO_CANDIDATE"
+    case stunServersDegraded = "STUN_SERVERS_DEGRADED"
+    case symmetricNat = "SYMMETRIC_NAT"
+    case remoteMdnsOnly = "REMOTE_MDNS_ONLY"
+    case connectivityCheckFailed = "CONNECTIVITY_CHECK_FAILED"
+    case cgnatBothSides = "CGNAT_BOTH_SIDES"
+    case natIncompatible = "NAT_INCOMPATIBLE"
+    case genericTimeout = "GENERIC_TIMEOUT"
+
+    var title: String {
+        switch self {
+        case .localNoCandidate: return "本机未能获取任何网络候选"
+        case .remoteNoCandidate: return "对方未能获取任何网络候选"
+        case .stunServersDegraded: return "网络环境无法访问公共 STUN 服务"
+        case .symmetricNat: return "运营商 NAT 端口预测失败"
+        case .remoteMdnsOnly: return "对端处于本地网络保护模式"
+        case .connectivityCheckFailed: return "候选连通性检查全部失败"
+        case .cgnatBothSides: return "双方均处于运营商级 NAT 后方"
+        case .natIncompatible: return "双方 NAT 类型不兼容"
+        case .genericTimeout: return "跨网直连超时"
+        }
+    }
+
+    var body: String {
+        switch self {
+        case .localNoCandidate:
+            return "当前设备未能枚举出可用的网络地址，无法发起 P2P 连接。"
+        case .remoteNoCandidate:
+            return "接收方设备未能枚举出可用的网络地址，无法接受 P2P 连接。"
+        case .stunServersDegraded:
+            return "多个 STUN 服务器解析或绑定失败，候选地址发现严重受阻。常见原因：DNS 劫持、UDP 拦截或 53/3478 等端口被防火墙阻断。"
+        case .symmetricNat:
+            return "检测到一方的 NAT 对同一内网端口分配了多个不同的公网端口（对称 NAT），跨网直连无法穿透。"
+        case .remoteMdnsOnly:
+            return "接收方仅暴露 mDNS 主机名，跨网无法解析。常见原因：iOS 未授予本地网络权限或对方处于强隐私模式。"
+        case .connectivityCheckFailed:
+            return "ICE 仍在收集候选时，已知候选对的连通性检查全部失败，双方网络可能互相不可达。"
+        case .cgnatBothSides:
+            return "双方网络均处于 CGNAT 后方，公网地址不可控，纯直连穿透在该网络组合下不可行。"
+        case .natIncompatible:
+            return "双方均只获取到 host/srflx 候选，跨 NAT 直连穿透未成功。"
+        case .genericTimeout:
+            return "ICE 在等待窗口内未能完成连接握手，原因不明。"
+        }
+    }
+
+    var suggestion: String {
+        switch self {
+        case .localNoCandidate:
+            return "请检查本机网络连接（Wi-Fi/移动数据），关闭可能拦截 UDP 的 VPN/代理后重试。"
+        case .remoteNoCandidate:
+            return "请确认对方处于联网状态，且未启用阻止 UDP 流量的 VPN/代理。"
+        case .stunServersDegraded:
+            return "请尝试切换到其他网络（如个人热点或不同的 Wi-Fi），或与网络管理员确认 UDP 出站是否被拦截。"
+        case .symmetricNat:
+            return "请尝试让双方接入同一 Wi-Fi，或切换到 5G/4G 个人热点后重试。"
+        case .remoteMdnsOnly:
+            return "请提示对方在系统设置中授予「本地网络」权限，或切换到同一 Wi-Fi 后重试。"
+        case .connectivityCheckFailed:
+            return "请确认两端的网络环境均允许出站 UDP，或切换到同一 Wi-Fi 后重试。"
+        case .cgnatBothSides:
+            return "请尝试让双方接入同一 Wi-Fi，或切换到家庭宽带/办公网络后重试。"
+        case .natIncompatible:
+            return "请尝试让双方接入同一 Wi-Fi 后重试。"
+        case .genericTimeout:
+            return "请稍后重试，或切换到同一 Wi-Fi 环境。"
+        }
+    }
+}
+
 struct NativeWebRTCDiagnostic {
     let offerSent: Bool
     let answerReceived: Bool
@@ -22,6 +94,11 @@ struct NativeWebRTCDiagnostic {
     let iceCandidateErrors: String
     let selectedCandidatePair: String
     let iceCandidatePairStats: String
+    let stunErrorRate: Double
+    let gatheringIncomplete: Bool
+    let symmetricNatSuspect: Bool
+    let remoteOnlyMdns: Bool
+    var failureReason: NativeP2PFailureReason?
 
     static let empty = NativeWebRTCDiagnostic(
         offerSent: false,
@@ -39,7 +116,12 @@ struct NativeWebRTCDiagnostic {
         dataChannelState: "unknown",
         iceCandidateErrors: "none",
         selectedCandidatePair: "none",
-        iceCandidatePairStats: "none"
+        iceCandidatePairStats: "none",
+        stunErrorRate: 0.0,
+        gatheringIncomplete: false,
+        symmetricNatSuspect: false,
+        remoteOnlyMdns: false,
+        failureReason: nil
     )
 }
 
@@ -101,7 +183,20 @@ final class NativeWebRTCSession: NSObject {
             dataChannelState: dataChannelState,
             iceCandidateErrors: iceCandidateErrors.joined(separator: ";").nilIfBlank ?? "none",
             selectedCandidatePair: selectedCandidatePair,
-            iceCandidatePairStats: iceCandidatePairStats
+            iceCandidatePairStats: iceCandidatePairStats,
+            stunErrorRate: NativeP2PDiagnostics.computeStunErrorRate(
+                iceServerUrls: iceServers.map(\.urls).joined(separator: ",").nilIfBlank ?? "none",
+                iceCandidateErrors: iceCandidateErrors.joined(separator: ";").nilIfBlank ?? "none"
+            ),
+            gatheringIncomplete: NativeP2PDiagnostics.isGatheringIncomplete(iceGatheringState: iceGatheringState),
+            symmetricNatSuspect:
+                NativeP2PDiagnostics.detectSymmetricNatSuspect(details: Self.candidateDetailsDescription(localCandidateDetails)) ||
+                NativeP2PDiagnostics.detectSymmetricNatSuspect(details: Self.candidateDetailsDescription(remoteCandidateDetails)),
+            remoteOnlyMdns: NativeP2PDiagnostics.detectRemoteOnlyMdns(
+                remoteTypes: Self.candidateTypesDescription(remoteCandidateTypes),
+                remoteDetails: Self.candidateDetailsDescription(remoteCandidateDetails)
+            ),
+            failureReason: nil
         )
     }
 
@@ -513,7 +608,13 @@ final class NativeWebRTCSession: NSObject {
     }
     function setupPeer(urls) {
       if (pc) { return true; }
-      pc = new RTCPeerConnection({ iceServers: urls.map((url) => ({ urls: url })) });
+      pc = new RTCPeerConnection({
+        iceServers: urls.map((url) => ({ urls: url })),
+        iceCandidatePoolSize: 4,
+        bundlePolicy: "max-bundle",
+        rtcpMuxPolicy: "require",
+        iceTransportPolicy: "all"
+      });
       post({ kind: "ice_state", value: pc.iceConnectionState });
       post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
       post({ kind: "signaling_state", value: pc.signalingState });
@@ -716,5 +817,109 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
         default:
             break
         }
+    }
+}
+
+enum NativeP2PDiagnostics {
+    static func computeStunErrorRate(iceServerUrls: String, iceCandidateErrors: String) -> Double {
+        let servers = Set(
+            iceServerUrls.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        guard !servers.isEmpty else { return 0.0 }
+        guard !iceCandidateErrors.isEmpty, iceCandidateErrors != "none" else { return 0.0 }
+        let urlRegex = try? NSRegularExpression(pattern: "url=([^|]+)")
+        var erroredUrls: Set<String> = []
+        for entry in iceCandidateErrors.split(separator: ";") {
+            let s = String(entry)
+            let range = NSRange(s.startIndex..<s.endIndex, in: s)
+            guard let match = urlRegex?.firstMatch(in: s, options: [], range: range),
+                  match.numberOfRanges >= 2,
+                  let captured = Range(match.range(at: 1), in: s) else {
+                continue
+            }
+            let url = s[captured].trimmingCharacters(in: .whitespaces)
+            if !url.isEmpty { erroredUrls.insert(url) }
+        }
+        let degraded = servers.filter { erroredUrls.contains($0) }.count
+        return Double(degraded) / Double(servers.count)
+    }
+
+    static func isGatheringIncomplete(iceGatheringState: String) -> Bool {
+        iceGatheringState.lowercased() != "complete"
+    }
+
+    static func detectSymmetricNatSuspect(details: String) -> Bool {
+        guard !details.isEmpty, details != "none" else { return false }
+        let addrRegex = try? NSRegularExpression(pattern: "(?:^|/)addr=([^/]+)")
+        let portRegex = try? NSRegularExpression(pattern: "(?:^|/)port=([0-9]+)")
+        let rportRegex = try? NSRegularExpression(pattern: "rport=([0-9]+)")
+        var mappings: [String: Set<String>] = [:]
+        for entry in details.split(separator: ";") {
+            let s = String(entry)
+            guard s.contains("type=srflx") else { continue }
+            guard let addr = NativeP2PDiagnostics.firstCapture(regex: addrRegex, in: s),
+                  let port = NativeP2PDiagnostics.firstCapture(regex: portRegex, in: s),
+                  let rport = NativeP2PDiagnostics.firstCapture(regex: rportRegex, in: s)
+            else { continue }
+            guard rport != "0" else { continue }
+            let key = "\(addr)|\(rport)"
+            mappings[key, default: []].insert(port)
+        }
+        return mappings.values.contains { $0.count >= 2 }
+    }
+
+    static func detectRemoteOnlyMdns(remoteTypes: String, remoteDetails: String) -> Bool {
+        let types = Set(
+            remoteTypes.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+        )
+        guard types == ["host"] else { return false }
+        guard !remoteDetails.isEmpty, remoteDetails != "none" else { return false }
+        let entries = remoteDetails.split(separator: ";").map(String.init).filter { $0.contains("type=host") }
+        guard !entries.isEmpty else { return false }
+        return entries.allSatisfy { $0.contains("addr=mdns") }
+    }
+
+    static func crossNetworkDiagnosis(_ diag: NativeWebRTCDiagnostic) -> NativeP2PFailureReason {
+        let localTypes = Set(
+            diag.localCandidateTypes.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        )
+        let remoteTypes = Set(
+            diag.remoteCandidateTypes.split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+        )
+        let hasRelay = localTypes.contains("relay") || remoteTypes.contains("relay")
+        let allowed: Set<String> = ["host", "srflx", "none"]
+        let onlySrflxAndHost = !hasRelay && localTypes.isSubset(of: allowed) && remoteTypes.isSubset(of: allowed)
+        let hasCgnat =
+            diag.localCandidateDetails.contains("cgnat") ||
+            diag.remoteCandidateDetails.contains("cgnat")
+
+        if diag.localCandidateTypes == "none" { return .localNoCandidate }
+        if diag.remoteCandidateTypes == "none" { return .remoteNoCandidate }
+        if diag.stunErrorRate >= 0.5 { return .stunServersDegraded }
+        if diag.symmetricNatSuspect { return .symmetricNat }
+        if diag.remoteOnlyMdns { return .remoteMdnsOnly }
+        if diag.gatheringIncomplete && diag.selectedCandidatePair == "none" {
+            return .connectivityCheckFailed
+        }
+        if onlySrflxAndHost && hasCgnat { return .cgnatBothSides }
+        if onlySrflxAndHost { return .natIncompatible }
+        return .genericTimeout
+    }
+
+    private static func firstCapture(regex: NSRegularExpression?, in s: String) -> String? {
+        guard let regex else { return nil }
+        let range = NSRange(s.startIndex..<s.endIndex, in: s)
+        guard let match = regex.firstMatch(in: s, options: [], range: range),
+              match.numberOfRanges >= 2,
+              let captured = Range(match.range(at: 1), in: s) else {
+            return nil
+        }
+        return String(s[captured])
     }
 }

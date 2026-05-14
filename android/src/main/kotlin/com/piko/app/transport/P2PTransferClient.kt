@@ -73,7 +73,64 @@ data class P2PTransferDiagnostic(
     val iceCandidateErrors: String = "none",
     val selectedCandidatePair: String = "none",
     val iceCandidatePairStats: String = "none",
+    val stunErrorRate: Double = 0.0,
+    val gatheringIncomplete: Boolean = false,
+    val symmetricNatSuspect: Boolean = false,
+    val remoteOnlyMdns: Boolean = false,
+    val failureReason: P2PFailureReason? = null,
 )
+
+enum class P2PFailureReason(
+    val title: String,
+    val body: String,
+    val suggestion: String,
+) {
+    LOCAL_NO_CANDIDATE(
+        title = "本机未能获取任何网络候选",
+        body = "当前设备未能枚举出可用的网络地址，无法发起 P2P 连接。",
+        suggestion = "请检查本机网络连接（Wi-Fi/移动数据），关闭可能拦截 UDP 的 VPN/代理后重试。",
+    ),
+    REMOTE_NO_CANDIDATE(
+        title = "对方未能获取任何网络候选",
+        body = "接收方设备未能枚举出可用的网络地址，无法接受 P2P 连接。",
+        suggestion = "请确认对方处于联网状态，且未启用阻止 UDP 流量的 VPN/代理。",
+    ),
+    STUN_SERVERS_DEGRADED(
+        title = "网络环境无法访问公共 STUN 服务",
+        body = "多个 STUN 服务器解析或绑定失败，候选地址发现严重受阻。常见原因：DNS 劫持、UDP 拦截或 53/3478 等端口被防火墙阻断。",
+        suggestion = "请尝试切换到其他网络（如个人热点或不同的 Wi-Fi），或与网络管理员确认 UDP 出站是否被拦截。",
+    ),
+    SYMMETRIC_NAT(
+        title = "运营商 NAT 端口预测失败",
+        body = "检测到一方的 NAT 对同一内网端口分配了多个不同的公网端口（对称 NAT），跨网直连无法穿透。",
+        suggestion = "请尝试让双方接入同一 Wi-Fi，或切换到 5G/4G 个人热点后重试。",
+    ),
+    REMOTE_MDNS_ONLY(
+        title = "对端处于本地网络保护模式",
+        body = "接收方仅暴露 mDNS 主机名，跨网无法解析。常见原因：iOS 未授予本地网络权限或对方处于强隐私模式。",
+        suggestion = "请提示对方在系统设置中授予「本地网络」权限，或切换到同一 Wi-Fi 后重试。",
+    ),
+    CONNECTIVITY_CHECK_FAILED(
+        title = "候选连通性检查全部失败",
+        body = "ICE 仍在收集候选时，已知候选对的连通性检查全部失败，双方网络可能互相不可达。",
+        suggestion = "请确认两端的网络环境均允许出站 UDP，或切换到同一 Wi-Fi 后重试。",
+    ),
+    CGNAT_BOTH_SIDES(
+        title = "双方均处于运营商级 NAT 后方",
+        body = "双方网络均处于 CGNAT 后方，公网地址不可控，纯直连穿透在该网络组合下不可行。",
+        suggestion = "请尝试让双方接入同一 Wi-Fi，或切换到家庭宽带/办公网络后重试。",
+    ),
+    NAT_INCOMPATIBLE(
+        title = "双方 NAT 类型不兼容",
+        body = "双方均只获取到 host/srflx 候选，跨 NAT 直连穿透未成功。",
+        suggestion = "请尝试让双方接入同一 Wi-Fi 后重试。",
+    ),
+    GENERIC_TIMEOUT(
+        title = "跨网直连超时",
+        body = "ICE 在等待窗口内未能完成连接握手，原因不明。",
+        suggestion = "请稍后重试，或切换到同一 Wi-Fi 环境。",
+    ),
+}
 
 class P2PTransferFailure(
     val stage: String,
@@ -207,14 +264,16 @@ class P2PTransferClient(
             }
             peer.triggerIceRestart()
             if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
-                val diag = peer.diagnosticSnapshot()
+                val baseDiag = peer.diagnosticSnapshot()
+                val reason = crossNetworkDiagnosis(baseDiag)
+                val diag = baseDiag.copy(failureReason = reason)
                 peer.close()
                 peers.remove(session.sessionId)
                 throw P2PTransferFailure(
                     stage = "data_channel_open",
                     transferId = transferId,
                     sessionId = session.sessionId,
-                    originalReason = crossNetworkDiagnosis(diag),
+                    originalReason = reason.body,
                     diagnostic = diag,
                 )
             }
@@ -889,26 +948,34 @@ class P2PTransferClient(
             if (aborted) callback()
         }
 
-        fun diagnosticSnapshot(): P2PTransferDiagnostic =
-            P2PTransferDiagnostic(
-                offerSent = offerSent,
-                answerReceived = answerReceived,
-                localIceCount = localIceCount,
-                remoteIceCount = remoteIceCount,
-                iceServerUrls = iceServerUrls,
-                localCandidateTypes = localCandidateTypes.candidateTypesDescription(),
-                remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription(),
-                localCandidateDetails = localCandidateDetails.candidateDetailsDescription(),
-                remoteCandidateDetails = remoteCandidateDetails.candidateDetailsDescription(),
-                iceConnectionState = iceConnectionState,
-                peerConnectionState = peerConnectionState,
-                iceGatheringState = iceGatheringState,
-                signalingState = signalingState,
-                dataChannelState = dataChannelState,
-                iceCandidateErrors = iceCandidateErrors.joinToString(";").ifBlank { "none" },
-                selectedCandidatePair = selectedCandidatePair,
-                iceCandidatePairStats = refreshIceCandidatePairStats(),
-            )
+        fun diagnosticSnapshot(): P2PTransferDiagnostic = P2PTransferDiagnostic(
+            offerSent = offerSent,
+            answerReceived = answerReceived,
+            localIceCount = localIceCount,
+            remoteIceCount = remoteIceCount,
+            iceServerUrls = iceServerUrls,
+            localCandidateTypes = localCandidateTypes.candidateTypesDescription(),
+            remoteCandidateTypes = remoteCandidateTypes.candidateTypesDescription(),
+            localCandidateDetails = localCandidateDetails.candidateDetailsDescription(),
+            remoteCandidateDetails = remoteCandidateDetails.candidateDetailsDescription(),
+            iceConnectionState = iceConnectionState,
+            peerConnectionState = peerConnectionState,
+            iceGatheringState = iceGatheringState,
+            signalingState = signalingState,
+            dataChannelState = dataChannelState,
+            iceCandidateErrors = iceCandidateErrors.joinToString(";").ifBlank { "none" },
+            selectedCandidatePair = selectedCandidatePair,
+            iceCandidatePairStats = refreshIceCandidatePairStats(),
+            stunErrorRate = computeStunErrorRate(iceServerUrls, iceCandidateErrors.joinToString(";").ifBlank { "none" }),
+            gatheringIncomplete = isGatheringIncomplete(iceGatheringState),
+            symmetricNatSuspect =
+                detectSymmetricNatSuspect(localCandidateDetails.candidateDetailsDescription()) ||
+                detectSymmetricNatSuspect(remoteCandidateDetails.candidateDetailsDescription()),
+            remoteOnlyMdns = detectRemoteOnlyMdns(
+                remoteCandidateTypes.candidateTypesDescription(),
+                remoteCandidateDetails.candidateDetailsDescription(),
+            ),
+        )
 
         private fun refreshIceCandidatePairStats(): String {
             val latch = CountDownLatch(1)
@@ -1432,21 +1499,68 @@ private fun String.iceAddressKind(): String {
     }
 }
 
-private fun crossNetworkDiagnosis(diag: P2PTransferDiagnostic): String {
+internal fun crossNetworkDiagnosis(diag: P2PTransferDiagnostic): P2PFailureReason {
     val localTypes = diag.localCandidateTypes.split(",").map { it.trim() }.toSet()
     val remoteTypes = diag.remoteCandidateTypes.split(",").map { it.trim() }.toSet()
     val hasRelay = "relay" in localTypes || "relay" in remoteTypes
     val onlySrflxAndHost = !hasRelay &&
         localTypes.all { it in setOf("host", "srflx", "none") } &&
         remoteTypes.all { it in setOf("host", "srflx", "none") }
-    val hasCgnat = diag.localCandidateDetails.contains("cgnat") || diag.remoteCandidateDetails.contains("cgnat")
+    val hasCgnat = diag.localCandidateDetails.contains("cgnat") ||
+        diag.remoteCandidateDetails.contains("cgnat")
     return when {
-        onlySrflxAndHost && hasCgnat -> "双方网络均处于运营商 NAT（CGNAT）后方，无法直连。请尝试连接同一 Wi-Fi"
-        onlySrflxAndHost -> "双方 NAT 类型不兼容，直连穿透失败。请尝试连接同一 Wi-Fi"
-        diag.localCandidateTypes == "none" -> "本机未能获取任何网络候选，请检查网络连接"
-        diag.remoteCandidateTypes == "none" -> "对方未能获取任何网络候选，请确认对方网络正常"
-        else -> "跨网直连超时"
+        diag.localCandidateTypes == "none" -> P2PFailureReason.LOCAL_NO_CANDIDATE
+        diag.remoteCandidateTypes == "none" -> P2PFailureReason.REMOTE_NO_CANDIDATE
+        diag.stunErrorRate >= 0.5 -> P2PFailureReason.STUN_SERVERS_DEGRADED
+        diag.symmetricNatSuspect -> P2PFailureReason.SYMMETRIC_NAT
+        diag.remoteOnlyMdns -> P2PFailureReason.REMOTE_MDNS_ONLY
+        diag.gatheringIncomplete && diag.selectedCandidatePair == "none" ->
+            P2PFailureReason.CONNECTIVITY_CHECK_FAILED
+        onlySrflxAndHost && hasCgnat -> P2PFailureReason.CGNAT_BOTH_SIDES
+        onlySrflxAndHost -> P2PFailureReason.NAT_INCOMPATIBLE
+        else -> P2PFailureReason.GENERIC_TIMEOUT
     }
+}
+
+internal fun computeStunErrorRate(iceServerUrls: String, iceCandidateErrors: String): Double {
+    val servers = iceServerUrls.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    if (servers.isEmpty()) return 0.0
+    if (iceCandidateErrors.isBlank() || iceCandidateErrors == "none") return 0.0
+    val urlRegex = Regex("""url=([^|]+)""")
+    val erroredUrls = iceCandidateErrors.split(";")
+        .mapNotNull { urlRegex.find(it)?.groupValues?.get(1)?.trim()?.takeIf { url -> url.isNotBlank() } }
+        .toSet()
+    val degraded = servers.count { it in erroredUrls }
+    return degraded.toDouble() / servers.size
+}
+
+internal fun isGatheringIncomplete(iceGatheringState: String): Boolean =
+    !iceGatheringState.equals("COMPLETE", ignoreCase = true)
+
+internal fun detectSymmetricNatSuspect(details: String): Boolean {
+    if (details.isBlank() || details == "none") return false
+    val portRegex = Regex("""(?:^|/)port=(\d+)""")
+    val addrRegex = Regex("""(?:^|/)addr=([^/]+)""")
+    val rportRegex = Regex("""rport=(\d+)""")
+    val mappings = mutableMapOf<Pair<String, String>, MutableSet<String>>()
+    for (entry in details.split(";")) {
+        if (!entry.contains("type=srflx")) continue
+        val addr = addrRegex.find(entry)?.groupValues?.get(1) ?: continue
+        val port = portRegex.find(entry)?.groupValues?.get(1) ?: continue
+        val rport = rportRegex.find(entry)?.groupValues?.get(1) ?: continue
+        if (rport == "0") continue
+        mappings.getOrPut(addr to rport) { mutableSetOf() }.add(port)
+    }
+    return mappings.any { it.value.size >= 2 }
+}
+
+internal fun detectRemoteOnlyMdns(remoteTypes: String, remoteDetails: String): Boolean {
+    val types = remoteTypes.split(",").map { it.trim() }.filter { it.isNotBlank() }.toSet()
+    if (types != setOf("host")) return false
+    if (remoteDetails.isBlank() || remoteDetails == "none") return false
+    val entries = remoteDetails.split(";").filter { it.contains("type=host") }
+    if (entries.isEmpty()) return false
+    return entries.all { it.contains("addr=mdns") }
 }
 
 private fun Set<String>.candidateTypesDescription(): String =

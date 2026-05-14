@@ -20,7 +20,6 @@ fun defaultP2PIceServers(): List<IceServerConfig> = listOf(
     IceServerConfig("stun:piko-ipv6.juren233.top:3478"),
     IceServerConfig("stun:stun.l.google.com:19302"),
     IceServerConfig("stun:stun.cloudflare.com:3478"),
-    IceServerConfig("stun:stun.cloudflare.com:53"),
 )
 
 data class TransferSessionConfig(

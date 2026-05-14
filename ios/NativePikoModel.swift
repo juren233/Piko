@@ -56,6 +56,13 @@ private struct NativeP2PFailureDiagnostic {
     let iceCandidateErrors: String
     let selectedCandidatePair: String
     let iceCandidatePairStats: String
+    let stunErrorRate: String
+    let gatheringIncomplete: String
+    let symmetricNatSuspect: String
+    let remoteOnlyMdns: String
+    let failureReasonCode: String
+    let failureReasonTitle: String?
+    let failureReasonSuggestion: String?
 }
 
 final class NativePikoModel: ObservableObject {
@@ -373,35 +380,45 @@ final class NativePikoModel: ObservableObject {
         let userId = target.receiverUserId?.nilIfBlank ?? "未知用户"
         let receiverPlatform = target.platformHint?.nilIfBlank ?? "未知"
         let onlineSnapshot = target.online ? "在线" : "离线"
-        return [
-            "目标：\(target.name)",
-            "用户：\(userId)",
-            "设备：\(deviceId)",
-            "传输：\(transferId)",
-            "会话：\(diagnostic.sessionId)",
-            "路径：P2P",
-            "发送端：iOS",
-            "接收端：\(receiverPlatform)",
-            "在线快照：\(onlineSnapshot)",
-            "阶段：\(diagnostic.stage)",
-            "原始原因：\(diagnostic.originalReason)",
-            "offer_sent：\(diagnostic.offerSent)",
-            "answer_received：\(diagnostic.answerReceived)",
-            "local_ice_count：\(diagnostic.localIceCount)",
-            "remote_ice_count：\(diagnostic.remoteIceCount)",
-            "ice_server_urls：\(diagnostic.iceServerUrls)",
-            "local_candidate_types：\(diagnostic.localCandidateTypes)",
-            "remote_candidate_types：\(diagnostic.remoteCandidateTypes)",
-            "local_candidate_details：\(diagnostic.localCandidateDetails)",
-            "remote_candidate_details：\(diagnostic.remoteCandidateDetails)",
-            "ice_connection_state：\(diagnostic.iceConnectionState)",
-            "ice_gathering_state：\(diagnostic.iceGatheringState)",
-            "signaling_state：\(diagnostic.signalingState)",
-            "data_channel_state：\(diagnostic.dataChannelState)",
-            "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
-            "selected_candidate_pair：\(diagnostic.selectedCandidatePair)",
-            "ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)"
-        ].joined(separator: "\n")
+        var lines: [String] = []
+        if let title = diagnostic.failureReasonTitle, let suggestion = diagnostic.failureReasonSuggestion {
+            lines.append("失败原因：\(title)")
+            lines.append("建议：\(suggestion)")
+            lines.append("")
+        }
+        lines.append("目标：\(target.name)")
+        lines.append("用户：\(userId)")
+        lines.append("设备：\(deviceId)")
+        lines.append("传输：\(transferId)")
+        lines.append("会话：\(diagnostic.sessionId)")
+        lines.append("路径：P2P")
+        lines.append("发送端：iOS")
+        lines.append("接收端：\(receiverPlatform)")
+        lines.append("在线快照：\(onlineSnapshot)")
+        lines.append("阶段：\(diagnostic.stage)")
+        lines.append("原始原因：\(diagnostic.originalReason)")
+        lines.append("offer_sent：\(diagnostic.offerSent)")
+        lines.append("answer_received：\(diagnostic.answerReceived)")
+        lines.append("local_ice_count：\(diagnostic.localIceCount)")
+        lines.append("remote_ice_count：\(diagnostic.remoteIceCount)")
+        lines.append("ice_server_urls：\(diagnostic.iceServerUrls)")
+        lines.append("local_candidate_types：\(diagnostic.localCandidateTypes)")
+        lines.append("remote_candidate_types：\(diagnostic.remoteCandidateTypes)")
+        lines.append("local_candidate_details：\(diagnostic.localCandidateDetails)")
+        lines.append("remote_candidate_details：\(diagnostic.remoteCandidateDetails)")
+        lines.append("ice_connection_state：\(diagnostic.iceConnectionState)")
+        lines.append("ice_gathering_state：\(diagnostic.iceGatheringState)")
+        lines.append("signaling_state：\(diagnostic.signalingState)")
+        lines.append("data_channel_state：\(diagnostic.dataChannelState)")
+        lines.append("ice_candidate_errors：\(diagnostic.iceCandidateErrors)")
+        lines.append("selected_candidate_pair：\(diagnostic.selectedCandidatePair)")
+        lines.append("ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)")
+        lines.append("stun_error_rate：\(diagnostic.stunErrorRate)")
+        lines.append("gathering_incomplete：\(diagnostic.gatheringIncomplete)")
+        lines.append("symmetric_nat_suspect：\(diagnostic.symmetricNatSuspect)")
+        lines.append("remote_only_mdns：\(diagnostic.remoteOnlyMdns)")
+        lines.append("failure_reason_code：\(diagnostic.failureReasonCode)")
+        return lines.joined(separator: "\n")
     }
 
     private func p2pFailureOriginalReason(_ error: NativeAccountError) -> String {
@@ -412,6 +429,8 @@ final class NativePikoModel: ObservableObject {
         switch error {
         case .server(let code, let message):
             let fields = message.p2pDiagnosticFields
+            let reasonCode = fields["failure_reason_code"]?.nilIfBlank ?? "unknown"
+            let reason = NativeP2PFailureReason(rawValue: reasonCode)
             return NativeP2PFailureDiagnostic(
                 stage: fields["阶段"]?.nilIfBlank ?? "unknown",
                 sessionId: fields["会话"]?.nilIfBlank ?? "未创建/未知",
@@ -431,7 +450,14 @@ final class NativePikoModel: ObservableObject {
                 dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown",
                 iceCandidateErrors: fields["ice_candidate_errors"]?.nilIfBlank ?? "none",
                 selectedCandidatePair: fields["selected_candidate_pair"]?.nilIfBlank ?? "none",
-                iceCandidatePairStats: fields["ice_candidate_pair_stats"]?.nilIfBlank ?? "none"
+                iceCandidatePairStats: fields["ice_candidate_pair_stats"]?.nilIfBlank ?? "none",
+                stunErrorRate: fields["stun_error_rate"]?.nilIfBlank ?? "0.00",
+                gatheringIncomplete: fields["gathering_incomplete"]?.nilIfBlank ?? "false",
+                symmetricNatSuspect: fields["symmetric_nat_suspect"]?.nilIfBlank ?? "false",
+                remoteOnlyMdns: fields["remote_only_mdns"]?.nilIfBlank ?? "false",
+                failureReasonCode: reasonCode,
+                failureReasonTitle: reason?.title ?? fields["失败原因"]?.nilIfBlank,
+                failureReasonSuggestion: reason?.suggestion ?? fields["建议"]?.nilIfBlank
             )
         default:
             return NativeP2PFailureDiagnostic(
@@ -453,7 +479,14 @@ final class NativePikoModel: ObservableObject {
                 dataChannelState: "unknown",
                 iceCandidateErrors: "none",
                 selectedCandidatePair: "none",
-                iceCandidatePairStats: "none"
+                iceCandidatePairStats: "none",
+                stunErrorRate: "0.00",
+                gatheringIncomplete: "false",
+                symmetricNatSuspect: "false",
+                remoteOnlyMdns: "false",
+                failureReasonCode: "unknown",
+                failureReasonTitle: nil,
+                failureReasonSuggestion: nil
             )
         }
     }

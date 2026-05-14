@@ -108,30 +108,37 @@ final class NativeP2PTransferClient {
         message: String,
         diagnostic: NativeWebRTCDiagnostic = .empty
     ) -> NativeAccountError {
-        .server(
-            code: code,
-            message: [
-                "阶段：\(stage)",
-                "会话：\(sessionId?.nilIfBlank ?? "未创建/未知")",
-                "原始原因：\(message.nilIfBlank ?? code)",
-                "offer_sent：\(diagnostic.offerSent)",
-                "answer_received：\(diagnostic.answerReceived)",
-                "local_ice_count：\(diagnostic.localIceCount)",
-                "remote_ice_count：\(diagnostic.remoteIceCount)",
-                "ice_server_urls：\(diagnostic.iceServerUrls)",
-                "local_candidate_types：\(diagnostic.localCandidateTypes)",
-                "remote_candidate_types：\(diagnostic.remoteCandidateTypes)",
-                "local_candidate_details：\(diagnostic.localCandidateDetails)",
-                "remote_candidate_details：\(diagnostic.remoteCandidateDetails)",
-                "ice_connection_state：\(diagnostic.iceConnectionState)",
-                "ice_gathering_state：\(diagnostic.iceGatheringState)",
-                "signaling_state：\(diagnostic.signalingState)",
-                "data_channel_state：\(diagnostic.dataChannelState)",
-                "ice_candidate_errors：\(diagnostic.iceCandidateErrors)",
-                "selected_candidate_pair：\(diagnostic.selectedCandidatePair)",
-                "ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)"
-            ].joined(separator: "\n")
-        )
+        var lines: [String] = []
+        if let reason = diagnostic.failureReason {
+            lines.append("失败原因：\(reason.title)")
+            lines.append("建议：\(reason.suggestion)")
+            lines.append("")
+        }
+        lines.append("阶段：\(stage)")
+        lines.append("会话：\(sessionId?.nilIfBlank ?? "未创建/未知")")
+        lines.append("原始原因：\(message.nilIfBlank ?? code)")
+        lines.append("offer_sent：\(diagnostic.offerSent)")
+        lines.append("answer_received：\(diagnostic.answerReceived)")
+        lines.append("local_ice_count：\(diagnostic.localIceCount)")
+        lines.append("remote_ice_count：\(diagnostic.remoteIceCount)")
+        lines.append("ice_server_urls：\(diagnostic.iceServerUrls)")
+        lines.append("local_candidate_types：\(diagnostic.localCandidateTypes)")
+        lines.append("remote_candidate_types：\(diagnostic.remoteCandidateTypes)")
+        lines.append("local_candidate_details：\(diagnostic.localCandidateDetails)")
+        lines.append("remote_candidate_details：\(diagnostic.remoteCandidateDetails)")
+        lines.append("ice_connection_state：\(diagnostic.iceConnectionState)")
+        lines.append("ice_gathering_state：\(diagnostic.iceGatheringState)")
+        lines.append("signaling_state：\(diagnostic.signalingState)")
+        lines.append("data_channel_state：\(diagnostic.dataChannelState)")
+        lines.append("ice_candidate_errors：\(diagnostic.iceCandidateErrors)")
+        lines.append("selected_candidate_pair：\(diagnostic.selectedCandidatePair)")
+        lines.append("ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)")
+        lines.append("stun_error_rate：\(String(format: "%.2f", diagnostic.stunErrorRate))")
+        lines.append("gathering_incomplete：\(diagnostic.gatheringIncomplete)")
+        lines.append("symmetric_nat_suspect：\(diagnostic.symmetricNatSuspect)")
+        lines.append("remote_only_mdns：\(diagnostic.remoteOnlyMdns)")
+        lines.append("failure_reason_code：\(diagnostic.failureReason?.rawValue ?? "unknown")")
+        return .server(code: code, message: lines.joined(separator: "\n"))
     }
 
     func send(
@@ -211,10 +218,17 @@ final class NativeP2PTransferClient {
                 opened = await session.waitUntilOpen(seconds: NativeP2PTiming.restartOpenWaitSeconds)
             }
             guard opened else {
-                let diagnostic = await session.diagnosticSnapshotWithStats()
+                var diagnostic = await session.diagnosticSnapshotWithStats()
                 let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
-                let message = abortedByPeer ? "对方已取消接收" : Self.crossNetworkDiagnosis(diagnostic)
+                let message: String
+                if abortedByPeer {
+                    message = "对方已取消接收"
+                } else {
+                    let reason = Self.crossNetworkDiagnosis(diagnostic)
+                    diagnostic.failureReason = reason
+                    message = reason.body
+                }
                 return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "DATA_CHANNEL_TIMEOUT", message: message, diagnostic: diagnostic))
             }
             guard let peerHandshake = await session.waitForPeerEphemeralPublic(seconds: 10),
@@ -577,22 +591,8 @@ final class NativeP2PTransferClient {
         ])
     }
 
-    static func crossNetworkDiagnosis(_ diag: NativeWebRTCDiagnostic) -> String {
-        let localTypes = Set(diag.localCandidateTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
-        let remoteTypes = Set(diag.remoteCandidateTypes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })
-        let hasRelay = localTypes.contains("relay") || remoteTypes.contains("relay")
-        let allowed: Set<String> = ["host", "srflx", "none"]
-        let onlySrflxAndHost = !hasRelay && localTypes.isSubset(of: allowed) && remoteTypes.isSubset(of: allowed)
-        if onlySrflxAndHost {
-            return "双方 NAT 类型不兼容，直连穿透失败。请尝试连接同一 Wi-Fi"
-        }
-        if diag.localCandidateTypes == "none" {
-            return "本机未能获取任何网络候选，请检查网络连接"
-        }
-        if diag.remoteCandidateTypes == "none" {
-            return "对方未能获取任何网络候选，请确认对方网络正常"
-        }
-        return "跨网直连超时"
+    static func crossNetworkDiagnosis(_ diag: NativeWebRTCDiagnostic) -> NativeP2PFailureReason {
+        NativeP2PDiagnostics.crossNetworkDiagnosis(diag)
     }
 }
 

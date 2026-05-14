@@ -168,7 +168,6 @@ class IosAndroidUiParityTest {
             "stun:piko-ipv6.juren233.top:3478",
             "stun:stun.l.google.com:19302",
             "stun:stun.cloudflare.com:3478",
-            "stun:stun.cloudflare.com:53",
         )
         fun assertIceOrder(source: String) {
             var lastIndex = -1
@@ -386,6 +385,11 @@ class IosAndroidUiParityTest {
             "ice_candidate_errors：",
             "selected_candidate_pair：",
             "ice_candidate_pair_stats：",
+            "stun_error_rate：",
+            "gathering_incomplete：",
+            "symmetric_nat_suspect：",
+            "remote_only_mdns：",
+            "failure_reason_code：",
         )
         p2pFailureDialogFields.forEach { field ->
             assertTrue(field in androidSendActions, "Android P2P failure dialog must include $field")
@@ -466,6 +470,44 @@ class IosAndroidUiParityTest {
         assertFalse("WebRTC DataChannel 尚未接入" in iosModel)
         assertTrue("signalingClient.connect(token, identity.deviceId)" in androidApp)
         assertTrue("signalingClient.connect(token: token, deviceId: identity.deviceId)" in iosModel)
+
+        // STUN list cleanup: cloudflare:53 must be gone from every file that references the list.
+        listOf(backendIce, androidSessionApi, iosSessionApi).forEach { source ->
+            assertFalse("stun.cloudflare.com:53" in source, "cloudflare:53 STUN must be removed (broken on most ISPs)")
+        }
+
+        // P2P failure reason enum parity: every code must exist on both platforms.
+        val failureReasonCodes = listOf(
+            "LOCAL_NO_CANDIDATE",
+            "REMOTE_NO_CANDIDATE",
+            "STUN_SERVERS_DEGRADED",
+            "SYMMETRIC_NAT",
+            "REMOTE_MDNS_ONLY",
+            "CONNECTIVITY_CHECK_FAILED",
+            "CGNAT_BOTH_SIDES",
+            "NAT_INCOMPATIBLE",
+            "GENERIC_TIMEOUT",
+        )
+        failureReasonCodes.forEach { code ->
+            assertTrue(code in androidP2P, "Android P2PFailureReason must declare $code")
+            assertTrue(code in iosWebRTC, "iOS NativeP2PFailureReason must declare $code")
+        }
+        assertTrue("enum class P2PFailureReason" in androidP2P)
+        assertTrue("enum NativeP2PFailureReason" in iosWebRTC)
+        assertTrue("internal fun crossNetworkDiagnosis(diag: P2PTransferDiagnostic): P2PFailureReason" in androidP2P)
+        assertTrue("static func crossNetworkDiagnosis(_ diag: NativeWebRTCDiagnostic) -> NativeP2PFailureReason" in iosWebRTC)
+
+        // iOS RTCPeerConnection config must include the same knobs Android sets natively.
+        assertTrue("iceCandidatePoolSize: 4" in iosWebRTC, "iOS RTCPeerConnection must set iceCandidatePoolSize")
+        assertTrue("bundlePolicy: \"max-bundle\"" in iosWebRTC, "iOS RTCPeerConnection must set bundlePolicy=max-bundle")
+        assertTrue("rtcpMuxPolicy: \"require\"" in iosWebRTC, "iOS RTCPeerConnection must set rtcpMuxPolicy=require")
+        assertTrue("iceTransportPolicy: \"all\"" in iosWebRTC, "iOS RTCPeerConnection must set iceTransportPolicy=all")
+
+        // New diagnostic fields must be present in both diagnostic types.
+        listOf("stunErrorRate", "gatheringIncomplete", "symmetricNatSuspect", "remoteOnlyMdns", "failureReason").forEach { field ->
+            assertTrue(field in androidP2P, "Android P2PTransferDiagnostic must declare $field")
+            assertTrue(field in iosWebRTC, "iOS NativeWebRTCDiagnostic must declare $field")
+        }
     }
 
     @Test

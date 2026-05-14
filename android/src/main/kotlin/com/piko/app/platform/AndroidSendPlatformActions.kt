@@ -697,40 +697,51 @@ private class AndroidTransferClient(
         val stage = p2pFailure?.stage ?: "unknown"
         val originalReason = p2pFailure?.originalReason ?: (cause.message ?: cause::class.java.simpleName)
         val diagnostic = p2pFailure?.diagnostic
+        val failureReason = diagnostic?.failureReason
         val userId = target.receiverUserId?.ifBlank { null } ?: "未知用户"
         val deviceId = target.receiverDeviceId?.ifBlank { null } ?: "未知设备"
         val receiverPlatform = target.platformHint?.ifBlank { null } ?: "未知"
         val onlineSnapshot = if (target.online) "在线" else "离线"
-        return listOf(
-            "目标：${target.name}",
-            "用户：$userId",
-            "设备：$deviceId",
-            "传输：$transferId",
-            "会话：$sessionId",
-            "路径：P2P",
-            "发送端：Android",
-            "接收端：$receiverPlatform",
-            "在线快照：$onlineSnapshot",
-            "阶段：$stage",
-            "原始原因：$originalReason",
-            "offer_sent：${diagnostic?.offerSent ?: false}",
-            "answer_received：${diagnostic?.answerReceived ?: false}",
-            "local_ice_count：${diagnostic?.localIceCount ?: 0}",
-            "remote_ice_count：${diagnostic?.remoteIceCount ?: 0}",
-            "ice_server_urls：${diagnostic?.iceServerUrls ?: "unknown"}",
-            "local_candidate_types：${diagnostic?.localCandidateTypes ?: "none"}",
-            "remote_candidate_types：${diagnostic?.remoteCandidateTypes ?: "none"}",
-            "local_candidate_details：${diagnostic?.localCandidateDetails ?: "none"}",
-            "remote_candidate_details：${diagnostic?.remoteCandidateDetails ?: "none"}",
-            "ice_connection_state：${diagnostic?.iceConnectionState ?: "unknown"}",
-            "peer_connection_state：${diagnostic?.peerConnectionState ?: "unknown"}",
-            "ice_gathering_state：${diagnostic?.iceGatheringState ?: "unknown"}",
-            "signaling_state：${diagnostic?.signalingState ?: "unknown"}",
-            "data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}",
-            "ice_candidate_errors：${diagnostic?.iceCandidateErrors ?: "none"}",
-            "selected_candidate_pair：${diagnostic?.selectedCandidatePair ?: "none"}",
-            "ice_candidate_pair_stats：${diagnostic?.iceCandidatePairStats ?: "none"}",
-        ).joinToString("\n")
+        return buildList {
+            if (failureReason != null) {
+                add("失败原因：${failureReason.title}")
+                add("建议：${failureReason.suggestion}")
+                add("")
+            }
+            add("目标：${target.name}")
+            add("用户：$userId")
+            add("设备：$deviceId")
+            add("传输：$transferId")
+            add("会话：$sessionId")
+            add("路径：P2P")
+            add("发送端：Android")
+            add("接收端：$receiverPlatform")
+            add("在线快照：$onlineSnapshot")
+            add("阶段：$stage")
+            add("原始原因：$originalReason")
+            add("offer_sent：${diagnostic?.offerSent ?: false}")
+            add("answer_received：${diagnostic?.answerReceived ?: false}")
+            add("local_ice_count：${diagnostic?.localIceCount ?: 0}")
+            add("remote_ice_count：${diagnostic?.remoteIceCount ?: 0}")
+            add("ice_server_urls：${diagnostic?.iceServerUrls ?: "unknown"}")
+            add("local_candidate_types：${diagnostic?.localCandidateTypes ?: "none"}")
+            add("remote_candidate_types：${diagnostic?.remoteCandidateTypes ?: "none"}")
+            add("local_candidate_details：${diagnostic?.localCandidateDetails ?: "none"}")
+            add("remote_candidate_details：${diagnostic?.remoteCandidateDetails ?: "none"}")
+            add("ice_connection_state：${diagnostic?.iceConnectionState ?: "unknown"}")
+            add("peer_connection_state：${diagnostic?.peerConnectionState ?: "unknown"}")
+            add("ice_gathering_state：${diagnostic?.iceGatheringState ?: "unknown"}")
+            add("signaling_state：${diagnostic?.signalingState ?: "unknown"}")
+            add("data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}")
+            add("ice_candidate_errors：${diagnostic?.iceCandidateErrors ?: "none"}")
+            add("selected_candidate_pair：${diagnostic?.selectedCandidatePair ?: "none"}")
+            add("ice_candidate_pair_stats：${diagnostic?.iceCandidatePairStats ?: "none"}")
+            add("stun_error_rate：${"%.2f".format(diagnostic?.stunErrorRate ?: 0.0)}")
+            add("gathering_incomplete：${diagnostic?.gatheringIncomplete ?: false}")
+            add("symmetric_nat_suspect：${diagnostic?.symmetricNatSuspect ?: false}")
+            add("remote_only_mdns：${diagnostic?.remoteOnlyMdns ?: false}")
+            add("failure_reason_code：${failureReason?.name ?: "unknown"}")
+        }.joinToString("\n")
     }
 
     private fun sendLegacyTransfer(
