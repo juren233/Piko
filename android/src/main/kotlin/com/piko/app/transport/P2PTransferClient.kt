@@ -151,6 +151,10 @@ class P2PTransferClient(
             },
         )
         peers[session.sessionId] = peer
+        peer.setAbortCallback {
+            ackLatch.countDown()
+            receiverReadyLatch.countDown()
+        }
         val channel = runCatching {
             peer.createOfferer()
         }.getOrElse { error ->
@@ -166,13 +170,14 @@ class P2PTransferClient(
             )
         }
         if (!peer.awaitOpen()) {
+            val abortedByPeer = peer.isAborted
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "data_channel_open",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = "DATA_CHANNEL_TIMEOUT：跨网直连超时",
+                originalReason = if (abortedByPeer) "对方已取消接收" else "DATA_CHANNEL_TIMEOUT：跨网直连超时",
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
@@ -270,14 +275,15 @@ class P2PTransferClient(
                 cause = error,
             )
         }
-        if (!receiverReadyLatch.await(120, TimeUnit.SECONDS)) {
+        if (!receiverReadyLatch.await(120, TimeUnit.SECONDS) || peer.isAborted) {
+            val abortedByPeer = peer.isAborted
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "receiver_ready",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时",
+                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时",
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
@@ -368,14 +374,15 @@ class P2PTransferClient(
                 )
             }
         }
-        if (totalChunks > 0 && !ackLatch.await(30, TimeUnit.SECONDS)) {
+        if (totalChunks > 0 && (!ackLatch.await(30, TimeUnit.SECONDS) || peer.isAborted)) {
+            val abortedByPeer = peer.isAborted
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "ack",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = "P2P_ACK_TIMEOUT：跨网传输确认超时",
+                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时",
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
@@ -577,7 +584,17 @@ class P2PTransferClient(
     }
 
     fun cancelReceiveTransfer(transferId: String) {
-        receiversByTransferId.remove(transferId)?.cancel()
+        val receiver = receiversByTransferId.remove(transferId) ?: return
+        val sessionId = receiver.sessionId
+        receiver.cancel()
+        pendingSignalsBySessionId.remove(sessionId)
+        peers.remove(sessionId)?.close()
+        signalingClient.send(
+            JSONObject()
+                .put("type", "bye")
+                .put("session_id", sessionId)
+                .put("reason", "receiver_canceled"),
+        )
     }
 
     private fun sendBinary(channel: DataChannel, bytes: ByteArray) {
@@ -637,6 +654,10 @@ class P2PTransferClient(
         private var iceConnectionState = "unknown"
         @Volatile
         private var dataChannelState = "unknown"
+        @Volatile
+        private var aborted = false
+        @Volatile
+        private var abortCallback: (() -> Unit)? = null
         private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()
         private val peerConnection: PeerConnection = requireNotNull(
             factory.createPeerConnection(
@@ -735,15 +756,27 @@ class P2PTransferClient(
             peerConnection.addIceCandidate(candidate)
         }
 
-        fun awaitOpen(): Boolean = openLatch.await(15, TimeUnit.SECONDS)
+        fun awaitOpen(): Boolean {
+            val opened = openLatch.await(15, TimeUnit.SECONDS)
+            return opened && !aborted
+        }
 
         fun awaitPeerHandshake(): P2PPeerHandshake {
             check(peerEphemeralLatch.await(10, TimeUnit.SECONDS)) { "接收方临时公钥等待超时" }
+            check(!aborted) { "对方已取消接收" }
             return P2PPeerHandshake(
                 ephemeralPublicB64 = requireNotNull(peerEphemeralPublicB64) { "接收方临时公钥缺失" },
                 acceptSignatureB64 = requireNotNull(peerAcceptSignatureB64) { "接收方签名缺失" },
                 completedChunks = TransferProgressStore.decodeCompletedBitmap(peerCompletedBitmapB64),
             )
+        }
+
+        val isAborted: Boolean
+            get() = aborted
+
+        fun setAbortCallback(callback: () -> Unit) {
+            abortCallback = callback
+            if (aborted) callback()
         }
 
         fun diagnosticSnapshot(): P2PTransferDiagnostic =
@@ -757,6 +790,10 @@ class P2PTransferClient(
             )
 
         fun close() {
+            aborted = true
+            openLatch.countDown()
+            peerEphemeralLatch.countDown()
+            abortCallback?.invoke()
             pendingIceCandidates.clear()
             peerConnection.close()
             peerConnection.dispose()
@@ -793,8 +830,8 @@ class P2PTransferClient(
 private class P2PReceiver(
     private val contentResolver: ContentResolver,
     private val progressStore: TransferProgressStore,
-    private val sessionId: String,
-    private val transferId: String,
+    val sessionId: String,
+    val transferId: String,
     private val manifestHashB64: String,
     private val sessionKey: ByteArray,
     private val autoAccept: Boolean,
@@ -812,6 +849,7 @@ private class P2PReceiver(
     private val pendingChunkFrames = mutableListOf<Pair<ByteArray, DataChannel>>()
     private val receivedFiles = mutableListOf<ReceiveHistoryFile>()
     private var confirmed = false
+    private var canceled = false
     private var activeChannel: DataChannel? = null
     private var didComplete = false
 
@@ -831,6 +869,7 @@ private class P2PReceiver(
     }
 
     private fun handle(bytes: ByteArray, channel: DataChannel) {
+        if (canceled) return
         val frame = runCatching {
             TransferProtocolV3.decodeFrame(sessionKey, sessionId, transferId, bytes)
         }.getOrElse {
@@ -863,18 +902,21 @@ private class P2PReceiver(
                     completedChunks[file.index] = restoredChunks[file.index] ?: BooleanArray(file.chunkCount)
                 }
                 progressStore.save(transferId, manifestHashB64, manifest, completedChunks)
-                confirmed = autoAccept
+                confirmed = confirmed || autoAccept
                 onReceiveTransferEvent(
                     ReceiveTransferEvent.Started(
                         transferId = transferId,
                         senderName = senderName,
                         files = manifest.map { it.toReceiveHistoryFile(null) },
                         totalBytes = totalBytes,
-                        requiresConfirmation = !autoAccept,
+                        requiresConfirmation = !confirmed,
                     ),
                 )
-                if (autoAccept) {
+                if (confirmed) {
                     sendReady(channel)
+                    val pending = pendingChunkFrames.toList()
+                    pendingChunkFrames.clear()
+                    pending.forEach { (bytes, c) -> handle(bytes, c) }
                 }
             }
             is TransferV3Frame.Chunk -> {
@@ -913,24 +955,28 @@ private class P2PReceiver(
     }
 
     fun accept() {
-        if (confirmed || manifest.isEmpty()) return
+        if (confirmed || canceled) return
         confirmed = true
+        val manifestReady = manifest.isNotEmpty()
         onReceiveTransferEvent(
             ReceiveTransferEvent.Started(
                 transferId = transferId,
-                senderName = senderName,
-                files = manifest.map { it.toReceiveHistoryFile(null) },
+                senderName = if (manifestReady) senderName else "",
+                files = if (manifestReady) manifest.map { it.toReceiveHistoryFile(null) } else emptyList(),
                 totalBytes = totalBytes,
                 requiresConfirmation = false,
             ),
         )
-        activeChannel?.let(::sendReady)
+        val channel = activeChannel ?: return
+        if (!manifestReady) return
+        sendReady(channel)
         val pending = pendingChunkFrames.toList()
         pendingChunkFrames.clear()
-        pending.forEach { (bytes, channel) -> handle(bytes, channel) }
+        pending.forEach { (bytes, c) -> handle(bytes, c) }
     }
 
     fun cancel() {
+        canceled = true
         outputs.values.forEach { runCatching { it.close() } }
         outputs.clear()
         progressStore.clear(transferId)

@@ -14,6 +14,7 @@ final class NativeP2PTransferClient {
     private var sessions: [String: NativeWebRTCSession] = [:]
     private var receivers: [String: NativeP2PReceiver] = [:]
     private var pendingSignals: [String: [[String: Any]]] = [:]
+    private var senderAbortCallbacks: [String: () -> Void] = [:]
     private let progressStore = NativeTransferProgressStore()
 
     init(
@@ -175,10 +176,15 @@ final class NativeP2PTransferClient {
             )
             sessionRef = session
             sessions[config.sessionId] = session
+            senderAbortCallbacks[config.sessionId] = { [weak receiverReadyTracker, weak ackTracker] in
+                receiverReadyTracker?.abort()
+                ackTracker?.abort()
+            }
             guard await session.createOffer(), await session.waitUntilOpen(seconds: 15) else {
                 let diagnostic = session.diagnosticSnapshot
+                let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
-                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: "DATA_CHANNEL_TIMEOUT", message: "跨网直连超时", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "data_channel_open", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "DATA_CHANNEL_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网直连超时", diagnostic: diagnostic))
             }
             guard let peerHandshake = await session.waitForPeerEphemeralPublic(seconds: 10),
                   NativeTransferProtocolV3.verifyAcceptSignature(
@@ -221,8 +227,9 @@ final class NativeP2PTransferClient {
             }
             guard await receiverReadyTracker.wait(seconds: 120) else {
                 let diagnostic = session.diagnosticSnapshot
+                let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
-                return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: "P2P_RECEIVER_READY_TIMEOUT", message: "等待接收端确认超时", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "等待接收端确认超时", diagnostic: diagnostic))
             }
 
             var sentBytes = 0
@@ -281,8 +288,9 @@ final class NativeP2PTransferClient {
 
             guard await ackTracker.waitForAll(seconds: 30) else {
                 let diagnostic = session.diagnosticSnapshot
+                let abortedByPeer = ackTracker.isAborted
                 closeSession(config.sessionId)
-                return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: "P2P_ACK_TIMEOUT", message: "跨网传输确认超时", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
             }
             closeSession(config.sessionId)
             if let token = authStore.currentToken() {
@@ -498,6 +506,7 @@ final class NativeP2PTransferClient {
     private func closeSession(_ sessionId: String) {
         sessions.removeValue(forKey: sessionId)?.close()
         receivers.removeValue(forKey: sessionId)
+        senderAbortCallbacks.removeValue(forKey: sessionId)?()
         onReceiveState(nil)
     }
 
@@ -506,7 +515,19 @@ final class NativeP2PTransferClient {
     }
 
     func cancelReceiveTransfer(_ transferId: String) {
-        receivers.values.first { $0.transferId == transferId }?.cancel()
+        guard let entry = receivers.first(where: { $0.value.transferId == transferId }) else {
+            return
+        }
+        let sessionId = entry.key
+        entry.value.cancel()
+        receivers.removeValue(forKey: sessionId)
+        sessions.removeValue(forKey: sessionId)?.close()
+        pendingSignals.removeValue(forKey: sessionId)
+        signalingClient.send([
+            "type": "bye",
+            "session_id": sessionId,
+            "reason": "receiver_canceled",
+        ])
     }
 }
 
@@ -534,6 +555,7 @@ private final class NativeP2PReceiver {
     private var hashRetryCount: [Int: Int] = [:]
     private var pendingChunkFrames: [Data] = []
     private var confirmed = false
+    private var canceled = false
     private var totalBytes = 0
     private var receivedBytes = 0
 
@@ -570,6 +592,9 @@ private final class NativeP2PReceiver {
     }
 
     func receive(_ data: Data) {
+        if canceled {
+            return
+        }
         let decoded = try? NativeTransferProtocolV3.decodeFrame(
             sessionKey: sessionKey,
             sessionId: sessionId,
@@ -602,10 +627,18 @@ private final class NativeP2PReceiver {
                 total + (completedChunks[file.index] ?? []).reduce(0) { $0 + expectedChunkLength(file: file, chunkIndex: $1) }
             }
             progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
-            confirmed = autoAccept
-            publishReceiveState(requiresConfirmation: !autoAccept)
-            if autoAccept {
+            let wasAlreadyConfirmed = confirmed
+            confirmed = confirmed || autoAccept
+            if wasAlreadyConfirmed {
+                publishReceiveState(requiresConfirmation: false)
+            } else {
+                publishReceiveState(requiresConfirmation: !autoAccept)
+            }
+            if confirmed {
                 sendReady()
+                let pending = pendingChunkFrames
+                pendingChunkFrames.removeAll(keepingCapacity: false)
+                pending.forEach(receive)
             }
         case .chunk(let fileIndex, let chunkIndex, let bytes):
             guard confirmed else {
@@ -635,10 +668,23 @@ private final class NativeP2PReceiver {
     }
 
     func accept() {
-        guard !confirmed, !files.isEmpty else {
+        guard !confirmed, !canceled else {
             return
         }
         confirmed = true
+        if files.isEmpty {
+            onReceiveState(
+                NativeReceiveTransferState(
+                    id: transferId,
+                    senderName: "",
+                    files: [],
+                    totalBytes: 0,
+                    receivedBytes: 0,
+                    requiresConfirmation: false
+                )
+            )
+            return
+        }
         publishReceiveState(requiresConfirmation: false)
         sendReady()
         let pending = pendingChunkFrames
@@ -647,6 +693,7 @@ private final class NativeP2PReceiver {
     }
 
     func cancel() {
+        canceled = true
         pendingChunkFrames.removeAll(keepingCapacity: false)
         fileChunks.removeAll(keepingCapacity: false)
         completedChunks.removeAll(keepingCapacity: false)
@@ -1004,6 +1051,7 @@ private extension Array where Element == NativeTransferV3ManifestInput {
 @MainActor
 private final class NativeReceiverReadyTracker {
     private var isReady = false
+    private(set) var isAborted = false
     private var continuation: CheckedContinuation<Bool, Never>?
 
     func markReady() {
@@ -1012,15 +1060,27 @@ private final class NativeReceiverReadyTracker {
         continuation = nil
     }
 
+    func abort() {
+        guard !isReady, !isAborted else {
+            return
+        }
+        isAborted = true
+        continuation?.resume(returning: false)
+        continuation = nil
+    }
+
     func wait(seconds: TimeInterval) async -> Bool {
         guard !isReady else {
             return true
+        }
+        guard !isAborted else {
+            return false
         }
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
                 Task { @MainActor in
-                    guard let self, !self.isReady else {
+                    guard let self, !self.isReady, !self.isAborted else {
                         return
                     }
                     self.continuation?.resume(returning: false)
@@ -1035,6 +1095,7 @@ private final class NativeReceiverReadyTracker {
 private final class NativeChunkAckTracker {
     private let totalChunks: Int
     private var ackedChunks: Set<String> = []
+    private(set) var isAborted = false
     private var continuation: CheckedContinuation<Bool, Never>?
 
     init(totalChunks: Int) {
@@ -1049,15 +1110,27 @@ private final class NativeChunkAckTracker {
         }
     }
 
+    func abort() {
+        guard !isAborted, ackedChunks.count < totalChunks else {
+            return
+        }
+        isAborted = true
+        continuation?.resume(returning: false)
+        continuation = nil
+    }
+
     func waitForAll(seconds: TimeInterval) async -> Bool {
         guard totalChunks > 0, ackedChunks.count < totalChunks else {
             return true
+        }
+        guard !isAborted else {
+            return false
         }
         return await withCheckedContinuation { continuation in
             self.continuation = continuation
             DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
                 Task { @MainActor in
-                    guard let self, self.ackedChunks.count < self.totalChunks else {
+                    guard let self, self.ackedChunks.count < self.totalChunks, !self.isAborted else {
                         return
                     }
                     self.continuation?.resume(returning: false)
