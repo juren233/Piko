@@ -16,6 +16,7 @@ final class NativeP2PTransferClient {
     private var pendingSignals: [String: [[String: Any]]] = [:]
     private var senderAbortCallbacks: [String: () -> Void] = [:]
     private let progressStore = NativeTransferProgressStore()
+    private let maxInFlightChunks = 8
 
     init(
         authStore: NativeAuthStore,
@@ -141,6 +142,9 @@ final class NativeP2PTransferClient {
             let receiverReadyTracker = NativeReceiverReadyTracker()
             let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
             var sentFrames: [String: Data] = [:]
+            var chunkByteCounts: [String: Int] = [:]
+            var confirmedBytes = 0
+            var queuedChunks = 0
             var negotiatedSessionKey: Data?
             var sessionRef: NativeWebRTCSession?
             let session = makeSession(
@@ -162,7 +166,11 @@ final class NativeP2PTransferClient {
                     case .ready:
                         receiverReadyTracker.markReady()
                     case .ack(let fileIndex, let chunkIndex):
-                        ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex)
+                        let key = chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)
+                        if ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex) {
+                            confirmedBytes += chunkByteCounts[key] ?? 0
+                            progressUpdate(Double(min(totalCompletedBeforeTarget + confirmedBytes, totalBytes)) / Double(max(totalBytes, 1)))
+                        }
                     case .retry(let fileIndex, let chunkIndex):
                         if let frame = sentFrames[chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)] {
                             Task { @MainActor in
@@ -232,7 +240,6 @@ final class NativeP2PTransferClient {
                 return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "等待接收端确认超时", diagnostic: diagnostic))
             }
 
-            var sentBytes = 0
             for (fileIndex, item) in items.enumerated() {
                 guard let stream = InputStream(url: item.fileURL) else {
                     let diagnostic = session.diagnosticSnapshot
@@ -260,11 +267,15 @@ final class NativeP2PTransferClient {
                     if read == 0 {
                         break
                     }
+                    let key = chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)
+                    chunkByteCounts[key] = read
                     if peerCompletedChunks[fileIndex]?.contains(chunkIndex) == true {
-                        ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex)
-                        sentBytes += read
+                        queuedChunks += 1
+                        if ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex) {
+                            confirmedBytes += read
+                            progressUpdate(Double(min(totalCompletedBeforeTarget + confirmedBytes, totalBytes)) / Double(max(totalBytes, 1)))
+                        }
                         chunkIndex += 1
-                        progressUpdate(Double(min(totalCompletedBeforeTarget + sentBytes, totalBytes)) / Double(max(totalBytes, 1)))
                         continue
                     }
                     guard let chunkFrame = try? NativeTransferProtocolV3.encodeChunk(
@@ -279,10 +290,18 @@ final class NativeP2PTransferClient {
                         closeSession(config.sessionId)
                         return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
                     }
-                    sentFrames[chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)] = chunkFrame
-                    sentBytes += read
+                    sentFrames[key] = chunkFrame
+                    queuedChunks += 1
                     chunkIndex += 1
-                    progressUpdate(Double(min(totalCompletedBeforeTarget + sentBytes, totalBytes)) / Double(max(totalBytes, 1)))
+                    let ackTarget = queuedChunks - maxInFlightChunks + 1
+                    if ackTarget > 0, !Task.isCancelled {
+                        guard await ackTracker.waitForAckedCount(ackTarget, seconds: 30) else {
+                            let diagnostic = session.diagnosticSnapshot
+                            let abortedByPeer = ackTracker.isAborted
+                            closeSession(config.sessionId)
+                            return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
+                        }
+                    }
                 }
             }
 
@@ -296,7 +315,7 @@ final class NativeP2PTransferClient {
             if let token = authStore.currentToken() {
                 _ = await sessionApi.finishSession(token: token, sessionId: config.sessionId)
             }
-            return .success(sentBytes)
+            return .success(confirmedBytes)
         }
     }
 
@@ -1103,17 +1122,30 @@ private final class NativeChunkAckTracker {
     private var ackedChunks: Set<String> = []
     private(set) var isAborted = false
     private var continuation: CheckedContinuation<Bool, Never>?
+    private var ackCountContinuation: CheckedContinuation<Bool, Never>?
+    private var ackCountTarget = 0
 
     init(totalChunks: Int) {
         self.totalChunks = totalChunks
     }
 
-    func markAck(fileIndex: Int, chunkIndex: Int) {
-        ackedChunks.insert(chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex))
+    var ackedCount: Int {
+        ackedChunks.count
+    }
+
+    @discardableResult
+    func markAck(fileIndex: Int, chunkIndex: Int) -> Bool {
+        let inserted = ackedChunks.insert(chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)).inserted
+        if ackedChunks.count >= ackCountTarget {
+            ackCountContinuation?.resume(returning: true)
+            ackCountContinuation = nil
+            ackCountTarget = 0
+        }
         if ackedChunks.count >= totalChunks {
             continuation?.resume(returning: true)
             continuation = nil
         }
+        return inserted
     }
 
     func abort() {
@@ -1123,6 +1155,32 @@ private final class NativeChunkAckTracker {
         isAborted = true
         continuation?.resume(returning: false)
         continuation = nil
+        ackCountContinuation?.resume(returning: false)
+        ackCountContinuation = nil
+        ackCountTarget = 0
+    }
+
+    func waitForAckedCount(_ target: Int, seconds: TimeInterval) async -> Bool {
+        guard ackedChunks.count < target else {
+            return true
+        }
+        guard !isAborted else {
+            return false
+        }
+        return await withCheckedContinuation { continuation in
+            self.ackCountTarget = target
+            self.ackCountContinuation = continuation
+            DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.ackedChunks.count < target, !self.isAborted else {
+                        return
+                    }
+                    self.ackCountContinuation?.resume(returning: false)
+                    self.ackCountContinuation = nil
+                    self.ackCountTarget = 0
+                }
+            }
+        }
     }
 
     func waitForAll(seconds: TimeInterval) async -> Bool {

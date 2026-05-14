@@ -42,7 +42,11 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
+
+private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
 
 data class P2PTransferDiagnostic(
     val offerSent: Boolean = false,
@@ -128,6 +132,9 @@ class P2PTransferClient(
         }
         val sentFrames = ConcurrentHashMap<ChunkKey, ByteArray>()
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
+        val chunkByteCounts = ConcurrentHashMap<ChunkKey, Long>()
+        val confirmedBytes = AtomicLong(0L)
+        val inFlightPermits = Semaphore(P2P_MAX_IN_FLIGHT_CHUNKS)
         val totalChunks = manifestFiles.sumOf { TransferProtocolV3.chunkCount(it.sizeBytes) }
         val ackLatch = CountDownLatch(totalChunks)
         val receiverReadyLatch = CountDownLatch(1)
@@ -144,15 +151,22 @@ class P2PTransferClient(
                     bytes = bytes,
                     channel = channel,
                     sentFrames = sentFrames,
+                    chunkByteCounts = chunkByteCounts,
                     ackedChunks = ackedChunks,
                     ackLatch = ackLatch,
                     receiverReadyLatch = receiverReadyLatch,
+                    inFlightPermits = inFlightPermits,
+                    confirmedBytes = confirmedBytes,
+                    totalCompletedBeforeTarget = totalCompletedBeforeTarget,
+                    totalBytes = totalBytes,
+                    callback = callback,
                 )
             },
         )
         peers[session.sessionId] = peer
         peer.setAbortCallback {
-            ackLatch.countDown()
+            inFlightPermits.release(P2P_MAX_IN_FLIGHT_CHUNKS)
+            while (ackLatch.count > 0) ackLatch.countDown()
             receiverReadyLatch.countDown()
         }
         val channel = runCatching {
@@ -287,7 +301,6 @@ class P2PTransferClient(
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
-        var sentBytes = 0L
         val buffer = ByteArray(TransferProtocolV3.chunkSize)
         items.forEachIndexed { fileIndex, item ->
             runCatching {
@@ -300,17 +313,20 @@ class P2PTransferClient(
                         val read = input.read(buffer)
                         if (read == -1) break
                         val chunkKey = ChunkKey(fileIndex, chunkIndex)
+                        chunkByteCounts[chunkKey] = read.toLong()
                         if (peerCompletedChunks[fileIndex]?.contains(chunkIndex) == true) {
-                            if (ackedChunks.add(chunkKey)) ackLatch.countDown()
-                            sentBytes += read
+                            if (ackedChunks.add(chunkKey)) {
+                                ackLatch.countDown()
+                                val completed = confirmedBytes.addAndGet(read.toLong())
+                                callback(
+                                    SendTransferEvent.Progress(
+                                        transferId = transferId,
+                                        completedBytes = (totalCompletedBeforeTarget + completed).coerceAtMost(totalBytes),
+                                        totalBytes = totalBytes,
+                                    ),
+                                )
+                            }
                             chunkIndex += 1
-                            callback(
-                                SendTransferEvent.Progress(
-                                    transferId = transferId,
-                                    completedBytes = (totalCompletedBeforeTarget + sentBytes).coerceAtMost(totalBytes),
-                                    totalBytes = totalBytes,
-                                ),
-                            )
                             continue
                         }
                         val chunkFrame = runCatching {
@@ -335,9 +351,22 @@ class P2PTransferClient(
                             )
                         }
                         sentFrames[chunkKey] = chunkFrame
+                        if (!inFlightPermits.tryAcquire(30, TimeUnit.SECONDS) || peer.isAborted) {
+                            val abortedByPeer = peer.isAborted
+                            peer.close()
+                            peers.remove(session.sessionId)
+                            throw P2PTransferFailure(
+                                stage = "ack",
+                                transferId = transferId,
+                                sessionId = session.sessionId,
+                                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时",
+                                diagnostic = peer.diagnosticSnapshot(),
+                            )
+                        }
                         runCatching {
                             sendBinary(channel, chunkFrame)
                         }.getOrElse { error ->
+                            inFlightPermits.release()
                             peer.close()
                             peers.remove(session.sessionId)
                             throw P2PTransferFailure(
@@ -349,15 +378,7 @@ class P2PTransferClient(
                                 cause = error,
                             )
                         }
-                        sentBytes += read
                         chunkIndex += 1
-                        callback(
-                            SendTransferEvent.Progress(
-                                transferId = transferId,
-                                completedBytes = (totalCompletedBeforeTarget + sentBytes).coerceAtMost(totalBytes),
-                                totalBytes = totalBytes,
-                            ),
-                        )
                     }
                 }
             }.getOrElse { error ->
@@ -392,7 +413,7 @@ class P2PTransferClient(
         kotlinx.coroutines.runBlocking {
             tokenStore.load()?.let { token -> sessionsApi.finishSession(token, session.sessionId) }
         }
-        return sentBytes
+        return confirmedBytes.get()
     }
 
     private suspend fun createSession(
@@ -1144,9 +1165,15 @@ private fun handleSenderControlFrame(
     bytes: ByteArray,
     channel: DataChannel,
     sentFrames: Map<ChunkKey, ByteArray>,
+    chunkByteCounts: Map<ChunkKey, Long>,
     ackedChunks: MutableSet<ChunkKey>,
     ackLatch: CountDownLatch,
     receiverReadyLatch: CountDownLatch,
+    inFlightPermits: Semaphore,
+    confirmedBytes: AtomicLong,
+    totalCompletedBeforeTarget: Long,
+    totalBytes: Long,
+    callback: (SendTransferEvent) -> Unit,
 ) {
     when (
         val frame = runCatching {
@@ -1155,8 +1182,18 @@ private fun handleSenderControlFrame(
     ) {
         is TransferV3Frame.Ready -> receiverReadyLatch.countDown()
         is TransferV3Frame.Ack -> {
-            if (ackedChunks.add(ChunkKey(frame.fileIndex, frame.chunkIndex))) {
+            val chunkKey = ChunkKey(frame.fileIndex, frame.chunkIndex)
+            if (ackedChunks.add(chunkKey)) {
                 ackLatch.countDown()
+                inFlightPermits.release()
+                val completed = confirmedBytes.addAndGet(chunkByteCounts[chunkKey] ?: 0L)
+                callback(
+                    SendTransferEvent.Progress(
+                        transferId = transferId,
+                        completedBytes = (totalCompletedBeforeTarget + completed).coerceAtMost(totalBytes),
+                        totalBytes = totalBytes,
+                    ),
+                )
             }
         }
         is TransferV3Frame.Retry -> {

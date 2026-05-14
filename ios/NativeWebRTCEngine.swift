@@ -354,8 +354,28 @@ final class NativeWebRTCSession: NSObject {
       await pc.addIceCandidate(iceCandidate);
       return true;
     }
-    function sendBase64(value) {
+    async function waitForWritableChannel() {
       if (!channel || channel.readyState !== "open") { return false; }
+      const highWaterMark = 512 * 1024;
+      if (channel.bufferedAmount <= highWaterMark) { return true; }
+      return await new Promise((resolve) => {
+        const timeout = setTimeout(() => {
+          cleanup();
+          resolve(channel && channel.readyState === "open" && channel.bufferedAmount <= highWaterMark);
+        }, 15000);
+        const cleanup = () => {
+          clearTimeout(timeout);
+          if (channel) { channel.onbufferedamountlow = null; }
+        };
+        channel.bufferedAmountLowThreshold = 256 * 1024;
+        channel.onbufferedamountlow = () => {
+          cleanup();
+          resolve(channel && channel.readyState === "open");
+        };
+      });
+    }
+    async function sendBase64(value) {
+      if (!await waitForWritableChannel()) { return false; }
       channel.send(fromBase64(value));
       return true;
     }
