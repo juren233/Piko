@@ -481,6 +481,7 @@ class IosAndroidUiParityTest {
             "NativeP2PTiming.initialOpenWaitSeconds",
             "NativeP2PTiming.restartOpenWaitSeconds",
             "directTransportAttemptPlan()",
+            "@MainActor\nprivate func directTransportAttemptPlan()",
             "NativeP2PDirectServer",
             "NativeP2PFramedConnection",
             "NativeXQuicDirectTransport",
@@ -496,6 +497,9 @@ class IosAndroidUiParityTest {
         ).forEach { marker ->
             assertTrue(marker in iosP2P, "iOS P2P must record WebRTC timing marker $marker")
         }
+        assertTrue("let ipv6Sockaddr = address.withMemoryRebound(to: sockaddr_in6.self" in iosP2P)
+        assertTrue("var mutableSockaddr = ipv6Sockaddr" in iosP2P)
+        assertFalse("let sockaddr = address.withMemoryRebound(to: sockaddr_in6.self" in iosP2P)
         assertFalse("): XQuicDirectServer? = null" in androidP2P)
         assertFalse("XQUIC native transport is not linked" in androidP2P)
         listOf(

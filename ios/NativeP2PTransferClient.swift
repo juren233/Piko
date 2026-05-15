@@ -16,6 +16,7 @@ private struct NativeP2PTransportAttempt {
     let timeoutSeconds: TimeInterval
 }
 
+@MainActor
 private func directTransportAttemptPlan() -> [NativeP2PTransportAttempt] {
     var attempts: [NativeP2PTransportAttempt] = []
     if NativeXQuicDirectTransport.isAvailable {
@@ -1609,8 +1610,8 @@ private final class NativeP2PDirectServer {
                   Int32(address.pointee.sa_family) == AF_INET6 else {
                 continue
             }
-            let sockaddr = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
-            var bytes = sockaddr.sin6_addr
+            let ipv6Sockaddr = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) { $0.pointee }
+            var bytes = ipv6Sockaddr.sin6_addr
             let isGlobalUnicast = withUnsafeBytes(of: &bytes) { rawBuffer -> Bool in
                 guard let firstByte = rawBuffer.first else {
                     return false
@@ -1620,7 +1621,7 @@ private final class NativeP2PDirectServer {
             guard isGlobalUnicast else {
                 continue
             }
-            var mutableSockaddr = sockaddr
+            var mutableSockaddr = ipv6Sockaddr
             var host = [CChar](repeating: 0, count: Int(NI_MAXHOST))
             let result = withUnsafePointer(to: &mutableSockaddr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
