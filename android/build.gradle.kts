@@ -53,6 +53,16 @@ android {
         ndk {
             abiFilters += androidAbis
         }
+
+        externalNativeBuild {
+            cmake {
+                arguments += listOf(
+                    "-DANDROID_STL=c++_shared",
+                    "-DPIKO_XQUIC_GIT_TAG=v1.9.2",
+                    "-DPIKO_BORINGSSL_GIT_TAG=main",
+                )
+            }
+        }
     }
 
     buildFeatures {
@@ -80,6 +90,12 @@ android {
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
         }
     }
 }

@@ -63,6 +63,49 @@ read_property() {
   ' "$VERSION_PATH"
 }
 
+build_xquic_native() {
+  local configuration="$1"
+  local target="$2"
+  local native_build_dir="$3"
+  if ! command -v cmake >/dev/null 2>&1; then
+    echo "未找到 cmake，无法构建 iOS XQUIC 原生库。" >&2
+    exit 1
+  fi
+  local cmake_build_type="Release"
+  if [[ "$configuration" != "Release" ]]; then
+    cmake_build_type="Debug"
+  fi
+  rm -rf "$native_build_dir"
+  mkdir -p "$native_build_dir"
+  echo "::group::xquic-native $configuration $target"
+  cmake \
+    -S "$REPO_ROOT/ios/xquic" \
+    -B "$native_build_dir" \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_SYSROOT=iphoneos \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="$DEPLOYMENT_TARGET" \
+    -DCMAKE_BUILD_TYPE="$cmake_build_type" \
+    -DPIKO_XQUIC_GIT_TAG=v1.9.2 \
+    -DPIKO_BORINGSSL_GIT_TAG=main
+  cmake --build "$native_build_dir" --target piko_xquic_ios --config "$cmake_build_type"
+  local xquic_lib
+  local ssl_lib
+  local crypto_lib
+  xquic_lib="$(find "$native_build_dir" -name "libpiko_xquic_ios.a" | sort | head -n 1)"
+  ssl_lib="$(find "$native_build_dir" -name "libssl.a" | sort | head -n 1)"
+  crypto_lib="$(find "$native_build_dir" -name "libcrypto.a" | sort | head -n 1)"
+  if [[ -z "$xquic_lib" || -z "$ssl_lib" || -z "$crypto_lib" ]]; then
+    echo "iOS XQUIC native 库产物不完整：xquic=$xquic_lib ssl=$ssl_lib crypto=$crypto_lib" >&2
+    exit 1
+  fi
+  xquic_link_inputs=("$xquic_lib" "$ssl_lib" "$crypto_lib")
+  echo "xquic_lib=$xquic_lib"
+  echo "ssl_lib=$ssl_lib"
+  echo "crypto_lib=$crypto_lib"
+  echo "::endgroup::"
+}
+
 if [[ "$(read_config build.enabled)" != "true" || "$(read_config ios.enabled)" != "true" ]]; then
   echo "iOS 构建已在配置中关闭。"
   exit 0
@@ -152,6 +195,8 @@ if [[ -d "$REPO_ROOT/ios" ]]; then
       if [[ "$variant" != "release" ]]; then
         compile_flags=("-Onone" "-g" "-D" "DEBUG")
       fi
+      xquic_link_inputs=()
+      build_xquic_native "$configuration" "$target" "$temp_dir/xquic-native"
 
       echo "::group::swiftc $configuration $target"
       xcrun swiftc \
@@ -160,7 +205,10 @@ if [[ -d "$REPO_ROOT/ios" ]]; then
         -parse-as-library \
         -module-name "$SCHEME" \
         "${compile_flags[@]}" \
+        -D PIKO_XQUIC_NATIVE \
         "${swift_sources[@]}" \
+        "${xquic_link_inputs[@]}" \
+        -lc++ \
         -o "$executable"
 
       python3 - "$REPO_ROOT/ios/Info.plist" "$plist_path" "$BUNDLE_IDENTIFIER" "$version_name" "$version_code" "$DEPLOYMENT_TARGET" <<'PY'

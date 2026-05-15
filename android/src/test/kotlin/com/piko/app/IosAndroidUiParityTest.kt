@@ -159,6 +159,13 @@ class IosAndroidUiParityTest {
         val iosTransferV3 = readIos("NativeTransferProtocolV3.swift")
         val iosTransferModels = readIos("NativeTransferModels.swift")
         val backendIce = File(rootDir, "backend/src/ice.ts").readText()
+        val androidBuildGradle = File(rootDir, "android/build.gradle.kts").readText()
+        val xquicCmake = File(rootDir, "android/src/main/cpp/CMakeLists.txt").readText()
+        val xquicJni = File(rootDir, "android/src/main/cpp/piko_xquic_jni.cpp").readText()
+        val iosXquicHeader = File(rootDir, "ios/PikoXQuicBridge.h").readText()
+        val iosXquicBridge = File(rootDir, "ios/PikoXQuicBridge.cpp").readText()
+        val iosXquicCmake = File(rootDir, "ios/xquic/CMakeLists.txt").readText()
+        val iosBuildScript = File(rootDir, "scripts/ios/build-packages.sh").readText()
         assertTrue(androidSignaling.contains("/v1/signaling/ws?device_id="))
         assertTrue("fun addListener(listener: (JSONObject) -> Unit)" in androidSignaling)
         assertTrue("if (socket !== webSocket) return" in androidSignaling)
@@ -401,6 +408,17 @@ class IosAndroidUiParityTest {
         assertTrue("target.receiverDeviceId?.ifBlank { null } ?: \"未知设备\"" in androidSendActions)
         listOf(
             "data class P2PTransferDiagnostic(",
+            "P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L",
+            "XQuicDirectTransport",
+            "System.loadLibrary(\"piko_xquic\")",
+            "external fun openServer",
+            "external fun openClient",
+            "XQuicNativeBinaryChannel",
+            "p2pDirectTransportAttemptPlan()",
+            "\"quic_ipv6_direct\"",
+            "\"tcp_ipv6_direct\"",
+            "\"webrtc_ipv6_host\"",
+            "\"webrtc_stun\"",
             "P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L",
             "P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L",
             "peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)",
@@ -418,7 +436,7 @@ class IosAndroidUiParityTest {
             "iceGatheringState = state.name",
             "signalingState = state.name",
             "dataChannelState = channel.state().name",
-            "candidate.sdp.iceCandidateType()",
+            "signaledCandidate.iceCandidateType()",
             "onIceCandidateError(event: IceCandidateErrorEvent)",
             "onSelectedCandidatePairChanged(event: CandidatePairChangeEvent)",
             "iceCandidateErrors = iceCandidateErrors.joinToString",
@@ -452,16 +470,113 @@ class IosAndroidUiParityTest {
             "iceCandidatePairStats: iceCandidatePairStats",
             "diagnosticSnapshotWithStats()",
             "collectIceCandidatePairStats()",
-            "candidateType(event.candidate.candidate)",
+            "candidateType(candidate)",
             "candidateSummary(candidate)",
         ).forEach { marker ->
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }
         listOf(
+            "NativeP2PTiming.directTransportWaitSeconds",
             "NativeP2PTiming.initialOpenWaitSeconds",
             "NativeP2PTiming.restartOpenWaitSeconds",
+            "directTransportAttemptPlan()",
+            "NativeP2PDirectServer",
+            "NativeP2PFramedConnection",
+            "NativeXQuicDirectTransport",
+            "NativeXQuicDirectChannel",
+            "PIKO_XQUIC_NATIVE",
+            "piko_xquic_open_server",
+            "piko_xquic_open_client",
+            "\"direct_endpoint\"",
+            "\"quic_ipv6_direct\"",
+            "\"tcp_ipv6_direct\"",
+            "\"webrtc_ipv6_host\"",
+            "\"webrtc_stun\"",
         ).forEach { marker ->
             assertTrue(marker in iosP2P, "iOS P2P must record WebRTC timing marker $marker")
+        }
+        assertFalse("): XQuicDirectServer? = null" in androidP2P)
+        assertFalse("XQUIC native transport is not linked" in androidP2P)
+        listOf(
+            "externalNativeBuild",
+            "src/main/cpp/CMakeLists.txt",
+            "-DPIKO_XQUIC_GIT_TAG=v1.9.2",
+        ).forEach { marker ->
+            assertTrue(marker in androidBuildGradle, "Android Gradle must wire XQUIC native build marker $marker")
+        }
+        listOf(
+            "FetchContent",
+            "https://github.com/alibaba/xquic.git",
+            "PIKO_XQUIC_GIT_TAG \"v1.9.2\"",
+            "https://github.com/google/boringssl.git",
+            "add_library(xquic_core STATIC",
+            "add_library(piko_xquic SHARED",
+            "piko_xquic_jni.cpp",
+            "piko_xquic_shim.c",
+        ).forEach { marker ->
+            assertTrue(marker in xquicCmake, "CMake must build real XQUIC native transport marker $marker")
+        }
+        listOf(
+            "JNI_OnLoad",
+            "RegisterNatives",
+            "xqc_engine_create",
+            "xqc_connect",
+            "xqc_stream_create",
+            "xqc_stream_send",
+            "xqc_stream_recv",
+            "handshakeComplete",
+            "contextFromUserData",
+            "channelFromUserData",
+        ).forEach { marker ->
+            assertTrue(marker in xquicJni, "JNI bridge must use real XQUIC API marker $marker")
+        }
+        listOf(
+            "int32_t piko_xquic_is_linked",
+            "piko_xquic_open_server",
+            "piko_xquic_open_client",
+            "int32_t piko_xquic_send_frame",
+            "PikoXQuicFrameCallback",
+        ).forEach { marker ->
+            assertTrue(marker in iosXquicHeader, "iOS XQUIC header must expose marker $marker")
+        }
+        listOf(
+            "extern \"C\" int32_t piko_xquic_is_linked",
+            "xqc_engine_create",
+            "xqc_connect",
+            "xqc_stream_create",
+            "xqc_stream_send",
+            "xqc_stream_recv",
+            "handshakeComplete",
+            "contextFromUserData",
+            "channelFromUserData",
+        ).forEach { marker ->
+            assertTrue(marker in iosXquicBridge, "iOS XQUIC bridge must use real XQUIC API marker $marker")
+        }
+        listOf(
+            "https://github.com/alibaba/xquic.git",
+            "PIKO_XQUIC_GIT_TAG \"v1.9.2\"",
+            "https://github.com/google/boringssl.git",
+            "add_library(piko_xquic_ios STATIC",
+            "PikoXQuicBridge.cpp",
+            "PikoXQuicShim.c",
+        ).forEach { marker ->
+            assertTrue(marker in iosXquicCmake, "iOS CMake must build real XQUIC native transport marker $marker")
+        }
+        listOf(
+            "build_xquic_native",
+            "command -v cmake",
+            "ios/xquic",
+            "-DCMAKE_SYSTEM_NAME=iOS",
+            "-DCMAKE_OSX_SYSROOT=iphoneos",
+            "-DCMAKE_OSX_ARCHITECTURES=arm64",
+            "cmake --build",
+            "libpiko_xquic_ios.a",
+            "libssl.a",
+            "libcrypto.a",
+            "-D PIKO_XQUIC_NATIVE",
+            "-lc++",
+        ).forEach { marker ->
+            assertTrue(marker in iosBuildScript, "iOS packaging script must link XQUIC marker $marker")
         }
         listOf("create_session", "data_channel_open", "key_agreement", "send_manifest", "receiver_ready", "send_chunk", "ack").forEach { stage ->
             assertTrue(stage in androidP2P, "Android P2P must keep failure stage $stage")
@@ -502,6 +617,10 @@ class IosAndroidUiParityTest {
         assertTrue("bundlePolicy: \"max-bundle\"" in iosWebRTC, "iOS RTCPeerConnection must set bundlePolicy=max-bundle")
         assertTrue("rtcpMuxPolicy: \"require\"" in iosWebRTC, "iOS RTCPeerConnection must set rtcpMuxPolicy=require")
         assertTrue("iceTransportPolicy: \"all\"" in iosWebRTC, "iOS RTCPeerConnection must set iceTransportPolicy=all")
+        assertTrue("P2P_IPV6_DIRECT_CANDIDATE_PRIORITY = 2_130_706_431" in androidP2P)
+        assertTrue("IPV6_DIRECT_CANDIDATE_PRIORITY = 2130706431" in iosWebRTC)
+        assertTrue("prioritizeP2PIceCandidateForSignaling(candidate.sdp)" in androidP2P)
+        assertTrue("prioritizeCandidateForSignaling(event.candidate.candidate)" in iosWebRTC)
 
         // New diagnostic fields must be present in both diagnostic types.
         listOf("stunErrorRate", "gatheringIncomplete", "symmetricNatSuspect", "remoteOnlyMdns", "failureReason").forEach { field ->

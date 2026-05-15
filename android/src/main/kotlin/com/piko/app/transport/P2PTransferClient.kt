@@ -36,11 +36,21 @@ import org.webrtc.RTCStatsReport
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import java.io.DataInputStream
+import java.io.DataOutputStream
+import java.io.IOException
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.NetworkInterface
+import java.net.ServerSocket
+import java.net.Socket
 import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Base64
+import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -52,8 +62,23 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
+private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
+private const val P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L
+private const val P2P_XQUIC_ALPN = "piko-v3"
 private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L
 private const val P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L
+private const val P2P_IPV6_DIRECT_CANDIDATE_PRIORITY = 2_130_706_431L
+
+data class P2PDirectTransportAttempt(
+    val name: String,
+    val timeoutSeconds: Long,
+)
+
+data class P2PDirectEndpoint(
+    val name: String,
+    val host: String,
+    val port: Int,
+)
 
 data class P2PTransferDiagnostic(
     val offerSent: Boolean = false,
@@ -79,6 +104,21 @@ data class P2PTransferDiagnostic(
     val remoteOnlyMdns: Boolean = false,
     val failureReason: P2PFailureReason? = null,
 )
+
+fun p2pDirectTransportAttemptPlan(): List<P2PDirectTransportAttempt> =
+    p2pDirectTransportAttemptPlan(xquicAvailable = isXQuicDirectTransportAvailable())
+
+internal fun p2pDirectTransportAttemptPlan(xquicAvailable: Boolean): List<P2PDirectTransportAttempt> =
+    buildList {
+        if (xquicAvailable) {
+            add(P2PDirectTransportAttempt("quic_ipv6_direct", P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
+        }
+        add(P2PDirectTransportAttempt("tcp_ipv6_direct", P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
+        add(P2PDirectTransportAttempt("webrtc_ipv6_host", P2P_INITIAL_OPEN_TIMEOUT_SECONDS))
+        add(P2PDirectTransportAttempt("webrtc_stun", P2P_RESTART_OPEN_TIMEOUT_SECONDS))
+    }
+
+internal fun isXQuicDirectTransportAvailable(): Boolean = XQuicDirectTransport.isAvailable
 
 enum class P2PFailureReason(
     val title: String,
@@ -153,6 +193,7 @@ class P2PTransferClient(
     private val peers = ConcurrentHashMap<String, P2PPeer>()
     private val receiversByTransferId = ConcurrentHashMap<String, P2PReceiver>()
     private val pendingSignalsBySessionId = ConcurrentHashMap<String, ConcurrentLinkedQueue<JSONObject>>()
+    private val directServersBySessionId = ConcurrentHashMap<String, P2PDirectServer>()
     private val progressStore = TransferProgressStore(context)
     private val signalExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "piko-p2p-signal").apply { isDaemon = true }
@@ -236,49 +277,133 @@ class P2PTransferClient(
             while (ackLatch.count > 0) ackLatch.countDown()
             receiverReadyLatch.countDown()
         }
-        val channel = runCatching {
-            peer.createOfferer()
-        }.getOrElse { error ->
-            peer.close()
-            peers.remove(session.sessionId)
-            throw P2PTransferFailure(
-                stage = "data_channel_open",
-                transferId = transferId,
-                sessionId = session.sessionId,
-                originalReason = error.message ?: "WebRTC offer 创建失败",
-                diagnostic = peer.diagnosticSnapshot(),
-                cause = error,
-            )
+        var directChannel: P2PBinaryChannel? = null
+        var directHandshake: P2PPeerHandshake? = null
+        var directSessionKey: ByteArray? = null
+        val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS)
+        val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
+        val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
+        if (quicEndpoint != null || tcpEndpoint != null) {
+            directHandshake = runCatching { peer.awaitPeerHandshake() }.getOrNull()
+            val handshake = directHandshake
+            if (handshake != null && TransferProtocolV3.verifyAcceptSignature(
+                    sessionId = session.sessionId,
+                    transferId = transferId,
+                    manifestHashB64 = sessionContext.manifestHashB64,
+                    senderEphemeralPublicKeyB64 = sessionContext.ephemeral.publicKeyB64,
+                    receiverEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
+                    signatureB64 = handshake.acceptSignatureB64,
+                    receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
+                )
+            ) {
+                directSessionKey = runCatching {
+                    TransferProtocolV3.deriveSessionKey(
+                        sessionId = session.sessionId,
+                        transferId = transferId,
+                        localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
+                        peerEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
+                        localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
+                        peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
+                        role = TransferV3KeyAgreementRole.Sender,
+                    )
+                }.getOrNull()
+                directSessionKey?.let { key ->
+                    fun open(endpoint: P2PDirectEndpoint): P2PBinaryChannel =
+                        if (endpoint.name == "quic_ipv6_direct") {
+                            openQuicDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS) { frame, channel ->
+                                handleSenderControlFrame(
+                                    sessionKey = key,
+                                    sessionId = session.sessionId,
+                                    transferId = transferId,
+                                    bytes = frame,
+                                    channel = channel,
+                                    sentFrames = sentFrames,
+                                    chunkByteCounts = chunkByteCounts,
+                                    ackedChunks = ackedChunks,
+                                    ackLatch = ackLatch,
+                                    receiverReadyLatch = receiverReadyLatch,
+                                    inFlightPermits = inFlightPermits,
+                                    confirmedBytes = confirmedBytes,
+                                    totalCompletedBeforeTarget = totalCompletedBeforeTarget,
+                                    totalBytes = totalBytes,
+                                    callback = callback,
+                                )
+                            }
+                        } else {
+                            openTcpDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS) { frame, channel ->
+                                handleSenderControlFrame(
+                                    sessionKey = key,
+                                    sessionId = session.sessionId,
+                                    transferId = transferId,
+                                    bytes = frame,
+                                    channel = channel,
+                                    sentFrames = sentFrames,
+                                    chunkByteCounts = chunkByteCounts,
+                                    ackedChunks = ackedChunks,
+                                    ackLatch = ackLatch,
+                                    receiverReadyLatch = receiverReadyLatch,
+                                    inFlightPermits = inFlightPermits,
+                                    confirmedBytes = confirmedBytes,
+                                    totalCompletedBeforeTarget = totalCompletedBeforeTarget,
+                                    totalBytes = totalBytes,
+                                    callback = callback,
+                                )
+                            }
+                        }
+                    directChannel = quicEndpoint?.let { endpoint ->
+                        runCatching { open(endpoint) }.getOrNull()
+                    } ?: tcpEndpoint?.let { endpoint ->
+                        runCatching { open(endpoint) }.getOrNull()
+                    }
+                }
+            }
         }
-        if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
-            if (peer.isAborted) {
+        val channel = directChannel ?: run {
+            val webRtcChannel = runCatching {
+                peer.createOfferer()
+            }.getOrElse { error ->
                 peer.close()
                 peers.remove(session.sessionId)
                 throw P2PTransferFailure(
                     stage = "data_channel_open",
                     transferId = transferId,
                     sessionId = session.sessionId,
-                    originalReason = "对方已取消接收",
+                    originalReason = error.message ?: "WebRTC offer 创建失败",
                     diagnostic = peer.diagnosticSnapshot(),
+                    cause = error,
                 )
             }
-            peer.triggerIceRestart()
-            if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
-                val baseDiag = peer.diagnosticSnapshot()
-                val reason = crossNetworkDiagnosis(baseDiag)
-                val diag = baseDiag.copy(failureReason = reason)
-                peer.close()
-                peers.remove(session.sessionId)
-                throw P2PTransferFailure(
-                    stage = "data_channel_open",
-                    transferId = transferId,
-                    sessionId = session.sessionId,
-                    originalReason = reason.body,
-                    diagnostic = diag,
-                )
+            if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
+                if (peer.isAborted) {
+                    peer.close()
+                    peers.remove(session.sessionId)
+                    throw P2PTransferFailure(
+                        stage = "data_channel_open",
+                        transferId = transferId,
+                        sessionId = session.sessionId,
+                        originalReason = "对方已取消接收",
+                        diagnostic = peer.diagnosticSnapshot(),
+                    )
+                }
+                peer.triggerIceRestart()
+                if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
+                    val baseDiag = peer.diagnosticSnapshot()
+                    val reason = crossNetworkDiagnosis(baseDiag)
+                    val diag = baseDiag.copy(failureReason = reason)
+                    peer.close()
+                    peers.remove(session.sessionId)
+                    throw P2PTransferFailure(
+                        stage = "data_channel_open",
+                        transferId = transferId,
+                        sessionId = session.sessionId,
+                        originalReason = reason.body,
+                        diagnostic = diag,
+                    )
+                }
             }
+            webRtcChannel
         }
-        val peerHandshake = runCatching {
+        val peerHandshake = directHandshake ?: runCatching {
             peer.awaitPeerHandshake()
         }.getOrElse { error ->
             peer.close()
@@ -313,7 +438,7 @@ class P2PTransferClient(
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
-        val sessionKey = runCatching {
+        val sessionKey = directSessionKey ?: runCatching {
             TransferProtocolV3.deriveSessionKey(
                 sessionId = session.sessionId,
                 transferId = transferId,
@@ -580,7 +705,7 @@ class P2PTransferClient(
                 )
                 flushPendingSignals(sessionId, peer)
             }
-            "offer", "answer", "ice_candidate" -> {
+            "offer", "answer", "ice_candidate", "direct_endpoint" -> {
                 val peer = peers[sessionId]
                 if (peer == null) {
                     bufferSignal(sessionId, message)
@@ -590,6 +715,7 @@ class P2PTransferClient(
             }
             "bye" -> {
                 pendingSignalsBySessionId.remove(sessionId)
+                directServersBySessionId.remove(sessionId)?.close()
                 peers.remove(sessionId)?.close()
             }
         }
@@ -613,6 +739,7 @@ class P2PTransferClient(
             "offer" -> peer.acceptOffer(message.getString("sdp"))
             "answer" -> peer.acceptAnswer(message)
             "ice_candidate" -> peer.addCandidate(message)
+            "direct_endpoint" -> peer.acceptDirectEndpoint(message)
         }
     }
 
@@ -679,7 +806,17 @@ class P2PTransferClient(
                 receiverAcceptSignatureB64 = acceptSignatureB64,
                 receiverCompletedBitmapB64 = completedBitmapB64,
                 onBinary = null,
-            )
+            ).also {
+                P2PDirectServer.start(
+                    sessionId = sessionId,
+                    signalingClient = signalingClient,
+                    receiver = receiver,
+                    certificateDirectory = context.cacheDir.absolutePath,
+                    receiverEphemeralPublicB64 = receiverEphemeral.publicKeyB64,
+                    receiverAcceptSignatureB64 = acceptSignatureB64,
+                    receiverCompletedBitmapB64 = completedBitmapB64,
+                )?.let { server -> directServersBySessionId[sessionId] = server }
+            }
         }
     }
 
@@ -692,6 +829,7 @@ class P2PTransferClient(
         val sessionId = receiver.sessionId
         receiver.cancel()
         pendingSignalsBySessionId.remove(sessionId)
+        directServersBySessionId.remove(sessionId)?.close()
         peers.remove(sessionId)?.close()
         signalingClient.send(
             JSONObject()
@@ -701,10 +839,8 @@ class P2PTransferClient(
         )
     }
 
-    private fun sendBinary(channel: DataChannel, bytes: ByteArray) {
-        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))) {
-            "DataChannel 发送失败"
-        }
+    private fun sendBinary(channel: P2PBinaryChannel, bytes: ByteArray) {
+        channel.send(bytes)
     }
 
     companion object {
@@ -734,11 +870,13 @@ class P2PTransferClient(
         private val receiverEphemeralPublicB64: String? = null,
         private val receiverAcceptSignatureB64: String? = null,
         private val receiverCompletedBitmapB64: String? = null,
-        private val onBinary: ((ByteArray, DataChannel) -> Unit)?,
+        private val onBinary: ((ByteArray, P2PBinaryChannel) -> Unit)?,
     ) {
         @Volatile
         private var openLatch = CountDownLatch(1)
         private val peerEphemeralLatch = CountDownLatch(1)
+        private val directEndpointLatch = CountDownLatch(1)
+        private val directEndpoints = ConcurrentLinkedQueue<P2PDirectEndpoint>()
         @Volatile
         private var peerEphemeralPublicB64: String? = null
         @Volatile
@@ -809,15 +947,16 @@ class P2PTransferClient(
                     }
 
                     override fun onIceCandidate(candidate: IceCandidate) {
+                        val signaledCandidate = prioritizeP2PIceCandidateForSignaling(candidate.sdp)
                         localIceCount += 1
-                        localCandidateTypes.add(candidate.sdp.iceCandidateType())
-                        localCandidateDetails.add(candidate.sdp.iceCandidateSummary())
+                        localCandidateTypes.add(signaledCandidate.iceCandidateType())
+                        localCandidateDetails.add(signaledCandidate.iceCandidateSummary())
                         signalingClient.send(
                             JSONObject()
                                 .put("type", "ice_candidate")
                                 .put("session_id", sessionId)
-                                .put("candidate", candidate.sdp)
-                                .put("candidate_type", candidate.sdp.iceCandidateType())
+                                .put("candidate", signaledCandidate)
+                                .put("candidate_type", signaledCandidate.iceCandidateType())
                                 .put("sdp_mid", candidate.sdpMid)
                                 .put("sdp_m_line_index", candidate.sdpMLineIndex),
                         )
@@ -846,14 +985,30 @@ class P2PTransferClient(
 
                     override fun onDataChannel(channel: DataChannel) {
                         dataChannelState = channel.state().name
-                        receiver?.attach(sessionId, channel)
+                        val binaryChannel = WebRtcBinaryChannel(channel)
+                        receiver?.attach(sessionId, binaryChannel)
+                        channel.registerObserver(object : DataChannel.Observer {
+                            override fun onBufferedAmountChange(previousAmount: Long) = Unit
+                            override fun onStateChange() {
+                                dataChannelState = channel.state().name
+                                if (channel.state() == DataChannel.State.OPEN) {
+                                    receiver?.attach(sessionId, binaryChannel)
+                                }
+                            }
+                            override fun onMessage(buffer: DataChannel.Buffer) {
+                                val bytes = ByteArray(buffer.data.remaining())
+                                buffer.data.get(bytes)
+                                receiver?.receive(bytes, binaryChannel)
+                            }
+                        })
                     }
                 },
             ),
         ) { "无法创建 WebRTC PeerConnection" }
 
-        fun createOfferer(): DataChannel {
+        fun createOfferer(): P2PBinaryChannel {
             val channel = peerConnection.createDataChannel("piko-v3", DataChannel.Init().apply { ordered = true })
+            val binaryChannel = WebRtcBinaryChannel(channel)
             channel.registerObserver(object : DataChannel.Observer {
                 override fun onBufferedAmountChange(previousAmount: Long) = Unit
                 override fun onStateChange() {
@@ -863,13 +1018,13 @@ class P2PTransferClient(
                 override fun onMessage(buffer: DataChannel.Buffer) {
                     val bytes = ByteArray(buffer.data.remaining())
                     buffer.data.get(bytes)
-                    onBinary?.invoke(bytes, channel)
+                    onBinary?.invoke(bytes, binaryChannel)
                 }
             })
             val offer = createSdp { observer -> peerConnection.createOffer(observer, MediaConstraints()) }
             setLocal(offer)
             offerSent = signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
-            return channel
+            return binaryChannel
         }
 
         fun acceptOffer(sdp: String) {
@@ -889,13 +1044,22 @@ class P2PTransferClient(
         }
 
         fun acceptAnswer(message: JSONObject) {
-            answerReceived = true
-            peerEphemeralPublicB64 = message.optString("receiver_x25519_eph_pub_b64").takeIf { it.isNotBlank() }
-            peerAcceptSignatureB64 = message.optString("receiver_accept_signature_b64").takeIf { it.isNotBlank() }
-            peerCompletedBitmapB64 = message.optString("completed_chunks_bitmap_b64").takeIf { it.isNotBlank() }
-            peerEphemeralLatch.countDown()
+            acceptPeerHandshake(message)
             setRemote(SessionDescription(SessionDescription.Type.ANSWER, message.getString("sdp")))
             flushPendingIceCandidates()
+        }
+
+        fun acceptDirectEndpoint(message: JSONObject) {
+            acceptPeerHandshake(message)
+            val endpoints = message.optJSONArray("endpoints") ?: return
+            for (index in 0 until endpoints.length()) {
+                val item = endpoints.optJSONObject(index) ?: continue
+                val name = item.optString("name").takeIf { it.isNotBlank() } ?: continue
+                val host = item.optString("host").takeIf { it.isNotBlank() } ?: continue
+                val port = item.optInt("port").takeIf { it in 1..65535 } ?: continue
+                directEndpoints.add(P2PDirectEndpoint(name = name, host = host, port = port))
+            }
+            directEndpointLatch.countDown()
         }
 
         fun addCandidate(message: JSONObject) {
@@ -938,6 +1102,11 @@ class P2PTransferClient(
                 acceptSignatureB64 = requireNotNull(peerAcceptSignatureB64) { "接收方签名缺失" },
                 completedChunks = TransferProgressStore.decodeCompletedBitmap(peerCompletedBitmapB64),
             )
+        }
+
+        fun awaitDirectEndpoints(seconds: Long): List<P2PDirectEndpoint> {
+            directEndpointLatch.await(seconds, TimeUnit.SECONDS)
+            return directEndpoints.toList()
         }
 
         val isAborted: Boolean
@@ -999,6 +1168,7 @@ class P2PTransferClient(
             aborted = true
             openLatch.countDown()
             peerEphemeralLatch.countDown()
+            directEndpointLatch.countDown()
             abortCallback?.invoke()
             pendingIceCandidates.clear()
             peerConnection.close()
@@ -1030,6 +1200,14 @@ class P2PTransferClient(
             observer.awaitSet()
             hasRemoteDescription = true
         }
+
+        private fun acceptPeerHandshake(message: JSONObject) {
+            answerReceived = true
+            peerEphemeralPublicB64 = message.optString("receiver_x25519_eph_pub_b64").takeIf { it.isNotBlank() }
+            peerAcceptSignatureB64 = message.optString("receiver_accept_signature_b64").takeIf { it.isNotBlank() }
+            peerCompletedBitmapB64 = message.optString("completed_chunks_bitmap_b64").takeIf { it.isNotBlank() }
+            peerEphemeralLatch.countDown()
+        }
     }
 }
 
@@ -1052,32 +1230,20 @@ private class P2PReceiver(
     private val outputFiles = mutableMapOf<Int, File>()
     private val completedChunks = mutableMapOf<Int, BooleanArray>()
     private val hashRetryCount = mutableMapOf<Int, Int>()
-    private val pendingChunkFrames = mutableListOf<Pair<ByteArray, DataChannel>>()
+    private val pendingChunkFrames = mutableListOf<Pair<ByteArray, P2PBinaryChannel>>()
     private val receivedFiles = mutableListOf<ReceiveHistoryFile>()
     private var confirmed = false
     private var canceled = false
-    private var activeChannel: DataChannel? = null
+    private var activeChannel: P2PBinaryChannel? = null
     private var readySent = false
     private var didComplete = false
 
-    fun attach(sessionId: String, channel: DataChannel) {
+    fun attach(sessionId: String, channel: P2PBinaryChannel) {
         activeChannel = channel
-        channel.registerObserver(object : DataChannel.Observer {
-            override fun onBufferedAmountChange(previousAmount: Long) = Unit
-            override fun onStateChange() {
-                if (channel.state() == DataChannel.State.OPEN) maybeSendReadyAndDrainPending()
-                if (channel.state() == DataChannel.State.CLOSED) finishIfComplete(channel)
-            }
-            override fun onMessage(buffer: DataChannel.Buffer) {
-                val bytes = ByteArray(buffer.data.remaining())
-                buffer.data.get(bytes)
-                handle(bytes, channel)
-            }
-        })
         maybeSendReadyAndDrainPending()
     }
 
-    private fun handle(bytes: ByteArray, channel: DataChannel) {
+    fun receive(bytes: ByteArray, channel: P2PBinaryChannel) {
         if (canceled) return
         val frame = runCatching {
             TransferProtocolV3.decodeFrame(sessionKey, sessionId, transferId, bytes)
@@ -1183,7 +1349,7 @@ private class P2PReceiver(
         onReceiveTransferEvent(ReceiveTransferEvent.Canceled(transferId))
     }
 
-    private fun finishIfComplete(channel: DataChannel) {
+    private fun finishIfComplete(channel: P2PBinaryChannel) {
         if (didComplete || manifest.isEmpty() || completedBytes < totalBytes) return
         if (completedChunks.values.any { bitmap -> bitmap.any { completed -> !completed } }) return
 
@@ -1220,7 +1386,7 @@ private class P2PReceiver(
         )
     }
 
-    private fun resetFileForRetry(file: TransferV3File, channel: DataChannel) {
+    private fun resetFileForRetry(file: TransferV3File, channel: P2PBinaryChannel) {
         val attempts = (hashRetryCount[file.index] ?: 0) + 1
         hashRetryCount[file.index] = attempts
         if (attempts > 3) {
@@ -1244,32 +1410,26 @@ private class P2PReceiver(
         return minOf(file.chunkSize.toLong(), file.sizeBytes - offset).toInt()
     }
 
-    private fun sendAck(channel: DataChannel, fileIndex: Int, chunkIndex: Int) {
-        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeAck(fileIndex, chunkIndex)), true))) {
-            "DataChannel ACK 发送失败"
-        }
+    private fun sendAck(channel: P2PBinaryChannel, fileIndex: Int, chunkIndex: Int) {
+        channel.send(TransferProtocolV3.encodeAck(fileIndex, chunkIndex))
     }
 
-    private fun sendReady(channel: DataChannel) {
-        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeReady()), true))) {
-            "DataChannel READY 发送失败"
-        }
+    private fun sendReady(channel: P2PBinaryChannel) {
+        channel.send(TransferProtocolV3.encodeReady())
     }
 
-    private fun sendRetry(channel: DataChannel, fileIndex: Int, chunkIndex: Int) {
-        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)), true))) {
-            "DataChannel RETRY 发送失败"
-        }
+    private fun sendRetry(channel: P2PBinaryChannel, fileIndex: Int, chunkIndex: Int) {
+        channel.send(TransferProtocolV3.encodeRetry(fileIndex, chunkIndex))
     }
 
     private fun maybeSendReadyAndDrainPending() {
         val channel = activeChannel ?: return
-        if (!confirmed || manifest.isEmpty() || readySent || channel.state() != DataChannel.State.OPEN) return
+        if (!confirmed || manifest.isEmpty() || readySent || !channel.isOpen) return
         sendReady(channel)
         readySent = true
         val pending = pendingChunkFrames.toList()
         pendingChunkFrames.clear()
-        pending.forEach { (bytes, c) -> handle(bytes, c) }
+        pending.forEach { (bytes, c) -> receive(bytes, c) }
     }
 }
 
@@ -1328,6 +1488,359 @@ private class BlockingSdpObserver : SdpObserver {
 
 private data class ChunkKey(val fileIndex: Int, val chunkIndex: Int)
 
+private interface P2PBinaryChannel {
+    val isOpen: Boolean
+    fun send(bytes: ByteArray)
+    fun close()
+}
+
+private class WebRtcBinaryChannel(private val channel: DataChannel) : P2PBinaryChannel {
+    override val isOpen: Boolean
+        get() = channel.state() == DataChannel.State.OPEN
+
+    override fun send(bytes: ByteArray) {
+        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))) {
+            "P2P 二进制通道发送失败"
+        }
+    }
+
+    override fun close() {
+        channel.close()
+    }
+}
+
+private class FramedSocketBinaryChannel(private val socket: Socket) : P2PBinaryChannel {
+    private val input = DataInputStream(socket.getInputStream())
+    private val output = DataOutputStream(socket.getOutputStream())
+    @Volatile
+    override var isOpen: Boolean = !socket.isClosed
+        private set
+
+    override fun send(bytes: ByteArray) {
+        require(bytes.size <= P2P_MAX_DIRECT_FRAME_BYTES) { "P2P 直连帧过大" }
+        synchronized(output) {
+            output.writeInt(bytes.size)
+            output.write(bytes)
+            output.flush()
+        }
+    }
+
+    fun startReadLoop(onFrame: (ByteArray) -> Unit, onClose: () -> Unit = {}) {
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                while (!socket.isClosed) {
+                    val length = input.readInt()
+                    if (length <= 0 || length > P2P_MAX_DIRECT_FRAME_BYTES) break
+                    val bytes = ByteArray(length)
+                    input.readFully(bytes)
+                    onFrame(bytes)
+                }
+            } catch (_: Throwable) {
+            } finally {
+                close()
+                onClose()
+            }
+        }
+    }
+
+    override fun close() {
+        isOpen = false
+        runCatching { socket.close() }
+    }
+}
+
+private fun openTcpDirectChannel(
+    endpoint: P2PDirectEndpoint,
+    timeoutSeconds: Long,
+    onFrame: (ByteArray, P2PBinaryChannel) -> Unit,
+): P2PBinaryChannel {
+    val socket = Socket()
+    val host = endpoint.host.removePrefix("[").removeSuffix("]")
+    socket.connect(InetSocketAddress(InetAddress.getByName(host), endpoint.port), (timeoutSeconds * 1000).toInt())
+    val channel = FramedSocketBinaryChannel(socket)
+    channel.startReadLoop(onFrame = { frame -> onFrame(frame, channel) })
+    return channel
+}
+
+private fun openQuicDirectChannel(
+    endpoint: P2PDirectEndpoint,
+    timeoutSeconds: Long,
+    onFrame: (ByteArray, P2PBinaryChannel) -> Unit,
+): P2PBinaryChannel {
+    return XQuicDirectTransport.openClient(endpoint, timeoutSeconds, P2P_XQUIC_ALPN, onFrame)
+}
+
+private interface XQuicDirectServer {
+    val port: Int
+    fun close()
+}
+
+private object XQuicDirectTransport {
+    val isAvailable: Boolean
+        get() = P2PXQuicNativeBridge.isAvailable
+
+    fun openServer(
+        bindHost: String,
+        alpn: String,
+        certificateDirectory: String,
+        receiver: P2PReceiver,
+        sessionId: String,
+    ): XQuicDirectServer? =
+        P2PXQuicNativeBridge.openServer(
+            bindHost = bindHost,
+            alpn = alpn,
+            certificateDirectory = certificateDirectory,
+            sessionId = sessionId,
+            receiver = receiver,
+        )
+
+    fun openClient(
+        endpoint: P2PDirectEndpoint,
+        timeoutSeconds: Long,
+        alpn: String,
+        onFrame: (ByteArray, P2PBinaryChannel) -> Unit,
+    ): P2PBinaryChannel {
+        return P2PXQuicNativeBridge.openClient(endpoint, timeoutSeconds, alpn, onFrame)
+    }
+}
+
+private interface XQuicFrameReceiver {
+    fun onFrame(channelHandle: Long, frame: ByteArray)
+    fun onClosed(channelHandle: Long)
+}
+
+private class XQuicNativeBinaryChannel(private val handle: Long) : P2PBinaryChannel {
+    @Volatile
+    override var isOpen: Boolean = true
+        private set
+
+    override fun send(bytes: ByteArray) {
+        require(bytes.size <= P2P_MAX_DIRECT_FRAME_BYTES) { "P2P XQUIC 直连帧过大" }
+        require(P2PXQuicNativeBridge.send(handle, bytes)) { "P2P XQUIC 通道发送失败" }
+    }
+
+    override fun close() {
+        isOpen = false
+        P2PXQuicNativeBridge.closeChannel(handle)
+    }
+}
+
+private class XQuicNativeDirectServer(
+    private val handle: Long,
+    override val port: Int,
+) : XQuicDirectServer {
+    override fun close() {
+        P2PXQuicNativeBridge.closeServer(handle)
+    }
+}
+
+private object P2PXQuicNativeBridge {
+    private val loadResult: Result<Unit> by lazy {
+        runCatching { System.loadLibrary("piko_xquic") }
+    }
+
+    val isAvailable: Boolean
+        get() = loadResult.isSuccess
+
+    fun openServer(
+        bindHost: String,
+        alpn: String,
+        certificateDirectory: String,
+        sessionId: String,
+        receiver: P2PReceiver,
+    ): XQuicDirectServer? {
+        if (!isAvailable) return null
+        val frameReceiver = object : XQuicFrameReceiver {
+            override fun onFrame(channelHandle: Long, frame: ByteArray) {
+                val channel = XQuicNativeBinaryChannel(channelHandle)
+                receiver.attach(sessionId, channel)
+                receiver.receive(frame, channel)
+            }
+
+            override fun onClosed(channelHandle: Long) = Unit
+        }
+        val handle = runCatching { openServer(bindHost, alpn, certificateDirectory, frameReceiver) }.getOrDefault(0L)
+        if (handle == 0L) return null
+        val port = serverPort(handle)
+        if (port !in 1..65535) {
+            closeServer(handle)
+            return null
+        }
+        return XQuicNativeDirectServer(handle, port)
+    }
+
+    fun openClient(
+        endpoint: P2PDirectEndpoint,
+        timeoutSeconds: Long,
+        alpn: String,
+        onFrame: (ByteArray, P2PBinaryChannel) -> Unit,
+    ): P2PBinaryChannel {
+        if (!isAvailable) {
+            throw IOException("XQUIC native bridge unavailable: ${loadFailureMessage()}")
+        }
+        val receiver = object : XQuicFrameReceiver {
+            override fun onFrame(channelHandle: Long, frame: ByteArray) {
+                val channel = XQuicNativeBinaryChannel(channelHandle)
+                onFrame(frame, channel)
+            }
+
+            override fun onClosed(channelHandle: Long) = Unit
+        }
+        val host = endpoint.host.removePrefix("[").removeSuffix("]")
+        val handle = openClient(
+            host = host,
+            port = endpoint.port,
+            timeoutMillis = (timeoutSeconds * 1000).toInt(),
+            alpn = alpn,
+            receiver = receiver,
+        )
+        if (handle == 0L) throw IOException("XQUIC native client open failed")
+        return XQuicNativeBinaryChannel(handle)
+    }
+
+    fun send(channelHandle: Long, bytes: ByteArray): Boolean =
+        isAvailable && sendFrame(channelHandle, bytes)
+
+    fun closeChannel(channelHandle: Long) {
+        if (isAvailable) closeChannelNative(channelHandle)
+    }
+
+    fun closeServer(serverHandle: Long) {
+        if (isAvailable) closeServerNative(serverHandle)
+    }
+
+    private fun loadFailureMessage(): String =
+        loadResult.exceptionOrNull()?.message ?: "unknown native load failure"
+
+    @JvmStatic
+    private external fun openServer(
+        bindHost: String,
+        alpn: String,
+        certificateDirectory: String,
+        receiver: XQuicFrameReceiver,
+    ): Long
+
+    @JvmStatic
+    private external fun serverPort(serverHandle: Long): Int
+
+    @JvmStatic
+    private external fun closeServerNative(serverHandle: Long)
+
+    @JvmStatic
+    private external fun openClient(
+        host: String,
+        port: Int,
+        timeoutMillis: Int,
+        alpn: String,
+        receiver: XQuicFrameReceiver,
+    ): Long
+
+    @JvmStatic
+    private external fun sendFrame(channelHandle: Long, frame: ByteArray): Boolean
+
+    @JvmStatic
+    private external fun closeChannelNative(channelHandle: Long)
+}
+
+private class P2PDirectServer private constructor(
+    private val serverSocket: ServerSocket?,
+    private val xquicServer: XQuicDirectServer?,
+    private val executor: ExecutorService,
+) {
+    fun close() {
+        runCatching { serverSocket?.close() }
+        runCatching { xquicServer?.close() }
+        executor.shutdownNow()
+    }
+
+    companion object {
+        fun start(
+            sessionId: String,
+            signalingClient: SignalingWebSocketClient,
+            receiver: P2PReceiver,
+            certificateDirectory: String,
+            receiverEphemeralPublicB64: String,
+            receiverAcceptSignatureB64: String,
+            receiverCompletedBitmapB64: String?,
+        ): P2PDirectServer? {
+            val addresses = publicIpv6Addresses()
+            if (addresses.isEmpty()) return null
+            val serverSocket = runCatching {
+                ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(InetAddress.getByName("::"), 0))
+                }
+            }.getOrNull()
+            val xquicServer = XQuicDirectTransport.openServer(
+                bindHost = "::",
+                alpn = P2P_XQUIC_ALPN,
+                certificateDirectory = certificateDirectory,
+                receiver = receiver,
+                sessionId = sessionId,
+            )
+            if (serverSocket == null && xquicServer == null) return null
+            val server = P2PDirectServer(serverSocket, xquicServer, Executors.newSingleThreadExecutor())
+            val endpoints = addresses.fold(org.json.JSONArray()) { array, address ->
+                if (xquicServer != null) {
+                    array.put(
+                        JSONObject()
+                            .put("name", "quic_ipv6_direct")
+                            .put("host", requireNotNull(address.hostAddress).substringBefore("%"))
+                            .put("port", xquicServer.port),
+                    )
+                }
+                if (serverSocket == null) return@fold array
+                array.put(
+                    JSONObject()
+                        .put("name", "tcp_ipv6_direct")
+                        .put("host", requireNotNull(address.hostAddress).substringBefore("%"))
+                        .put("port", serverSocket.localPort),
+                )
+            }
+            signalingClient.send(
+                JSONObject()
+                    .put("type", "direct_endpoint")
+                    .put("session_id", sessionId)
+                    .put("receiver_x25519_eph_pub_b64", receiverEphemeralPublicB64)
+                    .put("receiver_accept_signature_b64", receiverAcceptSignatureB64)
+                    .put("completed_chunks_bitmap_b64", receiverCompletedBitmapB64 ?: "")
+                    .put("endpoints", endpoints),
+            )
+            if (serverSocket != null) {
+                server.executor.execute {
+                    try {
+                        while (!serverSocket.isClosed) {
+                            val socket = serverSocket.accept()
+                            val channel = FramedSocketBinaryChannel(socket)
+                            receiver.attach(sessionId, channel)
+                            channel.startReadLoop(onFrame = { frame -> receiver.receive(frame, channel) })
+                        }
+                    } catch (_: Throwable) {
+                    } finally {
+                        server.close()
+                    }
+                }
+            }
+            return server
+        }
+
+        private fun publicIpv6Addresses(): List<Inet6Address> =
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+                .asSequence()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { networkInterface -> Collections.list(networkInterface.inetAddresses).asSequence() }
+                .filterIsInstance<Inet6Address>()
+                .filter { address ->
+                    !address.isAnyLocalAddress &&
+                        !address.isLoopbackAddress &&
+                        !address.isLinkLocalAddress &&
+                        !address.isSiteLocalAddress &&
+                        !address.isMulticastAddress
+                }
+                .toList()
+    }
+}
+
 private data class P2PSendSession(
     val config: TransferSessionConfig,
     val ephemeral: TransferV3EphemeralKeyPair,
@@ -1351,7 +1864,7 @@ private fun handleSenderControlFrame(
     sessionId: String,
     transferId: String,
     bytes: ByteArray,
-    channel: DataChannel,
+    channel: P2PBinaryChannel,
     sentFrames: Map<ChunkKey, ByteArray>,
     chunkByteCounts: Map<ChunkKey, Long>,
     ackedChunks: MutableSet<ChunkKey>,
@@ -1386,9 +1899,7 @@ private fun handleSenderControlFrame(
         }
         is TransferV3Frame.Retry -> {
             sentFrames[ChunkKey(frame.fileIndex, frame.chunkIndex)]?.let { chunkFrame ->
-                require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(chunkFrame), true))) {
-                    "DataChannel RETRY 重传失败"
-                }
+                channel.send(chunkFrame)
             }
         }
         else -> Unit
@@ -1458,6 +1969,19 @@ private fun JSONObject.optIceServers(): List<IceServerConfig> {
 private fun String.iceCandidateType(): String =
     Regex("""\btyp\s+([A-Za-z0-9_-]+)""").find(this)?.groupValues?.get(1)?.lowercase() ?: "unknown"
 
+internal fun prioritizeP2PIceCandidateForSignaling(candidate: String): String {
+    val parts = candidate.trim().split(Regex("""\s+""")).toMutableList()
+    if (parts.size < 8) return candidate
+    if (!parts[2].equals("udp", ignoreCase = true)) return candidate
+    if (!parts[6].equals("typ", ignoreCase = true)) return candidate
+    if (!parts[7].equals("host", ignoreCase = true)) return candidate
+    if (parts[4].iceAddressKind() != "public-ipv6") return candidate
+    val priority = parts[3].toLongOrNull() ?: return candidate
+    if (priority >= P2P_IPV6_DIRECT_CANDIDATE_PRIORITY) return candidate
+    parts[3] = P2P_IPV6_DIRECT_CANDIDATE_PRIORITY.toString()
+    return parts.joinToString(" ")
+}
+
 private fun String.iceCandidateSummary(): String {
     val parts = trim().split(Regex("""\s+"""))
     val protocol = parts.getOrNull(2)?.lowercase()?.ifBlank { null } ?: "unknown"
@@ -1480,8 +2004,10 @@ private fun String.iceAddressKind(): String {
     if (value.endsWith(".local")) return "mdns"
     if (":" in value) {
         return when {
-            value.startsWith("fd") || value.startsWith("fc") || value.startsWith("fe80") -> "private-ipv6"
-            else -> "ipv6"
+            value == "::1" -> "loopback-ipv6"
+            value.startsWith("fe80:") -> "link-local-ipv6"
+            value.startsWith("fd") || value.startsWith("fc") -> "ula-ipv6"
+            else -> "public-ipv6"
         }
     }
     val octets = value.split(".").mapNotNull { it.toIntOrNull() }

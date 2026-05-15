@@ -494,6 +494,7 @@ final class NativeWebRTCSession: NSObject {
     let pc = null;
     let channel = null;
     const pendingIceCandidates = [];
+    const IPV6_DIRECT_CANDIDATE_PRIORITY = 2130706431;
     function post(message) { native.postMessage(message); }
     function toBase64(buffer) {
       let binary = "";
@@ -532,6 +533,18 @@ final class NativeWebRTCSession: NSObject {
       if (octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127) { return "cgnat-ipv4"; }
       if (octets[0] === 127) { return "loopback-ipv4"; }
       return "public-ipv4";
+    }
+    function prioritizeCandidateForSignaling(candidate) {
+      const parts = String(candidate || "").trim().split(/\s+/);
+      if (parts.length < 8) { return candidate; }
+      if (parts[2].toLowerCase() !== "udp") { return candidate; }
+      if (parts[6].toLowerCase() !== "typ") { return candidate; }
+      if (parts[7].toLowerCase() !== "host") { return candidate; }
+      if (addressKind(parts[4]) !== "public-ipv6") { return candidate; }
+      const priority = Number.parseInt(parts[3], 10);
+      if (!Number.isFinite(priority) || priority >= IPV6_DIRECT_CANDIDATE_PRIORITY) { return candidate; }
+      parts[3] = String(IPV6_DIRECT_CANDIDATE_PRIORITY);
+      return parts.join(" ");
     }
     function candidateStatsSummary(stat) {
       const address = stat.address || stat.ip || stat.relatedAddress || "unknown";
@@ -633,11 +646,12 @@ final class NativeWebRTCSession: NSObject {
       };
       pc.onicecandidate = (event) => {
         if (!event.candidate) { return; }
+        const candidate = prioritizeCandidateForSignaling(event.candidate.candidate);
         post({
           kind: "signal",
           type: "ice_candidate",
-          candidate: event.candidate.candidate,
-          candidate_type: candidateType(event.candidate.candidate),
+          candidate,
+          candidate_type: candidateType(candidate),
           sdp_mid: event.candidate.sdpMid,
           sdp_m_line_index: event.candidate.sdpMLineIndex
         });

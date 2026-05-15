@@ -2,11 +2,13 @@ package com.piko.app
 
 import com.piko.app.transport.P2PFailureReason
 import com.piko.app.transport.P2PTransferDiagnostic
+import com.piko.app.transport.p2pDirectTransportAttemptPlan
 import com.piko.app.transport.computeStunErrorRate
 import com.piko.app.transport.crossNetworkDiagnosis
 import com.piko.app.transport.detectRemoteOnlyMdns
 import com.piko.app.transport.detectSymmetricNatSuspect
 import com.piko.app.transport.isGatheringIncomplete
+import com.piko.app.transport.prioritizeP2PIceCandidateForSignaling
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -141,6 +143,49 @@ class P2PFailureReasonTest {
     fun computeStunErrorRate_returnsZeroWhenNoErrors() {
         assertEquals(0.0, computeStunErrorRate("stun:a:3478,stun:b:3478", "none"), 1e-9)
         assertEquals(0.0, computeStunErrorRate("stun:a:3478,stun:b:3478", ""), 1e-9)
+    }
+
+    @Test
+    fun prioritizeP2PIceCandidateForSignaling_boostsPublicIpv6HostCandidate() {
+        val candidate =
+            "candidate:1 1 udp 1686052607 2409:8a20:1234:5678::1 54545 typ host generation 0"
+
+        val prioritized = prioritizeP2PIceCandidateForSignaling(candidate)
+
+        assertEquals(
+            "candidate:1 1 udp 2130706431 2409:8a20:1234:5678::1 54545 typ host generation 0",
+            prioritized,
+        )
+    }
+
+    @Test
+    fun prioritizeP2PIceCandidateForSignaling_keepsStunCandidateUnchanged() {
+        val candidate =
+            "candidate:2 1 udp 1686052607 203.0.113.10 62000 typ srflx raddr 192.168.1.10 rport 54545"
+
+        assertEquals(candidate, prioritizeP2PIceCandidateForSignaling(candidate))
+    }
+
+    @Test
+    fun p2pDirectTransportAttemptPlan_prefersQuicThenTcpBeforeWebRtcFallbackWhenNativeLinked() {
+        val plan = p2pDirectTransportAttemptPlan(xquicAvailable = true)
+
+        assertEquals(
+            listOf("quic_ipv6_direct", "tcp_ipv6_direct", "webrtc_ipv6_host", "webrtc_stun"),
+            plan.map { it.name },
+        )
+        assertEquals(5L, plan.first { it.name == "quic_ipv6_direct" }.timeoutSeconds)
+        assertEquals(5L, plan.first { it.name == "tcp_ipv6_direct" }.timeoutSeconds)
+    }
+
+    @Test
+    fun p2pDirectTransportAttemptPlan_skipsQuicWhenNativeBridgeIsUnavailable() {
+        val plan = p2pDirectTransportAttemptPlan(xquicAvailable = false)
+
+        assertEquals(
+            listOf("tcp_ipv6_direct", "webrtc_ipv6_host", "webrtc_stun"),
+            plan.map { it.name },
+        )
     }
 
     @Test
