@@ -135,13 +135,28 @@ void setTimer(xqc_usec_t wakeAfter, void *userData) {
     ctx->cv.notify_all();
 }
 
+int fdSnapshot(NativeContext *ctx) {
+    if (ctx == nullptr) return -1;
+    std::lock_guard<std::mutex> lock(ctx->mutex);
+    return ctx->fd;
+}
+
+int detachFd(const std::shared_ptr<NativeContext> &ctx) {
+    if (!ctx) return -1;
+    std::lock_guard<std::mutex> lock(ctx->mutex);
+    const int fd = ctx->fd;
+    ctx->fd = -1;
+    return fd;
+}
+
 ssize_t writeSocketEx(uint64_t, const unsigned char *buf, size_t size, const struct sockaddr *peerAddr,
                       socklen_t peerAddrLen, void *connUserData) {
     NativeContext *ctx = contextFromUserData(connUserData);
-    if (ctx == nullptr || ctx->fd < 0) return XQC_SOCKET_ERROR;
+    const int fd = fdSnapshot(ctx);
+    if (fd < 0) return XQC_SOCKET_ERROR;
     ssize_t sent;
     do {
-        sent = sendto(ctx->fd, buf, size, 0, peerAddr, peerAddrLen);
+        sent = sendto(fd, buf, size, 0, peerAddr, peerAddrLen);
     } while (sent < 0 && errno == EINTR);
     if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) return XQC_SOCKET_EAGAIN;
     return sent < 0 ? XQC_SOCKET_ERROR : sent;
@@ -153,6 +168,16 @@ ssize_t writeSocket(const unsigned char *buf, size_t size, const struct sockaddr
 }
 
 int serverAccept(xqc_engine_t *, xqc_connection_t *, const xqc_cid_t *, void *) {
+    return XQC_OK;
+}
+
+void connUpdateCidNotify(xqc_connection_t *, const xqc_cid_t *, const xqc_cid_t *, void *) {}
+
+void saveToken(const unsigned char *, uint32_t, void *) {}
+
+void saveString(const char *, size_t, void *) {}
+
+int verifyCertificate(const unsigned char *[], const size_t [], size_t, void *) {
     return XQC_OK;
 }
 
@@ -336,6 +361,11 @@ xqc_engine_t *createEngine(NativeContext *ctx, bool server, const std::string &k
     transport.server_accept = server ? serverAccept : nullptr;
     transport.write_socket = writeSocket;
     transport.write_socket_ex = writeSocketEx;
+    transport.conn_update_cid_notify = connUpdateCidNotify;
+    transport.save_token = saveToken;
+    transport.save_session_cb = saveString;
+    transport.save_tp_cb = saveString;
+    transport.cert_verify_cb = verifyCertificate;
     xqc_engine_ssl_config_t ssl{};
     if (server) {
         ssl.private_key_file = const_cast<char *>(keyPath.c_str());
@@ -386,26 +416,29 @@ int bindUdpSocket(const std::string &host, int port, sockaddr_storage *localAddr
 void loopContext(std::shared_ptr<NativeContext> ctx) {
     uint8_t packet[65535];
     while (!ctx->closed.load()) {
+        const int fd = fdSnapshot(ctx.get());
+        if (fd < 0 || ctx->engine == nullptr) break;
         fd_set readSet;
         FD_ZERO(&readSet);
-        FD_SET(ctx->fd, &readSet);
+        FD_SET(fd, &readSet);
         timeval tv{};
         {
             std::unique_lock<std::mutex> lock(ctx->mutex);
             tv.tv_sec = static_cast<long>(ctx->wakeAfter / 1000000);
             tv.tv_usec = static_cast<long>(ctx->wakeAfter % 1000000);
         }
-        int ready = select(ctx->fd + 1, &readSet, nullptr, nullptr, &tv);
-        if (ready > 0 && FD_ISSET(ctx->fd, &readSet)) {
-            while (true) {
+        int ready = select(fd + 1, &readSet, nullptr, nullptr, &tv);
+        if (ctx->closed.load()) break;
+        if (ready > 0 && FD_ISSET(fd, &readSet)) {
+            while (!ctx->closed.load()) {
                 sockaddr_storage peer{};
                 socklen_t peerLen = sizeof(peer);
-                ssize_t size = recvfrom(ctx->fd, packet, sizeof(packet), 0, reinterpret_cast<sockaddr *>(&peer), &peerLen);
+                ssize_t size = recvfrom(fd, packet, sizeof(packet), 0, reinterpret_cast<sockaddr *>(&peer), &peerLen);
                 if (size < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
                 if (size <= 0) break;
                 sockaddr_storage local{};
                 socklen_t localLen = sizeof(local);
-                getsockname(ctx->fd, reinterpret_cast<sockaddr *>(&local), &localLen);
+                getsockname(fd, reinterpret_cast<sockaddr *>(&local), &localLen);
                 xqc_engine_packet_process(
                     ctx->engine,
                     packet,
@@ -418,8 +451,9 @@ void loopContext(std::shared_ptr<NativeContext> ctx) {
                     ctx.get()
                 );
             }
-            xqc_engine_finish_recv(ctx->engine);
+            if (!ctx->closed.load()) xqc_engine_finish_recv(ctx->engine);
         }
+        if (ctx->closed.load()) break;
         std::vector<std::shared_ptr<NativeChannel>> channels;
         {
             std::lock_guard<std::mutex> lock(ctx->mutex);
@@ -433,10 +467,10 @@ void loopContext(std::shared_ptr<NativeContext> ctx) {
 void closeContext(const std::shared_ptr<NativeContext> &ctx) {
     if (!ctx || ctx->closed.exchange(true)) return;
     ctx->cv.notify_all();
-    if (ctx->fd >= 0) {
-        shutdown(ctx->fd, SHUT_RDWR);
-        close(ctx->fd);
-        ctx->fd = -1;
+    const int fd = detachFd(ctx);
+    if (fd >= 0) {
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
     }
     if (ctx->worker.joinable()) {
         if (ctx->worker.get_id() == std::this_thread::get_id()) {

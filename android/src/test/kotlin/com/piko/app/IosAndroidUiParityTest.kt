@@ -548,6 +548,10 @@ class IosAndroidUiParityTest {
             "handshakeComplete",
             "contextFromUserData",
             "channelFromUserData",
+            "fdSnapshot(ctx.get())",
+            "transport.conn_update_cid_notify = connUpdateCidNotify",
+            "transport.save_token = saveToken",
+            "transport.cert_verify_cb = verifyCertificate",
         ).forEach { marker ->
             assertTrue(marker in xquicJni, "JNI bridge must use real XQUIC API marker $marker")
         }
@@ -572,6 +576,10 @@ class IosAndroidUiParityTest {
             "handshakeComplete",
             "contextFromUserData",
             "channelFromUserData",
+            "fdSnapshot(ctx.get())",
+            "transport.conn_update_cid_notify = connUpdateCidNotify",
+            "transport.save_token = saveToken",
+            "transport.cert_verify_cb = verifyCertificate",
         ).forEach { marker ->
             assertTrue(marker in iosXquicBridge, "iOS XQUIC bridge must use real XQUIC API marker $marker")
         }
