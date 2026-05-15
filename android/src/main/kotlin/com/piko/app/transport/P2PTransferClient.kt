@@ -56,6 +56,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
@@ -781,6 +782,7 @@ class P2PTransferClient(
     }
 
     private fun dispatchSignal(peer: P2PPeer, message: JSONObject) {
+        if (peer.isClosed) return
         when (message.optString("type")) {
             "offer" -> peer.acceptOffer(message.getString("sdp"))
             "answer" -> peer.acceptAnswer(message)
@@ -967,6 +969,8 @@ class P2PTransferClient(
         @Volatile
         private var directLastError = "none"
         private var aborted = false
+        private val closed = AtomicBoolean(false)
+        private val peerConnectionLock = Any()
         @Volatile
         private var abortCallback: (() -> Unit)? = null
         private val pendingIceCandidates = ConcurrentLinkedQueue<IceCandidate>()
@@ -1060,7 +1064,9 @@ class P2PTransferClient(
         ) { "无法创建 WebRTC PeerConnection" }
 
         fun createOfferer(): P2PBinaryChannel {
-            val channel = peerConnection.createDataChannel("piko-v3", DataChannel.Init().apply { ordered = true })
+            val channel = withOpenPeerConnection { connection ->
+                connection.createDataChannel("piko-v3", DataChannel.Init().apply { ordered = true })
+            }
             val binaryChannel = WebRtcBinaryChannel(channel)
             channel.registerObserver(object : DataChannel.Observer {
                 override fun onBufferedAmountChange(previousAmount: Long) = Unit
@@ -1074,16 +1080,21 @@ class P2PTransferClient(
                     onBinary?.invoke(bytes, binaryChannel)
                 }
             })
-            val offer = createSdp { observer -> peerConnection.createOffer(observer, MediaConstraints()) }
+            val offer = createSdp { observer ->
+                withOpenPeerConnection { connection -> connection.createOffer(observer, MediaConstraints()) }
+            }
             setLocal(offer)
             offerSent = signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
             return binaryChannel
         }
 
         fun acceptOffer(sdp: String) {
+            if (closed.get()) return
             setRemote(SessionDescription(SessionDescription.Type.OFFER, sdp))
             flushPendingIceCandidates()
-            val answer = createSdp { observer -> peerConnection.createAnswer(observer, MediaConstraints()) }
+            val answer = createSdp { observer ->
+                withOpenPeerConnection { connection -> connection.createAnswer(observer, MediaConstraints()) }
+            }
             setLocal(answer)
             signalingClient.send(
                 JSONObject()
@@ -1097,12 +1108,14 @@ class P2PTransferClient(
         }
 
         fun acceptAnswer(message: JSONObject) {
+            if (closed.get()) return
             acceptPeerHandshake(message)
             setRemote(SessionDescription(SessionDescription.Type.ANSWER, message.getString("sdp")))
             flushPendingIceCandidates()
         }
 
         fun acceptDirectEndpoint(message: JSONObject) {
+            if (closed.get()) return
             acceptPeerHandshake(message)
             val endpoints = message.optJSONArray("endpoints") ?: return
             for (index in 0 until endpoints.length()) {
@@ -1116,6 +1129,7 @@ class P2PTransferClient(
         }
 
         fun addCandidate(message: JSONObject) {
+            if (closed.get()) return
             val candidate = IceCandidate(
                 message.optString("sdp_mid"),
                 message.optInt("sdp_m_line_index"),
@@ -1131,7 +1145,7 @@ class P2PTransferClient(
                 }
                 return
             }
-            peerConnection.addIceCandidate(candidate)
+            withOpenPeerConnection { connection -> connection.addIceCandidate(candidate) }
         }
 
         fun awaitOpen(seconds: Long): Boolean {
@@ -1141,8 +1155,10 @@ class P2PTransferClient(
 
         fun triggerIceRestart() {
             openLatch = CountDownLatch(1)
-            peerConnection.restartIce()
-            val offer = createSdp { observer -> peerConnection.createOffer(observer, MediaConstraints()) }
+            withOpenPeerConnection { connection -> connection.restartIce() }
+            val offer = createSdp { observer ->
+                withOpenPeerConnection { connection -> connection.createOffer(observer, MediaConstraints()) }
+            }
             setLocal(offer)
             signalingClient.send(JSONObject().put("type", "offer").put("session_id", sessionId).put("sdp", offer.description))
         }
@@ -1197,6 +1213,9 @@ class P2PTransferClient(
         val isAborted: Boolean
             get() = aborted
 
+        val isClosed: Boolean
+            get() = closed.get()
+
         fun setAbortCallback(callback: () -> Unit) {
             abortCallback = callback
             if (aborted) callback()
@@ -1238,20 +1257,25 @@ class P2PTransferClient(
         )
 
         fun close() {
+            if (!closed.compareAndSet(false, true)) return
             aborted = true
             openLatch.countDown()
             peerEphemeralLatch.countDown()
             directEndpointLatch.countDown()
             abortCallback?.invoke()
+            abortCallback = null
             pendingIceCandidates.clear()
-            peerConnection.close()
-            peerConnection.dispose()
+            synchronized(peerConnectionLock) {
+                runCatching { peerConnection.close() }
+                peerConnection.dispose()
+            }
         }
 
         private fun flushPendingIceCandidates() {
             while (true) {
                 val candidate = pendingIceCandidates.poll() ?: return
-                peerConnection.addIceCandidate(candidate)
+                if (closed.get()) return
+                withOpenPeerConnection { connection -> connection.addIceCandidate(candidate) }
             }
         }
 
@@ -1263,16 +1287,22 @@ class P2PTransferClient(
 
         private fun setLocal(description: SessionDescription) {
             val observer = BlockingSdpObserver()
-            peerConnection.setLocalDescription(observer, description)
+            withOpenPeerConnection { connection -> connection.setLocalDescription(observer, description) }
             observer.awaitSet()
         }
 
         private fun setRemote(description: SessionDescription) {
             val observer = BlockingSdpObserver()
-            peerConnection.setRemoteDescription(observer, description)
+            withOpenPeerConnection { connection -> connection.setRemoteDescription(observer, description) }
             observer.awaitSet()
             hasRemoteDescription = true
         }
+
+        private fun <T> withOpenPeerConnection(block: (PeerConnection) -> T): T =
+            synchronized(peerConnectionLock) {
+                check(!closed.get()) { "WebRTC PeerConnection 已关闭" }
+                block(peerConnection)
+            }
 
         private fun acceptPeerHandshake(message: JSONObject) {
             answerReceived = true
