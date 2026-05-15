@@ -531,6 +531,8 @@ class IosAndroidUiParityTest {
             "JNI_OnLoad",
             "RegisterNatives",
             "xqc_engine_create",
+            "xqc_conn_settings_t connSettings{}",
+            "ctx->engine,\n        &connSettings,\n        nullptr,",
             "xqc_connect",
             "xqc_stream_create",
             "xqc_stream_send",
@@ -553,6 +555,8 @@ class IosAndroidUiParityTest {
         listOf(
             "extern \"C\" int32_t piko_xquic_is_linked",
             "xqc_engine_create",
+            "xqc_conn_settings_t connSettings{}",
+            "ctx->engine,\n        &connSettings,\n        nullptr,",
             "xqc_connect",
             "xqc_stream_create",
             "xqc_stream_send",

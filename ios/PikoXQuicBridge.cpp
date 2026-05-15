@@ -548,9 +548,10 @@ extern "C" int64_t piko_xquic_open_client(
     registerChannel(channel);
     xqc_conn_ssl_config_t ssl{};
     ssl.cert_verify_flag = 0;
+    xqc_conn_settings_t connSettings{};
     const xqc_cid_t *cid = xqc_connect(
         ctx->engine,
-        nullptr,
+        &connSettings,
         nullptr,
         0,
         hostText.c_str(),
