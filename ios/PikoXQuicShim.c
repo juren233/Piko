@@ -1,3 +1,4 @@
+#include "transport/xqc_conn.h"
 #include "transport/xqc_stream.h"
 
 void *piko_xqc_stream_proto_data(xqc_stream_t *stream) {

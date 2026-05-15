@@ -164,6 +164,7 @@ class IosAndroidUiParityTest {
         val xquicJni = File(rootDir, "android/src/main/cpp/piko_xquic_jni.cpp").readText()
         val iosXquicHeader = File(rootDir, "ios/PikoXQuicBridge.h").readText()
         val iosXquicBridge = File(rootDir, "ios/PikoXQuicBridge.cpp").readText()
+        val iosXquicShim = File(rootDir, "ios/PikoXQuicShim.c").readText()
         val iosXquicCmake = File(rootDir, "ios/xquic/CMakeLists.txt").readText()
         val iosBuildScript = File(rootDir, "scripts/ios/build-packages.sh").readText()
         assertTrue(androidSignaling.contains("/v1/signaling/ws?device_id="))
@@ -551,6 +552,13 @@ class IosAndroidUiParityTest {
             "channelFromUserData",
         ).forEach { marker ->
             assertTrue(marker in iosXquicBridge, "iOS XQUIC bridge must use real XQUIC API marker $marker")
+        }
+        listOf(
+            "transport/xqc_conn.h",
+            "transport/xqc_stream.h",
+            "stream->stream_conn->proto_data",
+        ).forEach { marker ->
+            assertTrue(marker in iosXquicShim, "iOS XQUIC shim must expose complete XQUIC connection internals marker $marker")
         }
         listOf(
             "https://github.com/alibaba/xquic.git",
