@@ -90,6 +90,7 @@ struct NativeContext {
     std::condition_variable cv;
     std::thread worker;
     std::atomic<bool> closed{false};
+    std::atomic<bool> cleaned{false};
     xqc_usec_t wakeAfter = 10000;
     std::vector<std::shared_ptr<NativeChannel>> channels;
 };
@@ -99,6 +100,7 @@ std::unordered_map<jlong, std::shared_ptr<NativeContext>> gContexts;
 std::unordered_map<jlong, std::shared_ptr<NativeChannel>> gChannels;
 
 NativeContext *contextFromUserData(void *userData);
+void cleanupContext(const std::shared_ptr<NativeContext> &ctx);
 
 xqc_usec_t nowMicros() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
@@ -499,6 +501,33 @@ void loopContext(std::shared_ptr<NativeContext> ctx) {
         for (const auto &channel : channels) drainChannelSends(channel);
         xqc_engine_main_logic(ctx->engine);
     }
+    ctx->closed.store(true);
+    cleanupContext(ctx);
+}
+
+void cleanupContext(const std::shared_ptr<NativeContext> &ctx) {
+    if (!ctx || ctx->cleaned.exchange(true)) return;
+    if (ctx->engine != nullptr) {
+        xqc_engine_destroy(ctx->engine);
+        ctx->engine = nullptr;
+    }
+    JNIEnv *env = nullptr;
+    bool attached = false;
+    if (gVm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
+        if (gVm->AttachCurrentThread(&env, nullptr) == JNI_OK) attached = true;
+    }
+    if (env != nullptr) {
+        if (ctx->receiver != nullptr) env->DeleteGlobalRef(ctx->receiver);
+        ctx->receiver = nullptr;
+        for (auto &channel : ctx->channels) {
+            if (channel->receiver != nullptr) env->DeleteGlobalRef(channel->receiver);
+            channel->receiver = nullptr;
+        }
+    }
+    if (attached) gVm->DetachCurrentThread();
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    gContexts.erase(reinterpret_cast<jlong>(ctx.get()));
+    for (auto &channel : ctx->channels) gChannels.erase(reinterpret_cast<jlong>(channel.get()));
 }
 
 void closeContext(const std::shared_ptr<NativeContext> &ctx) {
@@ -512,24 +541,12 @@ void closeContext(const std::shared_ptr<NativeContext> &ctx) {
     if (ctx->worker.joinable()) {
         if (ctx->worker.get_id() == std::this_thread::get_id()) {
             ctx->worker.detach();
+            return;
         } else {
             ctx->worker.join();
         }
     }
-    if (ctx->engine != nullptr) {
-        xqc_engine_destroy(ctx->engine);
-        ctx->engine = nullptr;
-    }
-    JNIEnv *env = nullptr;
-    if (gVm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK) {
-        if (ctx->receiver != nullptr) env->DeleteGlobalRef(ctx->receiver);
-        for (auto &channel : ctx->channels) {
-            if (channel->receiver != nullptr) env->DeleteGlobalRef(channel->receiver);
-        }
-    }
-    std::lock_guard<std::mutex> lock(gRegistryMutex);
-    gContexts.erase(reinterpret_cast<jlong>(ctx.get()));
-    for (auto &channel : ctx->channels) gChannels.erase(reinterpret_cast<jlong>(channel.get()));
+    cleanupContext(ctx);
 }
 
 jlong nativeOpenServer(JNIEnv *env, jclass, jstring bindHost, jstring alpn, jstring certificateDirectory, jobject receiver) {

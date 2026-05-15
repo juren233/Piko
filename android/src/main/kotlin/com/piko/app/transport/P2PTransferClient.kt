@@ -761,11 +761,20 @@ class P2PTransferClient(
                 }
             }
             "bye" -> {
-                pendingSignalsBySessionId.remove(sessionId)
-                directServersBySessionId.remove(sessionId)?.close()
-                peers.remove(sessionId)?.close()
+                closeReceiveSession(sessionId)
             }
         }
+    }
+
+    private fun closeReceiveSession(sessionId: String, transferId: String? = null) {
+        if (transferId != null) {
+            receiversByTransferId.remove(transferId)
+        } else {
+            receiversByTransferId.entries.removeIf { it.value.sessionId == sessionId }
+        }
+        pendingSignalsBySessionId.remove(sessionId)
+        directServersBySessionId.remove(sessionId)?.close()
+        peers.remove(sessionId)?.close()
     }
 
     private fun bufferSignal(sessionId: String, message: JSONObject) {
@@ -842,6 +851,9 @@ class P2PTransferClient(
             sessionKey = sessionKey,
             autoAccept = autoAccept,
             onReceiveTransferEvent = onReceiveTransferEvent,
+            onTerminal = { terminalSessionId, terminalTransferId ->
+                signalExecutor.execute { closeReceiveSession(terminalSessionId, terminalTransferId) }
+            },
         ).also { receiver ->
             receiversByTransferId[transferId] = receiver
         }.let { receiver ->
@@ -876,9 +888,7 @@ class P2PTransferClient(
         val receiver = receiversByTransferId.remove(transferId) ?: return
         val sessionId = receiver.sessionId
         receiver.cancel()
-        pendingSignalsBySessionId.remove(sessionId)
-        directServersBySessionId.remove(sessionId)?.close()
-        peers.remove(sessionId)?.close()
+        closeReceiveSession(sessionId, transferId)
         signalingClient.send(
             JSONObject()
                 .put("type", "bye")
@@ -1323,6 +1333,7 @@ private class P2PReceiver(
     private val sessionKey: ByteArray,
     private val autoAccept: Boolean,
     private val onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
+    private val onTerminal: (String, String) -> Unit,
 ) {
     private var senderName = "跨网设备"
     private var manifest: List<TransferV3File> = emptyList()
@@ -1340,6 +1351,7 @@ private class P2PReceiver(
     private var activeChannel: P2PBinaryChannel? = null
     private var readySent = false
     private var didComplete = false
+    private var didTerminalCleanup = false
 
     fun attach(sessionId: String, channel: P2PBinaryChannel) {
         activeChannel = channel
@@ -1447,6 +1459,8 @@ private class P2PReceiver(
         canceled = true
         outputs.values.forEach { runCatching { it.close() } }
         outputs.clear()
+        runCatching { activeChannel?.close() }
+        activeChannel = null
         progressStore.clear(transferId)
         pendingChunkFrames.clear()
         onReceiveTransferEvent(ReceiveTransferEvent.Canceled(transferId))
@@ -1487,13 +1501,19 @@ private class P2PReceiver(
                 receivedAtLabel = "刚刚",
             ),
         )
+        cleanupTerminalSession()
     }
 
     private fun resetFileForRetry(file: TransferV3File, channel: P2PBinaryChannel) {
         val attempts = (hashRetryCount[file.index] ?: 0) + 1
         hashRetryCount[file.index] = attempts
         if (attempts > 3) {
+            outputs.values.forEach { runCatching { it.close() } }
+            outputs.clear()
+            pendingChunkFrames.clear()
+            progressStore.clear(transferId)
             onReceiveTransferEvent(ReceiveTransferEvent.Failed(transferId, "文件校验失败"))
+            cleanupTerminalSession()
             return
         }
         val bitmap = completedChunks[file.index] ?: return
@@ -1506,6 +1526,14 @@ private class P2PReceiver(
         repeat(file.chunkCount) { chunkIndex ->
             sendRetry(channel, file.index, chunkIndex)
         }
+    }
+
+    private fun cleanupTerminalSession() {
+        if (didTerminalCleanup) return
+        didTerminalCleanup = true
+        runCatching { activeChannel?.close() }
+        activeChannel = null
+        onTerminal(sessionId, transferId)
     }
 
     private fun expectedChunkLength(file: TransferV3File, chunkIndex: Int): Int {

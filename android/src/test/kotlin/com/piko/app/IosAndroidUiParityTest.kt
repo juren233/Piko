@@ -555,6 +555,21 @@ class IosAndroidUiParityTest {
         ).forEach { marker ->
             assertTrue(marker in xquicJni, "JNI bridge must use real XQUIC API marker $marker")
         }
+        assertTrue("std::atomic<bool> cleaned{false}" in xquicJni)
+        assertInOrder(
+            xquicJni,
+            "void loopContext(std::shared_ptr<NativeContext> ctx)",
+            "ctx->closed.store(true);",
+            "cleanupContext(ctx);",
+        )
+        assertInOrder(
+            xquicJni,
+            "void closeContext(const std::shared_ptr<NativeContext> &ctx)",
+            "if (ctx->worker.get_id() == std::this_thread::get_id())",
+            "ctx->worker.detach();",
+            "return;",
+            "cleanupContext(ctx);",
+        )
         listOf(
             "int32_t piko_xquic_is_linked",
             "piko_xquic_open_server",
@@ -679,6 +694,49 @@ class IosAndroidUiParityTest {
             assertTrue(field in androidP2P, "Android P2PTransferDiagnostic must declare $field")
             assertTrue(field in iosWebRTC, "iOS NativeWebRTCDiagnostic must declare $field")
         }
+    }
+
+    @Test
+    fun androidP2PReceiverCleansReceiveSessionAfterTerminalEvents() {
+        val androidP2P = readAndroid("transport/P2PTransferClient.kt")
+        val iosP2P = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("private fun closeReceiveSession(sessionId: String, transferId: String? = null)" in androidP2P)
+        assertInOrder(
+            androidP2P,
+            "private fun closeReceiveSession(sessionId: String, transferId: String? = null)",
+            "receiversByTransferId.remove(transferId)",
+            "receiversByTransferId.entries.removeIf { it.value.sessionId == sessionId }",
+            "pendingSignalsBySessionId.remove(sessionId)",
+            "directServersBySessionId.remove(sessionId)?.close()",
+            "peers.remove(sessionId)?.close()",
+        )
+        assertTrue("onTerminal = { terminalSessionId, terminalTransferId ->" in androidP2P)
+        assertTrue("signalExecutor.execute { closeReceiveSession(terminalSessionId, terminalTransferId) }" in androidP2P)
+        assertInOrder(
+            androidP2P,
+            "ReceiveTransferEvent.Completed(",
+            "cleanupTerminalSession()",
+        )
+        assertInOrder(
+            androidP2P,
+            "ReceiveTransferEvent.Failed(transferId, \"文件校验失败\")",
+            "cleanupTerminalSession()",
+        )
+        assertInOrder(
+            androidP2P,
+            "fun cancelReceiveTransfer(transferId: String)",
+            "receiver.cancel()",
+            "closeReceiveSession(sessionId, transferId)",
+        )
+        assertInOrder(
+            iosP2P,
+            "onReceiveCompleted: { [weak self] item in",
+            "self?.receivers.removeValue(forKey: sessionId)",
+            "self?.sessions.removeValue(forKey: sessionId)",
+            "self?.directServers.removeValue(forKey: sessionId)?.close()",
+            "self?.directEndpointTrackers.removeValue(forKey: sessionId)",
+        )
     }
 
     @Test
