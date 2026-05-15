@@ -556,6 +556,7 @@ class IosAndroidUiParityTest {
             "https://github.com/alibaba/xquic.git",
             "PIKO_XQUIC_GIT_TAG \"v1.9.2\"",
             "https://github.com/google/boringssl.git",
+            "CMAKE_SKIP_INSTALL_RULES TRUE",
             "add_library(piko_xquic_ios STATIC",
             "PikoXQuicBridge.cpp",
             "PikoXQuicShim.c",
