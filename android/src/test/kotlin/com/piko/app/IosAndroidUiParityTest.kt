@@ -536,6 +536,26 @@ class IosAndroidUiParityTest {
             assertTrue(marker in xquicCmake, "CMake must build real XQUIC native transport marker $marker")
         }
         listOf(
+            "-Wno-unused-value",
+            "-Wno-pointer-sign",
+        ).forEach { marker ->
+            assertTrue(marker in xquicCmake, "CMake must scope third-party XQUIC warning option $marker")
+        }
+        assertInOrder(
+            xquicCmake,
+            "target_compile_options(xquic_core PRIVATE",
+            "-Wno-unused-value",
+            "-Wno-pointer-sign",
+        )
+        assertInOrder(
+            xquicCmake,
+            "set_source_files_properties(",
+            "piko_xquic_shim.c",
+            "COMPILE_OPTIONS \"-Wno-unused-value\"",
+        )
+        assertFalse("add_compile_options(-Wno-unused-value" in xquicCmake)
+        assertFalse("add_compile_options(-Wno-pointer-sign" in xquicCmake)
+        listOf(
             "JNI_OnLoad",
             "RegisterNatives",
             "xqc_engine_create",
@@ -740,6 +760,28 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun androidSendTransferEventsAreDispatchedOnMainThread() {
+        val androidSendActions = readAndroid("platform/AndroidSendPlatformActions.kt")
+
+        assertInOrder(
+            androidSendActions,
+            "fun startTransfer(",
+            "val emit: (SendTransferEvent) -> Unit = { event ->",
+            "mainHandler.post { callback(event) }",
+            "emit(SendTransferEvent.Started(transferId, request, request.totalBytes))",
+        )
+        assertTrue("callback = emit" in androidSendActions)
+        listOf(
+            "emit(SendTransferEvent.Completed(transferId))",
+            "emit(SendTransferEvent.Paused(transferId))",
+            "emit(SendTransferEvent.Canceled(transferId))",
+            "emit(SendTransferEvent.Failed(transferId, message))",
+        ).forEach { marker ->
+            assertTrue(marker in androidSendActions, "Android send transfer event must be posted through main-thread emitter $marker")
+        }
+    }
+
+    @Test
     fun presenceRefreshIsEventDrivenWithoutPeriodicTickers() {
         val androidApp = readAndroid("platform/AndroidPikoApp.kt")
         val androidScheduler = readAndroid("platform/PresenceHeartbeatScheduler.kt")
@@ -934,6 +976,10 @@ class IosAndroidUiParityTest {
         assertTrue("换个昵称" in iosReceive)
         assertTrue("subtitle = nickname.code" in androidDiscovery)
         assertFalse("subtitle = resolvedService.host?.hostAddress" in androidDiscovery)
+        assertTrue("registerServiceInfoCallback" in androidDiscovery)
+        assertTrue("resolveRemoteServiceLegacy" in androidDiscovery)
+        assertTrue("hostAddresses.firstOrNull()?.hostAddress" in androidDiscovery)
+        assertFalse("resolvedService.host?.hostAddress" in androidDiscovery)
     }
 
     @Test

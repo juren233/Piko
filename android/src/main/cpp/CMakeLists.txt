@@ -78,6 +78,13 @@ target_compile_options(xquic_core PRIVATE
     -Wno-unused-parameter
     -Wno-unused-function
     -Wno-missing-field-initializers
+    -Wno-unused-value
+    -Wno-pointer-sign
+)
+
+set_source_files_properties(
+    piko_xquic_shim.c
+    PROPERTIES COMPILE_OPTIONS "-Wno-unused-value"
 )
 
 add_library(piko_xquic SHARED

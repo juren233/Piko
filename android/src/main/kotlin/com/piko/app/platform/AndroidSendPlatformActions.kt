@@ -322,6 +322,7 @@ private class AndroidLanDiscovery(
     private val devices = linkedMapOf<String, SendDevice>()
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
+    private val serviceInfoCallbacks = mutableSetOf<Any>()
     private var multicastLock: WifiManager.MulticastLock? = null
     private var localSendServer: LocalSendHttpServer? = null
     private var localSendMulticast: AndroidLocalSendMulticast? = null
@@ -358,32 +359,9 @@ private class AndroidLanDiscovery(
                 ) {
                     return
                 }
-                nsdManager.resolveService(
-                    serviceInfo,
-                    object : NsdManager.ResolveListener {
-                        override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
-
-                        override fun onServiceResolved(resolvedService: NsdServiceInfo) {
-                            val nickname = resolvedService.deviceNickname()
-                            if (isRegisteredLocalService(resolvedService.serviceName) ||
-                                nickname.fingerprint == currentNickname.fingerprint
-                            ) {
-                                return
-                            }
-                            val id = "${resolvedService.serviceName}-${resolvedService.host?.hostAddress}-${resolvedService.port}"
-                            devices[id] = SendDevice(
-                                id = id,
-                                name = nickname.title,
-                                group = SendDeviceGroup.Lan,
-                                subtitle = nickname.code,
-                                host = resolvedService.host?.hostAddress,
-                                port = resolvedService.port,
-                                platformHint = "android",
-                            )
-                            post(callback, SendLanDiscoveryState.Found)
-                        }
-                    },
-                )
+                resolveRemoteService(serviceInfo) { resolvedService ->
+                    onRemoteServiceResolved(resolvedService, callback)
+                }
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
@@ -420,6 +398,7 @@ private class AndroidLanDiscovery(
         }
         discoveryListener = null
         discoveryCallback = null
+        unregisterServiceInfoCallbacks()
         devices.clear()
     }
 
@@ -547,6 +526,115 @@ private class AndroidLanDiscovery(
     private fun isRegisteredLocalService(serviceName: String): Boolean {
         return serviceName == registeredServiceName
     }
+
+    private fun resolveRemoteService(
+        serviceInfo: NsdServiceInfo,
+        onResolved: (NsdServiceInfo) -> Unit,
+    ) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            resolveRemoteServiceWithCallback(serviceInfo, onResolved)
+        } else {
+            resolveRemoteServiceLegacy(serviceInfo, onResolved)
+        }
+    }
+
+    private fun resolveRemoteServiceWithCallback(
+        serviceInfo: NsdServiceInfo,
+        onResolved: (NsdServiceInfo) -> Unit,
+    ) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            return
+        }
+        var callback: NsdManager.ServiceInfoCallback? = null
+        fun unregisterCallback() {
+            val activeCallback = callback ?: return
+            callback = null
+            serviceInfoCallbacks.remove(activeCallback)
+            runCatching { nsdManager.unregisterServiceInfoCallback(activeCallback) }
+        }
+        val createdCallback = object : NsdManager.ServiceInfoCallback {
+            override fun onServiceInfoCallbackRegistrationFailed(errorCode: Int) {
+                unregisterCallback()
+            }
+
+            override fun onServiceInfoCallbackUnregistered() {
+                serviceInfoCallbacks.remove(this)
+                callback = null
+            }
+
+            override fun onServiceLost() {
+                unregisterCallback()
+            }
+
+            override fun onServiceUpdated(serviceInfo: NsdServiceInfo) {
+                unregisterCallback()
+                onResolved(serviceInfo)
+            }
+        }
+        callback = createdCallback
+        serviceInfoCallbacks += createdCallback
+        runCatching {
+            nsdManager.registerServiceInfoCallback(serviceInfo, context.mainExecutor, createdCallback)
+        }.onFailure {
+            unregisterCallback()
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun resolveRemoteServiceLegacy(
+        serviceInfo: NsdServiceInfo,
+        onResolved: (NsdServiceInfo) -> Unit,
+    ) {
+        nsdManager.resolveService(
+            serviceInfo,
+            object : NsdManager.ResolveListener {
+                override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) = Unit
+
+                override fun onServiceResolved(resolvedService: NsdServiceInfo) {
+                    onResolved(resolvedService)
+                }
+            },
+        )
+    }
+
+    private fun onRemoteServiceResolved(
+        resolvedService: NsdServiceInfo,
+        callback: (SendLanDiscoveryState, List<SendDevice>) -> Unit,
+    ) {
+        if (!discoveryActive) {
+            return
+        }
+        val nickname = resolvedService.deviceNickname()
+        if (isRegisteredLocalService(resolvedService.serviceName) ||
+            nickname.fingerprint == currentNickname.fingerprint
+        ) {
+            return
+        }
+        val hostAddress = resolvedService.primaryHostAddress()
+        val id = "${resolvedService.serviceName}-$hostAddress-${resolvedService.port}"
+        devices[id] = SendDevice(
+            id = id,
+            name = nickname.title,
+            group = SendDeviceGroup.Lan,
+            subtitle = nickname.code,
+            host = hostAddress,
+            port = resolvedService.port,
+            platformHint = "android",
+        )
+        post(callback, SendLanDiscoveryState.Found)
+    }
+
+    private fun unregisterServiceInfoCallbacks() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            serviceInfoCallbacks.clear()
+            return
+        }
+        val activeCallbacks = serviceInfoCallbacks.toList()
+        serviceInfoCallbacks.clear()
+        activeCallbacks.forEach { callback ->
+            runCatching { nsdManager.unregisterServiceInfoCallback(callback as NsdManager.ServiceInfoCallback) }
+        }
+    }
 }
 
 private fun String.normalizedServiceType(): String {
@@ -565,6 +653,15 @@ private fun NsdServiceInfo.deviceNickname(): DeviceNickname {
             ?: "0000",
         fingerprint = txtAttributes[PIKO_ATTR_FINGERPRINT]?.toString(Charsets.UTF_8).orEmpty(),
     )
+}
+
+private fun NsdServiceInfo.primaryHostAddress(): String? {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        hostAddresses.firstOrNull()?.hostAddress
+    } else {
+        @Suppress("DEPRECATION")
+        host?.hostAddress
+    }
 }
 
 private fun localSendDeviceInfo(
@@ -620,9 +717,12 @@ private class AndroidTransferClient(
         callback: (SendTransferEvent) -> Unit,
     ) {
         val transferId = newTransferId()
+        val emit: (SendTransferEvent) -> Unit = { event ->
+            mainHandler.post { callback(event) }
+        }
         activeTransferId = transferId
         requestedStop = null
-        callback(SendTransferEvent.Started(transferId, request, request.totalBytes))
+        emit(SendTransferEvent.Started(transferId, request, request.totalBytes))
         thread(
             name = "PikoAndroidSendTransfer",
             isDaemon = true,
@@ -654,7 +754,7 @@ private class AndroidTransferClient(
                                 totalCompletedBeforeTarget = completedBytes,
                                 totalBytes = request.totalBytes,
                                 transferId = transferId,
-                                callback = callback,
+                                callback = emit,
                             )
                         }
                         SendTransportPath.P2P -> {
@@ -664,17 +764,17 @@ private class AndroidTransferClient(
                                 items = request.items,
                                 totalCompletedBeforeTarget = completedBytes,
                                 totalBytes = request.totalBytes,
-                                callback = callback,
+                                callback = emit,
                                 ensureActive = ::ensureNotStopped,
                             )
                         }
                     }
                 }
-                callback(SendTransferEvent.Completed(transferId))
+                emit(SendTransferEvent.Completed(transferId))
             } catch (_: TransferPausedException) {
-                callback(SendTransferEvent.Paused(transferId))
+                emit(SendTransferEvent.Paused(transferId))
             } catch (_: TransferCanceledException) {
-                callback(SendTransferEvent.Canceled(transferId))
+                emit(SendTransferEvent.Canceled(transferId))
             } catch (error: Throwable) {
                 val target = activeTarget
                 val message = if (target?.transportPath == SendTransportPath.P2P) {
@@ -682,7 +782,7 @@ private class AndroidTransferClient(
                 } else {
                     error.message ?: "发送失败"
                 }
-                callback(SendTransferEvent.Failed(transferId, message))
+                emit(SendTransferEvent.Failed(transferId, message))
             } finally {
                 activeSocket = null
                 activeTransferId = null

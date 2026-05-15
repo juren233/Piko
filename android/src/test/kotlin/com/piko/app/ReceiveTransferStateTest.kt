@@ -42,6 +42,40 @@ class ReceiveTransferStateTest {
     }
 
     @Test
+    fun placeholderStartedDoesNotOverwriteReceivedManifestOrProgress() {
+        val file = ReceiveHistoryFile(
+            displayName = "照片.jpg",
+            fileType = ReceiveFileType.Image,
+            sizeBytes = 2048,
+            thumbnailBytes = null,
+        )
+        val state = PikoHomeState.initial(currentDeviceName = "Pixel")
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = "receive-1",
+                    senderName = "MacBook Pro",
+                    files = listOf(file),
+                    totalBytes = 2048,
+                ),
+            )
+            .applyReceiveTransferEvent(ReceiveTransferEvent.Progress("receive-1", completedBytes = 1024, totalBytes = 2048))
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = "receive-1",
+                    senderName = "",
+                    files = emptyList(),
+                    totalBytes = 0,
+                    requiresConfirmation = false,
+                ),
+            )
+
+        assertEquals(listOf(file), state.activeReceive.files)
+        assertEquals(2048, state.activeReceive.totalBytes)
+        assertEquals(1024, state.activeReceive.completedBytes)
+        assertEquals("1.0 KB/2.0 KB", state.activeReceive.subtitle)
+    }
+
+    @Test
     fun completedReceivePrependsHistoryAndClearsActiveTransfer() {
         val file = ReceiveHistoryFile(
             displayName = "照片.jpg",

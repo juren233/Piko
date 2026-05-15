@@ -18,16 +18,29 @@ data class PikoHomeState(
             return this
         }
         return when (event) {
-            is ReceiveTransferEvent.Started -> copy(
-                activeReceive = ReceiveTransferState(
-                    transferId = event.transferId,
-                    senderName = event.senderName,
-                    files = event.files,
-                    totalBytes = event.totalBytes,
-                    completedBytes = 0L,
-                    requiresConfirmation = event.requiresConfirmation,
-                ),
-            )
+            is ReceiveTransferEvent.Started -> {
+                val sameTransfer = current.transferId == event.transferId
+                val hasCurrentDetails = sameTransfer &&
+                    (current.files.isNotEmpty() || current.totalBytes > 0L || current.completedBytes > 0L)
+                if (event.files.isEmpty() && hasCurrentDetails) {
+                    copy(
+                        activeReceive = current.copy(
+                            senderName = event.senderName.ifBlank { current.senderName },
+                        ),
+                    )
+                } else {
+                    copy(
+                        activeReceive = ReceiveTransferState(
+                            transferId = event.transferId,
+                            senderName = event.senderName,
+                            files = event.files,
+                            totalBytes = event.totalBytes,
+                            completedBytes = if (sameTransfer) current.completedBytes.coerceAtMost(event.totalBytes) else 0L,
+                            requiresConfirmation = event.requiresConfirmation,
+                        ),
+                    )
+                }
+            }
 
             is ReceiveTransferEvent.Progress -> copy(
                 activeReceive = current.copy(
