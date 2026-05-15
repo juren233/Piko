@@ -630,6 +630,7 @@ class IosAndroidUiParityTest {
         assertTrue("IPV6_DIRECT_CANDIDATE_PRIORITY = 2130706431" in iosWebRTC)
         assertTrue("prioritizeP2PIceCandidateForSignaling(candidate.sdp)" in androidP2P)
         assertTrue("prioritizeCandidateForSignaling(event.candidate.candidate)" in iosWebRTC)
+        assertTrue("split(/\\\\s+/)" in iosWebRTC, "iOS WebRTC embedded JavaScript whitespace regex must be escaped for Swift")
 
         // New diagnostic fields must be present in both diagnostic types.
         listOf("stunErrorRate", "gatheringIncomplete", "symmetricNatSuspect", "remoteOnlyMdns", "failureReason").forEach { field ->

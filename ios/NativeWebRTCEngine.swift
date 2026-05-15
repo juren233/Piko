@@ -535,7 +535,7 @@ final class NativeWebRTCSession: NSObject {
       return "public-ipv4";
     }
     function prioritizeCandidateForSignaling(candidate) {
-      const parts = String(candidate || "").trim().split(/\s+/);
+      const parts = String(candidate || "").trim().split(/\\s+/);
       if (parts.length < 8) { return candidate; }
       if (parts[2].toLowerCase() !== "udp") { return candidate; }
       if (parts[6].toLowerCase() !== "typ") { return candidate; }
