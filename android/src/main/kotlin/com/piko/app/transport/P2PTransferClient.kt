@@ -31,8 +31,6 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
-import org.webrtc.RTCStats
-import org.webrtc.RTCStatsReport
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
@@ -59,7 +57,6 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
 private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
@@ -1036,6 +1033,7 @@ class P2PTransferClient(
                             "remote_detail=${event.remote.sdp.iceCandidateSummary()}",
                             "reason=${event.reason}",
                         ).joinToString("|")
+                        iceCandidatePairStats = selectedCandidatePair
                     }
 
                     override fun onDataChannel(channel: DataChannel) {
@@ -1227,7 +1225,7 @@ class P2PTransferClient(
             dataChannelState = dataChannelState,
             iceCandidateErrors = iceCandidateErrors.joinToString(";").ifBlank { "none" },
             selectedCandidatePair = selectedCandidatePair,
-            iceCandidatePairStats = refreshIceCandidatePairStats(),
+            iceCandidatePairStats = iceCandidatePairStats,
             stunErrorRate = computeStunErrorRate(iceServerUrls, iceCandidateErrors.joinToString(";").ifBlank { "none" }),
             gatheringIncomplete = isGatheringIncomplete(iceGatheringState),
             symmetricNatSuspect =
@@ -1238,24 +1236,6 @@ class P2PTransferClient(
                 remoteCandidateDetails.candidateDetailsDescription(),
             ),
         )
-
-        private fun refreshIceCandidatePairStats(): String {
-            val latch = CountDownLatch(1)
-            val result = AtomicReference("stats_timeout")
-            runCatching {
-                peerConnection.getStats { report ->
-                    result.set(report.iceCandidatePairStatsDescription())
-                    latch.countDown()
-                }
-                if (!latch.await(700, TimeUnit.MILLISECONDS)) {
-                    result.set("stats_timeout")
-                }
-            }.getOrElse { error ->
-                result.set("stats_error=${error::class.java.simpleName}")
-            }
-            iceCandidatePairStats = result.get()
-            return iceCandidatePairStats
-        }
 
         fun close() {
             aborted = true
@@ -2187,55 +2167,6 @@ private fun Set<String>.candidateTypesDescription(): String =
 
 private fun Set<String>.candidateDetailsDescription(): String =
     filter { it.isNotBlank() }.sorted().take(12).joinToString(";").ifBlank { "none" }
-
-private fun RTCStatsReport.iceCandidatePairStatsDescription(): String {
-    val stats = statsMap
-    val candidateStats = stats.values
-        .filter { it.type == "local-candidate" || it.type == "remote-candidate" }
-        .associateBy { it.id }
-    return stats.values
-        .filter { it.type == "candidate-pair" }
-        .sortedWith(
-            compareByDescending<RTCStats> { it.members["selected"] == true }
-                .thenByDescending { it.members["nominated"] == true }
-                .thenBy { it.members["state"]?.toString().orEmpty() },
-        )
-        .take(12)
-        .map { pair ->
-            val members = pair.members
-            val local = members["localCandidateId"]?.toString()?.let { candidateStats[it]?.candidateStatsSummary() } ?: "unknown"
-            val remote = members["remoteCandidateId"]?.toString()?.let { candidateStats[it]?.candidateStatsSummary() } ?: "unknown"
-            listOf(
-                "id=${pair.id}",
-                "state=${members["state"] ?: "unknown"}",
-                "nominated=${members["nominated"] ?: "unknown"}",
-                "selected=${members["selected"] ?: "unknown"}",
-                "writable=${members["writable"] ?: "unknown"}",
-                "rtt=${members["currentRoundTripTime"] ?: "unknown"}",
-                "sent=${members["bytesSent"] ?: "unknown"}",
-                "recv=${members["bytesReceived"] ?: "unknown"}",
-                "local=$local",
-                "remote=$remote",
-            ).joinToString("|")
-        }
-        .joinToString(";")
-        .ifBlank { "none" }
-}
-
-private fun RTCStats.candidateStatsSummary(): String {
-    val members = members
-    val address = members["address"]?.toString()
-        ?: members["ip"]?.toString()
-        ?: members["relatedAddress"]?.toString()
-        ?: "unknown"
-    return listOf(
-        "type=${members["candidateType"] ?: "unknown"}",
-        "proto=${members["protocol"] ?: "unknown"}",
-        "addr=${address.iceAddressKind()}",
-        "port=${members["port"] ?: "unknown"}",
-        "network=${members["networkType"] ?: "unknown"}",
-    ).joinToString("/")
-}
 
 private fun List<TransferV3ManifestInput>.manifestHashB64(): String {
     val digest = MessageDigest.getInstance("SHA-256")

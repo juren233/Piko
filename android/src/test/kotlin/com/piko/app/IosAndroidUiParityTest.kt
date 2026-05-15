@@ -448,12 +448,15 @@ class IosAndroidUiParityTest {
             "onSelectedCandidatePairChanged(event: CandidatePairChangeEvent)",
             "iceCandidateErrors = iceCandidateErrors.joinToString",
             "selectedCandidatePair = selectedCandidatePair",
-            "iceCandidatePairStats = refreshIceCandidatePairStats()",
-            "peerConnection.getStats",
-            "iceCandidatePairStatsDescription()",
+            "iceCandidatePairStats = selectedCandidatePair",
+            "iceCandidatePairStats = iceCandidatePairStats",
         ).forEach { marker ->
             assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
         }
+        assertFalse(
+            "peerConnection.getStats" in androidP2P,
+            "Android P2P 失败诊断不得直接调用 WebRTC getStats，native 崩溃无法被 Kotlin 保护",
+        )
         listOf(
             "struct NativeWebRTCDiagnostic",
             "NativeWebRTCTiming.sendOpenWaitSeconds",
