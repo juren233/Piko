@@ -2,15 +2,17 @@ import CryptoKit
 import Darwin
 import Foundation
 import Network
+import OSLog
 
 private enum NativeP2PTiming {
     static let directEndpointWaitSeconds: TimeInterval = 5
     static let directTransportWaitSeconds: TimeInterval = 5
-    static let initialOpenWaitSeconds: TimeInterval = 30
+    static let initialOpenWaitSeconds: TimeInterval = 12
     static let restartOpenWaitSeconds: TimeInterval = 45
 }
 
 private let nativeP2PMaxDirectFrameBytes = 8 * 1024 * 1024
+private let nativeP2PLogger = Logger(subsystem: "com.juren233.piko", category: "p2p")
 
 private struct NativeP2PTransportAttempt {
     let name: String
@@ -27,6 +29,15 @@ private func directTransportAttemptPlan() -> [NativeP2PTransportAttempt] {
     attempts.append(NativeP2PTransportAttempt(name: "webrtc_ipv6_host", timeoutSeconds: NativeP2PTiming.initialOpenWaitSeconds))
     attempts.append(NativeP2PTransportAttempt(name: "webrtc_stun", timeoutSeconds: NativeP2PTiming.restartOpenWaitSeconds))
     return attempts
+}
+
+private func nativeP2PTimingLog(stage: String, sessionId: String, transferId: String, startedAt: Date, detail: String = "") {
+    let elapsedMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+    if detail.isEmpty {
+        nativeP2PLogger.debug("timing session=\(sessionId, privacy: .public) transfer=\(transferId, privacy: .public) stage=\(stage, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public)")
+    } else {
+        nativeP2PLogger.debug("timing session=\(sessionId, privacy: .public) transfer=\(transferId, privacy: .public) stage=\(stage, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public) \(detail, privacy: .public)")
+    }
 }
 
 @MainActor
@@ -190,6 +201,8 @@ final class NativeP2PTransferClient {
             return .failure(error)
         case .success(let sessionContext):
             let config = sessionContext.config
+            let timingStartedAt = Date()
+            nativeP2PTimingLog(stage: "create_session_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
             let receiverReadyTracker = NativeReceiverReadyTracker()
             let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
             var sentFrames: [String: Data] = [:]
@@ -275,6 +288,7 @@ final class NativeP2PTransferClient {
             }
             func openDirectRaceChannel() async -> NativePreparedP2PChannel? {
                 let directEndpoints = await directTracker.waitForEndpoints(seconds: NativeP2PTiming.directEndpointWaitSeconds)
+                nativeP2PTimingLog(stage: "direct_endpoint_wait_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "count=\(directEndpoints.count)")
                 guard !directEndpoints.isEmpty else {
                     return nil
                 }
@@ -295,46 +309,55 @@ final class NativeP2PTransferClient {
                 }
                 do {
                     let sessionKey = try deriveSessionKey(peerEphemeralPublicB64: directHandshake.peerEphemeralPublicB64)
-                    let quicEndpoint = directEndpoints.first { $0.name == "quic_ipv6_direct" }
-                    let tcpEndpoint = directEndpoints.first { $0.name == "tcp_ipv6_direct" }
-                    if let endpoint = quicEndpoint {
-                        directTracker.recordAttempt(endpoint: endpoint, result: "attempting")
-                        if let channel = await NativeXQuicDirectTransport.openClient(
-                            endpoint: endpoint,
-                            timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds,
-                            onFrame: onBinary
-                        ) {
+                    let endpoints = [
+                        directEndpoints.first { $0.name == "quic_ipv6_direct" },
+                        directEndpoints.first { $0.name == "tcp_ipv6_direct" },
+                    ].compactMap { $0 }
+                    guard !endpoints.isEmpty else {
+                        return nil
+                    }
+                    let directRace = NativeP2PConnectionRace(expectedCount: endpoints.count)
+                    for endpoint in endpoints {
+                        Task { @MainActor in
+                            let endpointStartedAt = Date()
+                            nativeP2PTimingLog(stage: "direct_open_start", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "endpoint=\(endpoint.name)")
+                            directTracker.recordAttempt(endpoint: endpoint, result: "attempting")
+                            let channel: NativeP2PDirectChannel?
+                            if endpoint.name == "quic_ipv6_direct" {
+                                channel = await NativeXQuicDirectTransport.openClient(
+                                    endpoint: endpoint,
+                                    timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds,
+                                    onFrame: onBinary
+                                )
+                            } else {
+                                channel = await NativeP2PFramedConnection.connect(
+                                    to: endpoint,
+                                    timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds,
+                                    onFrame: onBinary
+                                )
+                            }
+                            let durationMs = Int(Date().timeIntervalSince(endpointStartedAt) * 1000)
+                            guard let channel else {
+                                nativeP2PTimingLog(stage: "direct_open_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "endpoint=\(endpoint.name) result=failed duration_ms=\(durationMs)")
+                                directTracker.recordAttempt(endpoint: endpoint, result: "failed", error: "直连打开返回空通道")
+                                directRace.submit(nil)
+                                return
+                            }
+                            nativeP2PTimingLog(stage: "direct_open_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "endpoint=\(endpoint.name) result=connected duration_ms=\(durationMs)")
                             directTracker.recordAttempt(endpoint: endpoint, result: "connected")
-                            return NativePreparedP2PChannel(
-                                sessionKey: sessionKey,
-                                transportName: "直连通道",
-                                completedBitmapB64: directHandshake.peerCompletedBitmapB64,
-                                send: { data in await channel.send(data) },
-                                closeUnused: { channel.close() },
-                                closeSelected: { channel.close() }
+                            directRace.submit(
+                                NativePreparedP2PChannel(
+                                    sessionKey: sessionKey,
+                                    transportName: endpoint.name == "quic_ipv6_direct" ? "QUIC 直连通道" : "TCP 直连通道",
+                                    completedBitmapB64: directHandshake.peerCompletedBitmapB64,
+                                    send: { data in await channel.send(data) },
+                                    closeUnused: { channel.close() },
+                                    closeSelected: { channel.close() }
+                                )
                             )
                         }
-                        directTracker.recordAttempt(endpoint: endpoint, result: "failed", error: "直连打开返回空通道")
                     }
-                    if let endpoint = tcpEndpoint {
-                        directTracker.recordAttempt(endpoint: endpoint, result: "attempting")
-                        if let channel = await NativeP2PFramedConnection.connect(
-                            to: endpoint,
-                            timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds,
-                            onFrame: onBinary
-                        ) {
-                            directTracker.recordAttempt(endpoint: endpoint, result: "connected")
-                            return NativePreparedP2PChannel(
-                                sessionKey: sessionKey,
-                                transportName: "直连通道",
-                                completedBitmapB64: directHandshake.peerCompletedBitmapB64,
-                                send: { data in await channel.send(data) },
-                                closeUnused: { channel.close() },
-                                closeSelected: { channel.close() }
-                            )
-                        }
-                        directTracker.recordAttempt(endpoint: endpoint, result: "failed", error: "直连打开返回空通道")
-                    }
+                    return await directRace.waitForWinner()
                 } catch {
                     let message = error.localizedDescription
                     directTracker.recordAttempt(selected: "none", result: "session_key_failed", error: message)
@@ -364,8 +387,10 @@ final class NativeP2PTransferClient {
                     closeWebRTCSessionIfStored()
                     return nil
                 }
+                nativeP2PTimingLog(stage: "webrtc_offer_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
                 var opened = await session.waitUntilOpen(seconds: NativeP2PTiming.initialOpenWaitSeconds)
                 if !opened && !receiverReadyTracker.isAborted {
+                    nativeP2PTimingLog(stage: "webrtc_early_ice_restart", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "wait_seconds=\(Int(NativeP2PTiming.initialOpenWaitSeconds))")
                     _ = await session.restartIce()
                     opened = await session.waitUntilOpen(seconds: NativeP2PTiming.restartOpenWaitSeconds)
                 }
@@ -373,6 +398,7 @@ final class NativeP2PTransferClient {
                     closeWebRTCSessionIfStored()
                     return nil
                 }
+                nativeP2PTimingLog(stage: "webrtc_opened", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
                 guard let peerHandshake = await session.waitForPeerEphemeralPublic(seconds: 10),
                       verifyAcceptSignature(
                         peerEphemeralPublicB64: peerHandshake,
@@ -421,6 +447,7 @@ final class NativeP2PTransferClient {
             sessionContext.sessionKey = selectedChannel.sessionKey
             sendFrame = selectedChannel.send
             let sessionKey = selectedChannel.sessionKey
+            nativeP2PTimingLog(stage: "race_winner", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
             transportNotice("已连接\(selectedChannel.transportName)，开始传输文件")
             let peerCompletedChunks = NativeTransferProgressStore.decodeCompletedBitmap(selectedChannel.completedBitmapB64)
 
@@ -568,6 +595,8 @@ final class NativeP2PTransferClient {
             ) else {
                 return
             }
+            let prewarmStartedAt = Date()
+            nativeP2PTimingLog(stage: "receiver_direct_prewarm_start", sessionId: sessionId, transferId: transferId, startedAt: prewarmStartedAt)
             if directServers[sessionId] == nil,
                let server = NativeP2PDirectServer.start(
                 sessionId: sessionId,
@@ -576,6 +605,13 @@ final class NativeP2PTransferClient {
                ) {
                 directServers[sessionId] = server
             }
+            nativeP2PTimingLog(
+                stage: "receiver_direct_prewarm_done",
+                sessionId: sessionId,
+                transferId: transferId,
+                startedAt: prewarmStartedAt,
+                detail: directServers[sessionId] == nil ? "result=unavailable" : "result=started"
+            )
             onReceiveState(
                 NativeReceiveTransferState(
                     id: transferId,
@@ -1310,6 +1346,9 @@ private final class NativeDirectEndpointTracker {
         result: String,
         error: String? = nil
     ) {
+        if diagnostic.attemptResult == "connected", result != "connected" {
+            return
+        }
         diagnostic.selected = selected?.nilIfBlank ?? diagnostic.selected
         diagnostic.attemptResult = result.nilIfBlank ?? "unknown"
         diagnostic.lastError = error?.nilIfBlank ?? "none"

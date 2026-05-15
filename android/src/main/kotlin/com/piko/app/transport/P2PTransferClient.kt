@@ -4,7 +4,9 @@ import android.content.ContentResolver
 import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.util.Log
 import com.piko.app.data.DeviceIdentityStore
 import com.piko.app.data.TokenStorage
 import com.piko.app.data.TransferProgressStore
@@ -65,9 +67,10 @@ private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
 private const val P2P_DIRECT_ENDPOINT_WAIT_SECONDS = 5L
 private const val P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L
 private const val P2P_XQUIC_ALPN = "piko-v3"
-private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L
+private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 12L
 private const val P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L
 private const val P2P_IPV6_DIRECT_CANDIDATE_PRIORITY = 2_130_706_431L
+private const val P2P_LOG_TAG = "PikoP2P"
 
 data class P2PDirectTransportAttempt(
     val name: String,
@@ -253,6 +256,18 @@ class P2PTransferClient(
             )
         }
         val session = sessionContext.config
+        val timingStartedAt = SystemClock.elapsedRealtime()
+        fun logTiming(stage: String, detail: String = "") {
+            Log.d(
+                P2P_LOG_TAG,
+                buildString {
+                    append("timing session=${session.sessionId} transfer=$transferId stage=$stage")
+                    append(" elapsed_ms=${SystemClock.elapsedRealtime() - timingStartedAt}")
+                    if (detail.isNotBlank()) append(" $detail")
+                },
+            )
+        }
+        logTiming("create_session_done")
         val sentFrames = ConcurrentHashMap<ChunkKey, ByteArray>()
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
         val chunkByteCounts = ConcurrentHashMap<ChunkKey, Long>()
@@ -332,6 +347,8 @@ class P2PTransferClient(
             )
         }
         fun attemptDirectEndpoint(endpoint: P2PDirectEndpoint, key: ByteArray): P2PBinaryChannel? {
+            val endpointStartedAt = SystemClock.elapsedRealtime()
+            logTiming("direct_open_start", "endpoint=${endpoint.name}")
             peer.recordDirectEndpointAttempt(endpoint, result = "attempting")
             val result = runCatching {
                 if (endpoint.name == "quic_ipv6_direct") {
@@ -342,9 +359,17 @@ class P2PTransferClient(
             }
             val channel = result.getOrNull()
             return if (channel != null) {
+                logTiming(
+                    "direct_open_done",
+                    "endpoint=${endpoint.name} result=connected duration_ms=${SystemClock.elapsedRealtime() - endpointStartedAt}",
+                )
                 peer.recordDirectEndpointAttempt(endpoint, result = "connected")
                 channel
             } else {
+                logTiming(
+                    "direct_open_done",
+                    "endpoint=${endpoint.name} result=failed duration_ms=${SystemClock.elapsedRealtime() - endpointStartedAt}",
+                )
                 peer.recordDirectEndpointAttempt(
                     endpoint,
                     result = "failed",
@@ -353,8 +378,46 @@ class P2PTransferClient(
                 null
             }
         }
+        fun openDirectChannelRace(
+            endpoints: List<P2PDirectEndpoint>,
+            handshake: P2PPeerHandshake,
+            key: ByteArray,
+        ): P2PPreparedChannel? {
+            if (endpoints.isEmpty()) return null
+            val selected = AtomicBoolean(false)
+            val executor = Executors.newFixedThreadPool(endpoints.size) { runnable ->
+                Thread(runnable, "piko-p2p-direct-race").apply { isDaemon = true }
+            }
+            val completion = ExecutorCompletionService<P2PPreparedChannel?>(executor)
+            val futures = endpoints.map { endpoint ->
+                completion.submit {
+                    val channel = attemptDirectEndpoint(endpoint, key) ?: return@submit null
+                    if (!selected.compareAndSet(false, true)) {
+                        runCatching { channel.close() }
+                        return@submit null
+                    }
+                    P2PPreparedChannel(
+                        channel = channel,
+                        handshake = handshake,
+                        sessionKey = key,
+                        transportName = if (endpoint.name == "quic_ipv6_direct") "QUIC 直连通道" else "TCP 直连通道",
+                    )
+                }
+            }
+            try {
+                repeat(futures.size) {
+                    val candidate = runCatching { completion.take().get() }.getOrNull()
+                    if (candidate != null) return candidate
+                }
+            } finally {
+                futures.forEach { future -> if (!future.isDone) future.cancel(true) }
+                executor.shutdownNow()
+            }
+            return null
+        }
         fun openDirectRaceChannel(): P2PPreparedChannel? {
             val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)
+            logTiming("direct_endpoint_wait_done", "count=${directEndpoints.size}")
             val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
             val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
             if (quicEndpoint == null && tcpEndpoint == null) return null
@@ -384,16 +447,8 @@ class P2PTransferClient(
                 )
                 return null
             }
-            val directChannel = quicEndpoint?.let { attemptDirectEndpoint(it, key) }
-                ?: tcpEndpoint?.let { attemptDirectEndpoint(it, key) }
-            return directChannel?.let { channel ->
-                P2PPreparedChannel(
-                    channel = channel,
-                    handshake = handshake,
-                    sessionKey = key,
-                    transportName = "直连通道",
-                )
-            }
+            val endpoints = listOfNotNull(quicEndpoint, tcpEndpoint)
+            return openDirectChannelRace(endpoints, handshake, key)
         }
         fun openWebRtcRaceChannel(): P2PPreparedChannel? {
             val webRtcChannel = runCatching {
@@ -408,6 +463,7 @@ class P2PTransferClient(
                     cause = error,
                 )
             }
+            logTiming("webrtc_offer_sent")
             if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
                 if (peer.isAborted) {
                     throw P2PTransferFailure(
@@ -418,6 +474,7 @@ class P2PTransferClient(
                         diagnostic = peer.diagnosticSnapshot(),
                     )
                 }
+                logTiming("webrtc_early_ice_restart", "wait_seconds=$P2P_INITIAL_OPEN_TIMEOUT_SECONDS")
                 peer.triggerIceRestart()
                 if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
                     val baseDiag = peer.diagnosticSnapshot()
@@ -432,6 +489,7 @@ class P2PTransferClient(
                     )
                 }
             }
+            logTiming("webrtc_opened")
             val peerHandshake = runCatching {
                 peer.awaitPeerHandshake()
             }.getOrElse { error ->
@@ -515,6 +573,7 @@ class P2PTransferClient(
         val channel = selectedChannel.channel
         val peerHandshake = selectedChannel.handshake
         val sessionKey = selectedChannel.sessionKey
+        logTiming("race_winner", "transport=${selectedChannel.transportName}")
         callback(SendTransferEvent.TransportNotice(transferId, "已连接${selectedChannel.transportName}，开始传输文件"))
         sessionContext.sessionKey = sessionKey
 
@@ -866,6 +925,8 @@ class P2PTransferClient(
         ).also { receiver ->
             receiversByTransferId[transferId] = receiver
         }.let { receiver ->
+            val prewarmStartedAt = SystemClock.elapsedRealtime()
+            Log.d(P2P_LOG_TAG, "timing session=$sessionId transfer=$transferId stage=receiver_direct_prewarm_start elapsed_ms=0")
             P2PPeer(
                 sessionId = sessionId,
                 iceServers = iceServers,
@@ -885,6 +946,10 @@ class P2PTransferClient(
                     receiverAcceptSignatureB64 = acceptSignatureB64,
                     receiverCompletedBitmapB64 = completedBitmapB64,
                 )?.let { server -> directServersBySessionId[sessionId] = server }
+                Log.d(
+                    P2P_LOG_TAG,
+                    "timing session=$sessionId transfer=$transferId stage=receiver_direct_prewarm_done elapsed_ms=${SystemClock.elapsedRealtime() - prewarmStartedAt} result=${if (directServersBySessionId.containsKey(sessionId)) "started" else "unavailable"}",
+                )
             }
         }
     }
@@ -1207,11 +1272,13 @@ class P2PTransferClient(
             return snapshot
         }
 
+        @Synchronized
         fun recordDirectAttempt(
             selected: String = directSelected,
             result: String,
             error: String? = null,
         ) {
+            if (directAttemptResult == "connected" && result != "connected") return
             directSelected = selected.ifBlank { "none" }
             directAttemptResult = result.ifBlank { "unknown" }
             directLastError = error?.ifBlank { null } ?: "none"

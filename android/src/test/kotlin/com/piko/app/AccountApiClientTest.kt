@@ -112,7 +112,7 @@ class AccountApiClientTest {
         val res = client.register("a@b.com", "hunter2hunter2", "alice", "Alice")
 
         assertTrue(res is AccountResult.Ok)
-        assertEquals("alice", (res as AccountResult.Ok).value.user.username)
+        assertEquals("alice", res.value.user.username)
         assertEquals("a".repeat(43), res.value.token)
 
         val req = server!!.requests.single()
@@ -132,7 +132,7 @@ class AccountApiClientTest {
 
         val res = client.register("a@b.com", "hunter2hunter2", "alice", nickname = null)
         assertTrue(res is AccountResult.Ok)
-        assertEquals(null, (res as AccountResult.Ok).value.user.nickname)
+        assertEquals(null, res.value.user.nickname)
 
         val payload = JSONObject(server!!.requests.single().body)
         assertTrue(!payload.has("nickname"))
@@ -145,7 +145,7 @@ class AccountApiClientTest {
 
         val res = client.register("a@b.com", "hunter2hunter2", "alice", null)
         assertTrue(res is AccountResult.Err)
-        assertEquals(AccountError.EmailTaken, (res as AccountResult.Err).error)
+        assertEquals(AccountError.EmailTaken, res.error)
     }
 
     @Test
@@ -155,7 +155,7 @@ class AccountApiClientTest {
 
         val res = client.register("a@b.com", "hunter2hunter2", "alice", null)
         assertTrue(res is AccountResult.Err)
-        assertEquals(AccountError.UsernameTaken, (res as AccountResult.Err).error)
+        assertEquals(AccountError.UsernameTaken, res.error)
     }
 
     @Test
@@ -165,7 +165,7 @@ class AccountApiClientTest {
 
         val res = client.login("a@b.com", "wrong-password")
         assertTrue(res is AccountResult.Err)
-        assertEquals(AccountError.InvalidCredentials, (res as AccountResult.Err).error)
+        assertEquals(AccountError.InvalidCredentials, res.error)
     }
 
     @Test
@@ -176,7 +176,7 @@ class AccountApiClientTest {
 
         val res = client.me(token)
         assertTrue(res is AccountResult.Ok)
-        assertEquals("alice", (res as AccountResult.Ok).value.username)
+        assertEquals("alice", res.value.username)
 
         val req = server!!.requests.single()
         assertEquals("GET", req.method)
@@ -191,7 +191,7 @@ class AccountApiClientTest {
 
         val res = client.me("expired-token-" + "x".repeat(28))
         assertTrue(res is AccountResult.Err)
-        assertEquals(AccountError.SessionExpired, (res as AccountResult.Err).error)
+        assertEquals(AccountError.SessionExpired, res.error)
     }
 
     @Test

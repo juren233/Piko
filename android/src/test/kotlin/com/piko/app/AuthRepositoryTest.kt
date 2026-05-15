@@ -47,10 +47,10 @@ class AuthRepositoryTest {
         val result = repo.register("a@b.com", "hunter2hunter2", "alice", "Alice")
 
         assertTrue(result is AccountResult.Ok)
-        assertEquals("alice", (result as AccountResult.Ok).value.username)
+        assertEquals("alice", result.value.username)
         val authState = repo.state.value
         assertTrue(authState is AuthState.Authenticated, "Expected Authenticated, got $authState")
-        assertEquals("alice", (authState as AuthState.Authenticated).user.username)
+        assertEquals("alice", authState.user.username)
         assertEquals(authSuccess().token, storage.load())
     }
 
@@ -63,7 +63,7 @@ class AuthRepositoryTest {
         val result = repo.register("a@b.com", "hunter2hunter2", "alice", null)
 
         assertTrue(result is AccountResult.Err)
-        assertEquals(AccountError.EmailTaken, (result as AccountResult.Err).error)
+        assertEquals(AccountError.EmailTaken, result.error)
         assertEquals(AuthState.Unauthenticated, repo.state.value)
         assertNull(storage.load())
     }
@@ -90,7 +90,7 @@ class AuthRepositoryTest {
 
         val result = repo.login("a@b.com", "wrong")
         assertTrue(result is AccountResult.Err)
-        assertEquals(AccountError.InvalidCredentials, (result as AccountResult.Err).error)
+        assertEquals(AccountError.InvalidCredentials, result.error)
         assertEquals(AuthState.Unauthenticated, repo.state.value)
         assertNull(storage.load())
     }
@@ -128,7 +128,7 @@ class AuthRepositoryTest {
         repo.bootstrap()
         val st = repo.state.value
         assertTrue(st is AuthState.Authenticated)
-        assertEquals("alice", (st as AuthState.Authenticated).user.username)
+        assertEquals("alice", st.user.username)
         assertEquals("tok-" + "x".repeat(39), storage.load())
     }
 
