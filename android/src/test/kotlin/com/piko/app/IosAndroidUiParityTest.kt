@@ -352,6 +352,7 @@ class IosAndroidUiParityTest {
         assertTrue("@Published var transferFailureMessage: String?" in iosModel)
         assertTrue("p2pFailureMessage(target: target, transferId: transferId, error: error)" in iosModel)
         val iosSendView = readIos("NativeSendView.swift")
+        val androidSharedApp = readAndroid("ui/App.kt")
         val androidSendScreen = readAndroid("ui/SendScreen.kt")
         assertTrue(".alert(\"P2P 传输失败\"" in iosSendView)
         assertTrue("Button(\"复制\")" in iosSendView)
@@ -414,8 +415,37 @@ class IosAndroidUiParityTest {
         assertTrue("target.receiverUserId?.ifBlank { null } ?: \"未知用户\"" in androidSendActions)
         assertTrue("target.receiverDeviceId?.ifBlank { null } ?: \"未知设备\"" in androidSendActions)
         listOf(
+            "data class TransportNotice(",
+            "is SendTransferEvent.TransportNotice -> this",
+        ).forEach { marker ->
+            assertTrue(marker in androidState, "Android send state must keep transport notice out of card state marker $marker")
+        }
+        listOf(
+            "onTransferNotice: (String) -> Unit = {}",
+            "if (event is SendTransferEvent.TransportNotice)",
+            "onTransferNotice(event.message)",
+        ).forEach { marker ->
+            assertTrue(marker in androidSharedApp, "Android shared send entry must forward transport notice marker $marker")
+        }
+        assertTrue(
+            "Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()" in androidApp,
+            "Android host must show transport notice as a short toast",
+        )
+        listOf(
             "data class P2PTransferDiagnostic(",
+            "P2P_DIRECT_ENDPOINT_WAIT_SECONDS = 5L",
             "P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L",
+            "ExecutorCompletionService<P2PPreparedChannel?>",
+            "fun openDirectRaceChannel()",
+            "fun openWebRtcRaceChannel()",
+            "peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)",
+            "completion.submit { openDirectRaceChannel() }",
+            "completion.submit { openWebRtcRaceChannel() }",
+            "channel = webRtcChannel",
+            "transportName = \"直连通道\"",
+            "transportName = \"WebRTC 通道\"",
+            "SendTransferEvent.TransportNotice(transferId, \"正在同时尝试直连通道和 WebRTC 通道\")",
+            "SendTransferEvent.TransportNotice(transferId, \"已连接\${selectedChannel.transportName}，开始传输文件\")",
             "XQuicDirectTransport",
             "System.loadLibrary(\"piko_xquic\")",
             "external fun openServer",
@@ -458,6 +488,15 @@ class IosAndroidUiParityTest {
         ).forEach { marker ->
             assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
         }
+        assertInOrder(
+            androidP2P,
+            "completion.submit { openDirectRaceChannel() }",
+            "completion.submit { openWebRtcRaceChannel() }",
+            "val selectedChannel = preparedChannel",
+            "val channel = selectedChannel.channel",
+            "val sessionKey = selectedChannel.sessionKey",
+            "TransferProtocolV3.encodeManifest(",
+        )
         assertFalse(
             "peerConnection.getStats" in androidP2P,
             "Android P2P 失败诊断不得直接调用 WebRTC getStats，native 崩溃无法被 Kotlin 保护",
@@ -491,9 +530,23 @@ class IosAndroidUiParityTest {
             assertTrue(marker in iosWebRTC, "iOS WebRTC must record diagnostic marker $marker")
         }
         listOf(
+            "NativeP2PTiming.directEndpointWaitSeconds",
             "NativeP2PTiming.directTransportWaitSeconds",
             "NativeP2PTiming.initialOpenWaitSeconds",
             "NativeP2PTiming.restartOpenWaitSeconds",
+            "func openDirectRaceChannel() async -> NativePreparedP2PChannel?",
+            "func openWebRTCRaceChannel() async -> NativePreparedP2PChannel?",
+            "NativeP2PConnectionRace(expectedCount: 2)",
+            "let candidate = await openDirectRaceChannel()",
+            "let candidate = await openWebRTCRaceChannel()",
+            "guard let selectedChannel = await race.waitForWinner()",
+            "sessionContext.sessionKey = selectedChannel.sessionKey",
+            "selectedChannel.closeAfterSelectedUse()",
+            "candidate.closeIfUnused()",
+            "transportNotice(\"正在同时尝试直连通道和 WebRTC 通道\")",
+            "transportNotice(\"已连接\\(selectedChannel.transportName)，开始传输文件\")",
+            "transportName: \"直连通道\"",
+            "transportName: \"WebRTC 通道\"",
             "directTransportAttemptPlan()",
             "@MainActor\nprivate func directTransportAttemptPlan()",
             "NativeP2PDirectServer",
@@ -510,6 +563,29 @@ class IosAndroidUiParityTest {
             "\"webrtc_stun\"",
         ).forEach { marker ->
             assertTrue(marker in iosP2P, "iOS P2P must record WebRTC timing marker $marker")
+        }
+        assertInOrder(
+            iosP2P,
+            "let race = NativeP2PConnectionRace(expectedCount: 2)",
+            "let candidate = await openDirectRaceChannel()",
+            "let candidate = await openWebRTCRaceChannel()",
+            "guard let selectedChannel = await race.waitForWinner()",
+            "let sessionKey = selectedChannel.sessionKey",
+            "NativeTransferProtocolV3.encodeManifest(",
+        )
+        listOf(
+            "@Published var transferToastMessage: String?",
+            "transportNotice: { message in",
+            "self.transferToastMessage = message",
+        ).forEach { marker ->
+            assertTrue(marker in iosModel, "iOS model must publish transport notice marker $marker")
+        }
+        listOf(
+            "if let message = model.transferToastMessage",
+            "NativeTransferToast(message: message)",
+            "model.transferToastMessage = nil",
+        ).forEach { marker ->
+            assertTrue(marker in iosSendView, "iOS send view must show transient transport toast marker $marker")
         }
         assertTrue("let ipv6Sockaddr = address.withMemoryRebound(to: sockaddr_in6.self" in iosP2P)
         assertTrue("var mutableSockaddr = ipv6Sockaddr" in iosP2P)

@@ -66,6 +66,24 @@ struct NativeSendView: View {
                 NativeFloatingSendButton(action: model.sendSelectedItems)
             }
         }
+        .overlay(alignment: .bottom) {
+            if let message = model.transferToastMessage {
+                NativeTransferToast(message: message)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, model.canSend ? 104 : 34)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: model.transferToastMessage)
+        .task(id: model.transferToastMessage) {
+            guard let message = model.transferToastMessage else {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if model.transferToastMessage == message {
+                model.transferToastMessage = nil
+            }
+        }
         .sheet(isPresented: $showingPhotoPicker) {
             NativePhotoPicker { items in
                 model.addItems(items)
@@ -92,5 +110,20 @@ struct NativeSendView: View {
         .task {
             model.refreshFriendsPresence()
         }
+    }
+}
+
+private struct NativeTransferToast: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(PikoFont.compactSubtitle)
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.78), in: Capsule())
     }
 }

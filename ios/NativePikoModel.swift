@@ -81,6 +81,7 @@ final class NativePikoModel: ObservableObject {
     @Published var transferLabel = "等待发送"
     @Published var transferProgress: Double?
     @Published var transferFailureMessage: String?
+    @Published var transferToastMessage: String?
     @Published var discoveryLabel = "正在搜索"
     @Published var imageSectionExpanded = false
     @Published var mediaSaveLocation: NativeMediaSaveLocation
@@ -344,6 +345,9 @@ final class NativePikoModel: ObservableObject {
                         totalBytes: totalBytes,
                         progressUpdate: { progress in
                             self.transferStateMachine.updateSendProgress(progress)
+                        },
+                        transportNotice: { message in
+                            self.transferToastMessage = message
                         }
                     ) {
                     case .success(let sentTargetBytes):

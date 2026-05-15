@@ -52,6 +52,7 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Semaphore
@@ -61,6 +62,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
 private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
+private const val P2P_DIRECT_ENDPOINT_WAIT_SECONDS = 5L
 private const val P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L
 private const val P2P_XQUIC_ALPN = "piko-v3"
 private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 30L
@@ -290,127 +292,113 @@ class P2PTransferClient(
             while (ackLatch.count > 0) ackLatch.countDown()
             receiverReadyLatch.countDown()
         }
-        var directChannel: P2PBinaryChannel? = null
-        var directHandshake: P2PPeerHandshake? = null
-        var directSessionKey: ByteArray? = null
-        val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS)
-        val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
-        val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
-        if (quicEndpoint != null || tcpEndpoint != null) {
-            val handshakeResult = runCatching { peer.awaitPeerHandshake() }
-            directHandshake = handshakeResult.getOrNull()
-            val handshake = directHandshake
-            if (handshake != null && TransferProtocolV3.verifyAcceptSignature(
-                    sessionId = session.sessionId,
-                    transferId = transferId,
-                    manifestHashB64 = sessionContext.manifestHashB64,
-                    senderEphemeralPublicKeyB64 = sessionContext.ephemeral.publicKeyB64,
-                    receiverEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
-                    signatureB64 = handshake.acceptSignatureB64,
-                    receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
+        fun verifyHandshake(handshake: P2PPeerHandshake): Boolean =
+            TransferProtocolV3.verifyAcceptSignature(
+                sessionId = session.sessionId,
+                transferId = transferId,
+                manifestHashB64 = sessionContext.manifestHashB64,
+                senderEphemeralPublicKeyB64 = sessionContext.ephemeral.publicKeyB64,
+                receiverEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
+                signatureB64 = handshake.acceptSignatureB64,
+                receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
+            )
+        fun deriveSessionKey(handshake: P2PPeerHandshake): ByteArray =
+            TransferProtocolV3.deriveSessionKey(
+                sessionId = session.sessionId,
+                transferId = transferId,
+                localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
+                peerEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
+                localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
+                peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
+                role = TransferV3KeyAgreementRole.Sender,
+            )
+        fun directFrameHandler(key: ByteArray): (ByteArray, P2PBinaryChannel) -> Unit = { frame, frameChannel ->
+            handleSenderControlFrame(
+                sessionKey = key,
+                sessionId = session.sessionId,
+                transferId = transferId,
+                bytes = frame,
+                channel = frameChannel,
+                sentFrames = sentFrames,
+                chunkByteCounts = chunkByteCounts,
+                ackedChunks = ackedChunks,
+                ackLatch = ackLatch,
+                receiverReadyLatch = receiverReadyLatch,
+                inFlightPermits = inFlightPermits,
+                confirmedBytes = confirmedBytes,
+                totalCompletedBeforeTarget = totalCompletedBeforeTarget,
+                totalBytes = totalBytes,
+                callback = callback,
+            )
+        }
+        fun attemptDirectEndpoint(endpoint: P2PDirectEndpoint, key: ByteArray): P2PBinaryChannel? {
+            peer.recordDirectEndpointAttempt(endpoint, result = "attempting")
+            val result = runCatching {
+                if (endpoint.name == "quic_ipv6_direct") {
+                    openQuicDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS, directFrameHandler(key))
+                } else {
+                    openTcpDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS, directFrameHandler(key))
+                }
+            }
+            val channel = result.getOrNull()
+            return if (channel != null) {
+                peer.recordDirectEndpointAttempt(endpoint, result = "connected")
+                channel
+            } else {
+                peer.recordDirectEndpointAttempt(
+                    endpoint,
+                    result = "failed",
+                    error = result.exceptionOrNull()?.message ?: "直连打开返回空通道",
                 )
-            ) {
-                val keyResult = runCatching {
-                    TransferProtocolV3.deriveSessionKey(
-                        sessionId = session.sessionId,
-                        transferId = transferId,
-                        localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
-                        peerEphemeralPublicKeyB64 = handshake.ephemeralPublicB64,
-                        localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
-                        peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
-                        role = TransferV3KeyAgreementRole.Sender,
-                    )
-                }
-                directSessionKey = keyResult.getOrNull()
-                if (directSessionKey == null) {
-                    peer.recordDirectAttempt(
-                        selected = "none",
-                        result = "session_key_failed",
-                        error = keyResult.exceptionOrNull()?.message ?: "会话密钥派生失败",
-                    )
-                }
-                directSessionKey?.let { key ->
-                    fun open(endpoint: P2PDirectEndpoint): P2PBinaryChannel =
-                        if (endpoint.name == "quic_ipv6_direct") {
-                            openQuicDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS) { frame, channel ->
-                                handleSenderControlFrame(
-                                    sessionKey = key,
-                                    sessionId = session.sessionId,
-                                    transferId = transferId,
-                                    bytes = frame,
-                                    channel = channel,
-                                    sentFrames = sentFrames,
-                                    chunkByteCounts = chunkByteCounts,
-                                    ackedChunks = ackedChunks,
-                                    ackLatch = ackLatch,
-                                    receiverReadyLatch = receiverReadyLatch,
-                                    inFlightPermits = inFlightPermits,
-                                    confirmedBytes = confirmedBytes,
-                                    totalCompletedBeforeTarget = totalCompletedBeforeTarget,
-                                    totalBytes = totalBytes,
-                                    callback = callback,
-                                )
-                            }
-                        } else {
-                            openTcpDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS) { frame, channel ->
-                                handleSenderControlFrame(
-                                    sessionKey = key,
-                                    sessionId = session.sessionId,
-                                    transferId = transferId,
-                                    bytes = frame,
-                                    channel = channel,
-                                    sentFrames = sentFrames,
-                                    chunkByteCounts = chunkByteCounts,
-                                    ackedChunks = ackedChunks,
-                                    ackLatch = ackLatch,
-                                    receiverReadyLatch = receiverReadyLatch,
-                                    inFlightPermits = inFlightPermits,
-                                    confirmedBytes = confirmedBytes,
-                                    totalCompletedBeforeTarget = totalCompletedBeforeTarget,
-                                    totalBytes = totalBytes,
-                                    callback = callback,
-                                )
-                            }
-                        }
-                    fun attemptDirectEndpoint(endpoint: P2PDirectEndpoint): P2PBinaryChannel? {
-                        peer.recordDirectEndpointAttempt(endpoint, result = "attempting")
-                        val result = runCatching { open(endpoint) }
-                        val channel = result.getOrNull()
-                        return if (channel != null) {
-                            peer.recordDirectEndpointAttempt(endpoint, result = "connected")
-                            channel
-                        } else {
-                            peer.recordDirectEndpointAttempt(
-                                endpoint,
-                                result = "failed",
-                                error = result.exceptionOrNull()?.message ?: "直连打开返回空通道",
-                            )
-                            null
-                        }
-                    }
-                    directChannel = quicEndpoint?.let(::attemptDirectEndpoint)
-                        ?: tcpEndpoint?.let(::attemptDirectEndpoint)
-                }
-            } else if (handshake == null) {
+                null
+            }
+        }
+        fun openDirectRaceChannel(): P2PPreparedChannel? {
+            val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)
+            val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
+            val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
+            if (quicEndpoint == null && tcpEndpoint == null) return null
+            val handshakeResult = runCatching { peer.awaitPeerHandshake() }
+            val handshake = handshakeResult.getOrNull()
+            if (handshake == null) {
                 peer.recordDirectAttempt(
                     selected = "none",
                     result = "handshake_failed",
                     error = handshakeResult.exceptionOrNull()?.message ?: "接收方握手等待失败",
                 )
-            } else {
+                return null
+            }
+            if (!verifyHandshake(handshake)) {
                 peer.recordDirectAttempt(
                     selected = "none",
                     result = "handshake_invalid",
                     error = "接收方签名校验失败",
                 )
+                return null
+            }
+            val key = runCatching { deriveSessionKey(handshake) }.getOrElse { error ->
+                peer.recordDirectAttempt(
+                    selected = "none",
+                    result = "session_key_failed",
+                    error = error.message ?: "会话密钥派生失败",
+                )
+                return null
+            }
+            val directChannel = quicEndpoint?.let { attemptDirectEndpoint(it, key) }
+                ?: tcpEndpoint?.let { attemptDirectEndpoint(it, key) }
+            return directChannel?.let { channel ->
+                P2PPreparedChannel(
+                    channel = channel,
+                    handshake = handshake,
+                    sessionKey = key,
+                    transportName = "直连通道",
+                )
             }
         }
-        val channel = directChannel ?: run {
+        fun openWebRtcRaceChannel(): P2PPreparedChannel? {
             val webRtcChannel = runCatching {
                 peer.createOfferer()
             }.getOrElse { error ->
-                peer.close()
-                peers.remove(session.sessionId)
                 throw P2PTransferFailure(
                     stage = "data_channel_open",
                     transferId = transferId,
@@ -422,8 +410,6 @@ class P2PTransferClient(
             }
             if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
                 if (peer.isAborted) {
-                    peer.close()
-                    peers.remove(session.sessionId)
                     throw P2PTransferFailure(
                         stage = "data_channel_open",
                         transferId = transferId,
@@ -437,8 +423,6 @@ class P2PTransferClient(
                     val baseDiag = peer.diagnosticSnapshot()
                     val reason = crossNetworkDiagnosis(baseDiag)
                     val diag = baseDiag.copy(failureReason = reason)
-                    peer.close()
-                    peers.remove(session.sessionId)
                     throw P2PTransferFailure(
                         stage = "data_channel_open",
                         transferId = transferId,
@@ -448,65 +432,90 @@ class P2PTransferClient(
                     )
                 }
             }
-            webRtcChannel
+            val peerHandshake = runCatching {
+                peer.awaitPeerHandshake()
+            }.getOrElse { error ->
+                throw P2PTransferFailure(
+                    stage = "key_agreement",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = error.message ?: "接收方握手等待失败",
+                    diagnostic = peer.diagnosticSnapshot(),
+                    cause = error,
+                )
+            }
+            if (!verifyHandshake(peerHandshake)) {
+                throw P2PTransferFailure(
+                    stage = "key_agreement",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = "接收方签名校验失败",
+                    diagnostic = peer.diagnosticSnapshot(),
+                )
+            }
+            val sessionKey = runCatching { deriveSessionKey(peerHandshake) }.getOrElse { error ->
+                throw P2PTransferFailure(
+                    stage = "key_agreement",
+                    transferId = transferId,
+                    sessionId = session.sessionId,
+                    originalReason = error.message ?: "跨网密钥协商失败",
+                    diagnostic = peer.diagnosticSnapshot(),
+                    cause = error,
+                )
+            }
+            return P2PPreparedChannel(
+                channel = webRtcChannel,
+                handshake = peerHandshake,
+                sessionKey = sessionKey,
+                transportName = "WebRTC 通道",
+            )
         }
-        val peerHandshake = directHandshake ?: runCatching {
-            peer.awaitPeerHandshake()
-        }.getOrElse { error ->
+        callback(SendTransferEvent.TransportNotice(transferId, "正在同时尝试直连通道和 WebRTC 通道"))
+        val raceExecutor = Executors.newFixedThreadPool(2) { runnable ->
+            Thread(runnable, "piko-p2p-connect-race").apply { isDaemon = true }
+        }
+        val completion = ExecutorCompletionService<P2PPreparedChannel?>(raceExecutor)
+        val futures = listOf(
+            completion.submit { openDirectRaceChannel() },
+            completion.submit { openWebRtcRaceChannel() },
+        )
+        var preparedChannel: P2PPreparedChannel? = null
+        var lastFailure: Throwable? = null
+        try {
+            var remainingAttempts = futures.size
+            while (remainingAttempts > 0 && preparedChannel == null) {
+                remainingAttempts -= 1
+                val future = completion.take()
+                val candidate = runCatching { future.get() }
+                    .onFailure { lastFailure = it.cause ?: it }
+                    .getOrNull()
+                if (candidate != null) {
+                    preparedChannel = candidate
+                }
+            }
+        } finally {
+            futures.forEach { future -> if (!future.isDone) future.cancel(true) }
+            raceExecutor.shutdownNow()
+        }
+        val selectedChannel = preparedChannel ?: run {
+            lastFailure?.let { error ->
+                if (error is P2PTransferFailure) throw error
+            }
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
-                stage = "key_agreement",
+                stage = "data_channel_open",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = error.message ?: "接收方握手等待失败",
+                originalReason = lastFailure?.message ?: "P2P 连接赛马未建立可用通道",
                 diagnostic = peer.diagnosticSnapshot(),
-                cause = error,
+                cause = lastFailure,
             )
         }
-        if (
-            !TransferProtocolV3.verifyAcceptSignature(
-                sessionId = session.sessionId,
-                transferId = transferId,
-                manifestHashB64 = sessionContext.manifestHashB64,
-                senderEphemeralPublicKeyB64 = sessionContext.ephemeral.publicKeyB64,
-                receiverEphemeralPublicKeyB64 = peerHandshake.ephemeralPublicB64,
-                signatureB64 = peerHandshake.acceptSignatureB64,
-                receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
-            )
-        ) {
-            peer.close()
-            peers.remove(session.sessionId)
-            throw P2PTransferFailure(
-                stage = "key_agreement",
-                transferId = transferId,
-                sessionId = session.sessionId,
-                originalReason = "接收方签名校验失败",
-                diagnostic = peer.diagnosticSnapshot(),
-            )
-        }
-        val sessionKey = directSessionKey ?: runCatching {
-            TransferProtocolV3.deriveSessionKey(
-                sessionId = session.sessionId,
-                transferId = transferId,
-                localEphemeralPrivateKeyPkcs8B64 = sessionContext.ephemeral.privateKeyPkcs8B64,
-                peerEphemeralPublicKeyB64 = peerHandshake.ephemeralPublicB64,
-                localStaticPrivateKeyPkcs8B64 = sessionContext.senderX25519PrivatePkcs8B64,
-                peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
-                role = TransferV3KeyAgreementRole.Sender,
-            )
-        }.getOrElse { error ->
-            peer.close()
-            peers.remove(session.sessionId)
-            throw P2PTransferFailure(
-                stage = "key_agreement",
-                transferId = transferId,
-                sessionId = session.sessionId,
-                originalReason = error.message ?: "跨网密钥协商失败",
-                diagnostic = peer.diagnosticSnapshot(),
-                cause = error,
-            )
-        }
+        val channel = selectedChannel.channel
+        val peerHandshake = selectedChannel.handshake
+        val sessionKey = selectedChannel.sessionKey
+        callback(SendTransferEvent.TransportNotice(transferId, "已连接${selectedChannel.transportName}，开始传输文件"))
         sessionContext.sessionKey = sessionKey
 
         val peerCompletedChunks = peerHandshake.completedChunks
@@ -1988,6 +1997,13 @@ private data class P2PPeerHandshake(
     val ephemeralPublicB64: String,
     val acceptSignatureB64: String,
     val completedChunks: Map<Int, Set<Int>>,
+)
+
+private data class P2PPreparedChannel(
+    val channel: P2PBinaryChannel,
+    val handshake: P2PPeerHandshake,
+    val sessionKey: ByteArray,
+    val transportName: String,
 )
 
 private fun handleSenderControlFrame(

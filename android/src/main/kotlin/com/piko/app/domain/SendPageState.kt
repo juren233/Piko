@@ -209,6 +209,7 @@ data class SendPageState(
                 ),
             )
 
+            is SendTransferEvent.TransportNotice -> this
             is SendTransferEvent.Paused -> copy(activeTransfer = current.copy(status = SendTransferStatus.Paused))
             is SendTransferEvent.Canceled -> copy(activeTransfer = SendTransferState.Idle)
             is SendTransferEvent.Completed -> copy(activeTransfer = SendTransferState.Idle)
@@ -405,6 +406,11 @@ sealed class SendTransferEvent {
         override val transferId: String,
         val completedBytes: Long,
         val totalBytes: Long,
+    ) : SendTransferEvent()
+
+    data class TransportNotice(
+        override val transferId: String,
+        val message: String,
     ) : SendTransferEvent()
 
     data class Paused(override val transferId: String) : SendTransferEvent()

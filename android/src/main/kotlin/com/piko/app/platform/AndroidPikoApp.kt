@@ -390,6 +390,9 @@ fun AndroidPikoApp() {
                             senderName = state.currentDeviceName,
                             onStateMutate = mutateState,
                             sendPlatformActions = sendPlatformActions,
+                            onTransferNotice = { message ->
+                                Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()
+                            },
                         )
                     },
                     modifier = Modifier

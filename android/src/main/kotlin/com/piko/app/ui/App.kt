@@ -14,6 +14,7 @@ import com.piko.app.data.ReceiveMediaSaveLocation
 import com.piko.app.domain.PikoHomeState
 import com.piko.app.domain.ReceiveHistoryItem
 import com.piko.app.domain.SendPageState
+import com.piko.app.domain.SendTransferEvent
 import com.piko.app.platform.SendPlatformActions
 
 enum class PikoTab(
@@ -141,9 +142,13 @@ fun startSendTransfer(
     senderName: String,
     onStateMutate: ((PikoHomeState) -> PikoHomeState) -> Unit,
     sendPlatformActions: SendPlatformActions,
+    onTransferNotice: (String) -> Unit = {},
 ) {
     val request = sendPage.buildTransferRequest(senderName = senderName.substringBefore("@")) ?: return
     sendPlatformActions.startTransfer(request) { event ->
+        if (event is SendTransferEvent.TransportNotice) {
+            onTransferNotice(event.message)
+        }
         onStateMutate { state ->
             state.copy(sendPage = state.sendPage.applyTransferEvent(event))
         }
