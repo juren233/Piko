@@ -40,6 +40,12 @@ private struct NativeP2PFailureDiagnostic {
     let stage: String
     let sessionId: String
     let originalReason: String
+    let directAttemptPlan: String
+    let directEndpointCount: String
+    let directEndpoints: String
+    let directSelected: String
+    let directAttemptResult: String
+    let directLastError: String
     let offerSent: String
     let answerReceived: String
     let localIceCount: String
@@ -397,6 +403,12 @@ final class NativePikoModel: ObservableObject {
         lines.append("在线快照：\(onlineSnapshot)")
         lines.append("阶段：\(diagnostic.stage)")
         lines.append("原始原因：\(diagnostic.originalReason)")
+        lines.append("direct_attempt_plan：\(diagnostic.directAttemptPlan)")
+        lines.append("direct_endpoint_count：\(diagnostic.directEndpointCount)")
+        lines.append("direct_endpoints：\(diagnostic.directEndpoints)")
+        lines.append("direct_selected：\(diagnostic.directSelected)")
+        lines.append("direct_attempt_result：\(diagnostic.directAttemptResult)")
+        lines.append("direct_last_error：\(diagnostic.directLastError)")
         lines.append("offer_sent：\(diagnostic.offerSent)")
         lines.append("answer_received：\(diagnostic.answerReceived)")
         lines.append("local_ice_count：\(diagnostic.localIceCount)")
@@ -435,6 +447,12 @@ final class NativePikoModel: ObservableObject {
                 stage: fields["阶段"]?.nilIfBlank ?? "unknown",
                 sessionId: fields["会话"]?.nilIfBlank ?? "未创建/未知",
                 originalReason: fields["原始原因"]?.nilIfBlank ?? "\(message.nilIfBlank ?? "服务端错误")（\(code)）",
+                directAttemptPlan: fields["direct_attempt_plan"]?.nilIfBlank ?? "unknown",
+                directEndpointCount: fields["direct_endpoint_count"]?.nilIfBlank ?? "0",
+                directEndpoints: fields["direct_endpoints"]?.nilIfBlank ?? "none",
+                directSelected: fields["direct_selected"]?.nilIfBlank ?? "none",
+                directAttemptResult: fields["direct_attempt_result"]?.nilIfBlank ?? "not_attempted",
+                directLastError: fields["direct_last_error"]?.nilIfBlank ?? "none",
                 offerSent: fields["offer_sent"]?.nilIfBlank ?? "false",
                 answerReceived: fields["answer_received"]?.nilIfBlank ?? "false",
                 localIceCount: fields["local_ice_count"]?.nilIfBlank ?? "0",
@@ -464,6 +482,12 @@ final class NativePikoModel: ObservableObject {
                 stage: "unknown",
                 sessionId: "未创建/未知",
                 originalReason: error.displayMessage,
+                directAttemptPlan: "unknown",
+                directEndpointCount: "0",
+                directEndpoints: "none",
+                directSelected: "none",
+                directAttemptResult: "not_attempted",
+                directLastError: "none",
                 offerSent: "false",
                 answerReceived: "false",
                 localIceCount: "0",

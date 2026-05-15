@@ -377,6 +377,12 @@ class IosAndroidUiParityTest {
             "在线快照：",
             "阶段：",
             "原始原因：",
+            "direct_attempt_plan：",
+            "direct_endpoint_count：",
+            "direct_endpoints：",
+            "direct_selected：",
+            "direct_attempt_result：",
+            "direct_last_error：",
             "offer_sent：",
             "answer_received：",
             "local_ice_count：",
@@ -637,7 +643,19 @@ class IosAndroidUiParityTest {
         assertTrue("split(/\\\\s+/)" in iosWebRTC, "iOS WebRTC embedded JavaScript whitespace regex must be escaped for Swift")
 
         // New diagnostic fields must be present in both diagnostic types.
-        listOf("stunErrorRate", "gatheringIncomplete", "symmetricNatSuspect", "remoteOnlyMdns", "failureReason").forEach { field ->
+        listOf(
+            "directAttemptPlan",
+            "directEndpointCount",
+            "directEndpoints",
+            "directSelected",
+            "directAttemptResult",
+            "directLastError",
+            "stunErrorRate",
+            "gatheringIncomplete",
+            "symmetricNatSuspect",
+            "remoteOnlyMdns",
+            "failureReason",
+        ).forEach { field ->
             assertTrue(field in androidP2P, "Android P2PTransferDiagnostic must declare $field")
             assertTrue(field in iosWebRTC, "iOS NativeWebRTCDiagnostic must declare $field")
         }

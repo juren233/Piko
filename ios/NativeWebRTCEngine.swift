@@ -78,6 +78,12 @@ enum NativeP2PFailureReason: String, CaseIterable {
 }
 
 struct NativeWebRTCDiagnostic {
+    var directAttemptPlan: String = "unknown"
+    var directEndpointCount: Int = 0
+    var directEndpoints: String = "none"
+    var directSelected: String = "none"
+    var directAttemptResult: String = "not_attempted"
+    var directLastError: String = "none"
     let offerSent: Bool
     let answerReceived: Bool
     let localIceCount: Int

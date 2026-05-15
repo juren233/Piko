@@ -81,6 +81,12 @@ data class P2PDirectEndpoint(
 )
 
 data class P2PTransferDiagnostic(
+    val directAttemptPlan: String = "unknown",
+    val directEndpointCount: Int = 0,
+    val directEndpoints: String = "none",
+    val directSelected: String = "none",
+    val directAttemptResult: String = "not_attempted",
+    val directLastError: String = "none",
     val offerSent: Boolean = false,
     val answerReceived: Boolean = false,
     val localIceCount: Int = 0,
@@ -117,6 +123,15 @@ internal fun p2pDirectTransportAttemptPlan(xquicAvailable: Boolean): List<P2PDir
         add(P2PDirectTransportAttempt("webrtc_ipv6_host", P2P_INITIAL_OPEN_TIMEOUT_SECONDS))
         add(P2PDirectTransportAttempt("webrtc_stun", P2P_RESTART_OPEN_TIMEOUT_SECONDS))
     }
+
+private fun List<P2PDirectTransportAttempt>.directAttemptPlanDescription(): String =
+    joinToString(",") { "${it.name}/${it.timeoutSeconds}s" }.ifBlank { "none" }
+
+private fun P2PDirectEndpoint.directEndpointSummary(): String =
+    "$name@[$host]:$port"
+
+private fun List<P2PDirectEndpoint>.directEndpointsDescription(): String =
+    joinToString(";") { it.directEndpointSummary() }.ifBlank { "none" }
 
 internal fun isXQuicDirectTransportAvailable(): Boolean = XQuicDirectTransport.isAvailable
 
@@ -284,7 +299,8 @@ class P2PTransferClient(
         val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
         val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
         if (quicEndpoint != null || tcpEndpoint != null) {
-            directHandshake = runCatching { peer.awaitPeerHandshake() }.getOrNull()
+            val handshakeResult = runCatching { peer.awaitPeerHandshake() }
+            directHandshake = handshakeResult.getOrNull()
             val handshake = directHandshake
             if (handshake != null && TransferProtocolV3.verifyAcceptSignature(
                     sessionId = session.sessionId,
@@ -296,7 +312,7 @@ class P2PTransferClient(
                     receiverEd25519PublicKeyB64 = sessionContext.receiverEd25519PubB64,
                 )
             ) {
-                directSessionKey = runCatching {
+                val keyResult = runCatching {
                     TransferProtocolV3.deriveSessionKey(
                         sessionId = session.sessionId,
                         transferId = transferId,
@@ -306,7 +322,15 @@ class P2PTransferClient(
                         peerStaticPublicKeyB64 = sessionContext.receiverX25519PubB64,
                         role = TransferV3KeyAgreementRole.Sender,
                     )
-                }.getOrNull()
+                }
+                directSessionKey = keyResult.getOrNull()
+                if (directSessionKey == null) {
+                    peer.recordDirectAttempt(
+                        selected = "none",
+                        result = "session_key_failed",
+                        error = keyResult.exceptionOrNull()?.message ?: "会话密钥派生失败",
+                    )
+                }
                 directSessionKey?.let { key ->
                     fun open(endpoint: P2PDirectEndpoint): P2PBinaryChannel =
                         if (endpoint.name == "quic_ipv6_direct") {
@@ -350,12 +374,37 @@ class P2PTransferClient(
                                 )
                             }
                         }
-                    directChannel = quicEndpoint?.let { endpoint ->
-                        runCatching { open(endpoint) }.getOrNull()
-                    } ?: tcpEndpoint?.let { endpoint ->
-                        runCatching { open(endpoint) }.getOrNull()
+                    fun attemptDirectEndpoint(endpoint: P2PDirectEndpoint): P2PBinaryChannel? {
+                        peer.recordDirectEndpointAttempt(endpoint, result = "attempting")
+                        val result = runCatching { open(endpoint) }
+                        val channel = result.getOrNull()
+                        return if (channel != null) {
+                            peer.recordDirectEndpointAttempt(endpoint, result = "connected")
+                            channel
+                        } else {
+                            peer.recordDirectEndpointAttempt(
+                                endpoint,
+                                result = "failed",
+                                error = result.exceptionOrNull()?.message ?: "直连打开返回空通道",
+                            )
+                            null
+                        }
                     }
+                    directChannel = quicEndpoint?.let(::attemptDirectEndpoint)
+                        ?: tcpEndpoint?.let(::attemptDirectEndpoint)
                 }
+            } else if (handshake == null) {
+                peer.recordDirectAttempt(
+                    selected = "none",
+                    result = "handshake_failed",
+                    error = handshakeResult.exceptionOrNull()?.message ?: "接收方握手等待失败",
+                )
+            } else {
+                peer.recordDirectAttempt(
+                    selected = "none",
+                    result = "handshake_invalid",
+                    error = "接收方签名校验失败",
+                )
             }
         }
         val channel = directChannel ?: run {
@@ -914,6 +963,12 @@ class P2PTransferClient(
         private var selectedCandidatePair = "none"
         @Volatile
         private var iceCandidatePairStats = "none"
+        @Volatile
+        private var directSelected = "none"
+        @Volatile
+        private var directAttemptResult = "not_attempted"
+        @Volatile
+        private var directLastError = "none"
         private var aborted = false
         @Volatile
         private var abortCallback: (() -> Unit)? = null
@@ -1106,7 +1161,39 @@ class P2PTransferClient(
 
         fun awaitDirectEndpoints(seconds: Long): List<P2PDirectEndpoint> {
             directEndpointLatch.await(seconds, TimeUnit.SECONDS)
-            return directEndpoints.toList()
+            val snapshot = directEndpoints.toList()
+            if (snapshot.isEmpty()) {
+                recordDirectAttempt(
+                    selected = "none",
+                    result = "no_endpoint",
+                    error = "未在 ${seconds}s 内收到 direct_endpoint 信令",
+                )
+            } else if (directAttemptResult == "not_attempted") {
+                recordDirectAttempt(selected = "none", result = "endpoint_received")
+            }
+            return snapshot
+        }
+
+        fun recordDirectAttempt(
+            selected: String = directSelected,
+            result: String,
+            error: String? = null,
+        ) {
+            directSelected = selected.ifBlank { "none" }
+            directAttemptResult = result.ifBlank { "unknown" }
+            directLastError = error?.ifBlank { null } ?: "none"
+        }
+
+        fun recordDirectEndpointAttempt(
+            endpoint: P2PDirectEndpoint,
+            result: String,
+            error: String? = null,
+        ) {
+            recordDirectAttempt(
+                selected = endpoint.directEndpointSummary(),
+                result = result,
+                error = error,
+            )
         }
 
         val isAborted: Boolean
@@ -1118,6 +1205,12 @@ class P2PTransferClient(
         }
 
         fun diagnosticSnapshot(): P2PTransferDiagnostic = P2PTransferDiagnostic(
+            directAttemptPlan = p2pDirectTransportAttemptPlan().directAttemptPlanDescription(),
+            directEndpointCount = directEndpoints.size,
+            directEndpoints = directEndpoints.toList().directEndpointsDescription(),
+            directSelected = directSelected,
+            directAttemptResult = directAttemptResult,
+            directLastError = directLastError,
             offerSent = offerSent,
             answerReceived = answerReceived,
             localIceCount = localIceCount,
