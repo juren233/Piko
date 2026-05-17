@@ -302,7 +302,7 @@ final class NativeP2PTransferClient {
                     if ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex) {
                         if sentFrames[key] != nil, inFlightChunks > 0 {
                             inFlightChunks -= 1
-                            currentInFlightWindow = min(maxInFlightChunks, currentInFlightWindow + 1)
+                            currentInFlightWindow = min(self.maxInFlightChunks, currentInFlightWindow + 1)
                         }
                         confirmedBytes += chunkByteCounts[key] ?? 0
                         if !firstAckLogged {
