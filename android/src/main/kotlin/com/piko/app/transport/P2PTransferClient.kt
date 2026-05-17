@@ -109,6 +109,7 @@ data class P2PTransferDiagnostic(
     val iceGatheringState: String = "unknown",
     val signalingState: String = "unknown",
     val dataChannelState: String = "unknown",
+    val sendFailure: String = "none",
     val iceCandidateErrors: String = "none",
     val selectedCandidatePair: String = "none",
     val iceCandidatePairStats: String = "none",
@@ -1804,8 +1805,13 @@ private class WebRtcBinaryChannel(private val channel: DataChannel) : P2PBinaryC
 
     override fun send(bytes: ByteArray) {
         awaitWritableBuffer()
+        val stateBeforeSend = channel.state()
+        val bufferedBeforeSend = channel.bufferedAmount()
+        require(stateBeforeSend == DataChannel.State.OPEN) {
+            "P2P WebRTC 通道已关闭，无法发送：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size}"
+        }
         require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))) {
-            "P2P 二进制通道发送失败"
+            "P2P WebRTC 通道不可写：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size}"
         }
     }
 

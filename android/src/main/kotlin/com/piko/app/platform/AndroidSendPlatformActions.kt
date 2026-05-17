@@ -839,6 +839,7 @@ private class AndroidTransferClient(
             add("ice_gathering_state：${diagnostic?.iceGatheringState ?: "unknown"}")
             add("signaling_state：${diagnostic?.signalingState ?: "unknown"}")
             add("data_channel_state：${diagnostic?.dataChannelState ?: "unknown"}")
+            add("send_failure：$originalReason")
             add("ice_candidate_errors：${diagnostic?.iceCandidateErrors ?: "none"}")
             add("selected_candidate_pair：${diagnostic?.selectedCandidatePair ?: "none"}")
             add("ice_candidate_pair_stats：${diagnostic?.iceCandidatePairStats ?: "none"}")

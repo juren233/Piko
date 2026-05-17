@@ -94,9 +94,11 @@ struct NativeWebRTCDiagnostic {
     let localCandidateDetails: String
     let remoteCandidateDetails: String
     let iceConnectionState: String
+    let peerConnectionState: String
     let iceGatheringState: String
     let signalingState: String
     let dataChannelState: String
+    let sendFailure: String
     let iceCandidateErrors: String
     let selectedCandidatePair: String
     let iceCandidatePairStats: String
@@ -117,9 +119,11 @@ struct NativeWebRTCDiagnostic {
         localCandidateDetails: "none",
         remoteCandidateDetails: "none",
         iceConnectionState: "unknown",
+        peerConnectionState: "unknown",
         iceGatheringState: "unknown",
         signalingState: "unknown",
         dataChannelState: "unknown",
+        sendFailure: "none",
         iceCandidateErrors: "none",
         selectedCandidatePair: "none",
         iceCandidatePairStats: "none",
@@ -162,9 +166,11 @@ final class NativeWebRTCSession: NSObject {
     private var localCandidateDetails: Set<String> = []
     private var remoteCandidateDetails: Set<String> = []
     private var iceConnectionState = "unknown"
+    private var peerConnectionState = "unknown"
     private var iceGatheringState = "unknown"
     private var signalingState = "unknown"
     private var dataChannelState = "unknown"
+    private var sendFailure = "none"
     private var iceCandidateErrors: [String] = []
     private var selectedCandidatePair = "none"
     private var iceCandidatePairStats = "none"
@@ -184,9 +190,11 @@ final class NativeWebRTCSession: NSObject {
             localCandidateDetails: Self.candidateDetailsDescription(localCandidateDetails),
             remoteCandidateDetails: Self.candidateDetailsDescription(remoteCandidateDetails),
             iceConnectionState: iceConnectionState,
+            peerConnectionState: peerConnectionState,
             iceGatheringState: iceGatheringState,
             signalingState: signalingState,
             dataChannelState: dataChannelState,
+            sendFailure: sendFailure,
             iceCandidateErrors: iceCandidateErrors.joined(separator: ";").nilIfBlank ?? "none",
             selectedCandidatePair: selectedCandidatePair,
             iceCandidatePairStats: iceCandidatePairStats,
@@ -635,9 +643,11 @@ final class NativeWebRTCSession: NSObject {
         iceTransportPolicy: "all"
       });
       post({ kind: "ice_state", value: pc.iceConnectionState });
+      post({ kind: "peer_connection_state", value: pc.connectionState || "unknown" });
       post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
       post({ kind: "signaling_state", value: pc.signalingState });
       pc.oniceconnectionstatechange = () => post({ kind: "ice_state", value: pc.iceConnectionState });
+      pc.onconnectionstatechange = () => post({ kind: "peer_connection_state", value: pc.connectionState || "unknown" });
       pc.onicegatheringstatechange = () => post({ kind: "ice_gathering_state", value: pc.iceGatheringState });
       pc.onsignalingstatechange = () => post({ kind: "signaling_state", value: pc.signalingState });
       pc.onicecandidateerror = (event) => {
@@ -707,11 +717,23 @@ final class NativeWebRTCSession: NSObject {
       post({ kind: "signal", type: "offer", sdp: offer.sdp });
       return true;
     }
-    async function waitForWritableChannel() {
-      if (!channel || channel.readyState !== "open") { return false; }
+    function recordSendFailure(reason, frameBytes) {
+      post({
+        kind: "send_failure",
+        reason: reason || "unknown",
+        state: channel ? channel.readyState : "missing",
+        buffered_bytes: channel ? channel.bufferedAmount : 0,
+        frame_bytes: frameBytes || 0
+      });
+    }
+    async function waitForWritableChannel(frameBytes) {
+      if (!channel || channel.readyState !== "open") {
+        recordSendFailure("channel_not_open", frameBytes);
+        return false;
+      }
       const highWaterMark = 512 * 1024;
       if (channel.bufferedAmount <= highWaterMark) { return true; }
-      return await new Promise((resolve) => {
+      const writable = await new Promise((resolve) => {
         const timeout = setTimeout(() => {
           cleanup();
           resolve(channel && channel.readyState === "open" && channel.bufferedAmount <= highWaterMark);
@@ -726,16 +748,30 @@ final class NativeWebRTCSession: NSObject {
           resolve(channel && channel.readyState === "open");
         };
       });
+      if (!writable) { recordSendFailure("buffer_timeout", frameBytes); }
+      return writable;
     }
     async function sendBase64(value) {
-      if (!await waitForWritableChannel()) { return false; }
-      channel.send(fromBase64(value));
-      return true;
+      const bytes = fromBase64(value);
+      if (!await waitForWritableChannel(bytes.byteLength)) { return false; }
+      try {
+        channel.send(bytes);
+        return true;
+      } catch (error) {
+        recordSendFailure(`send_exception=${error && error.name ? error.name : "unknown"}`, bytes.byteLength);
+        return false;
+      }
     }
     async function sendMultipleBase64(arr) {
       for (const b64 of arr) {
-        if (!await waitForWritableChannel()) { return false; }
-        channel.send(fromBase64(b64));
+        const bytes = fromBase64(b64);
+        if (!await waitForWritableChannel(bytes.byteLength)) { return false; }
+        try {
+          channel.send(bytes);
+        } catch (error) {
+          recordSendFailure(`send_exception=${error && error.name ? error.name : "unknown"}`, bytes.byteLength);
+          return false;
+        }
       }
       return true;
     }
@@ -774,6 +810,10 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             if let value = body["value"] as? String {
                 iceConnectionState = value
             }
+        case "peer_connection_state":
+            if let value = body["value"] as? String {
+                peerConnectionState = value
+            }
         case "ice_gathering_state":
             if let value = body["value"] as? String {
                 iceGatheringState = value
@@ -786,6 +826,12 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             if let value = body["value"] as? String {
                 dataChannelState = value
             }
+        case "send_failure":
+            let reason = (body["reason"] as? String)?.nilIfBlank ?? "unknown"
+            let state = (body["state"] as? String)?.nilIfBlank ?? "unknown"
+            let bufferedBytes = body["buffered_bytes"].map { "\($0)" } ?? "unknown"
+            let frameBytes = body["frame_bytes"].map { "\($0)" } ?? "unknown"
+            sendFailure = "reason=\(reason)|state=\(state)|buffered_bytes=\(bufferedBytes)|frame_bytes=\(frameBytes)"
         case "ice_candidate_error":
             let url = (body["url"] as? String)?.nilIfBlank ?? "unknown-url"
             let address = (body["address"] as? String)?.nilIfBlank ?? "unknown-address"

@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 enum NativeTransferProtocolV3 {
-    static let chunkSize = 256 * 1024
+    static let chunkSize = 64 * 1024
     private static let magic = Data([0x50, 0x49, 0x4B, 0x33])
     private static let frameManifest = 0x01
     private static let frameReady = 0x02

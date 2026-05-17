@@ -56,9 +56,11 @@ private struct NativeP2PFailureDiagnostic {
     let localCandidateDetails: String
     let remoteCandidateDetails: String
     let iceConnectionState: String
+    let peerConnectionState: String
     let iceGatheringState: String
     let signalingState: String
     let dataChannelState: String
+    let sendFailure: String
     let iceCandidateErrors: String
     let selectedCandidatePair: String
     let iceCandidatePairStats: String
@@ -423,9 +425,11 @@ final class NativePikoModel: ObservableObject {
         lines.append("local_candidate_details：\(diagnostic.localCandidateDetails)")
         lines.append("remote_candidate_details：\(diagnostic.remoteCandidateDetails)")
         lines.append("ice_connection_state：\(diagnostic.iceConnectionState)")
+        lines.append("peer_connection_state：\(diagnostic.peerConnectionState)")
         lines.append("ice_gathering_state：\(diagnostic.iceGatheringState)")
         lines.append("signaling_state：\(diagnostic.signalingState)")
         lines.append("data_channel_state：\(diagnostic.dataChannelState)")
+        lines.append("send_failure：\(diagnostic.sendFailure)")
         lines.append("ice_candidate_errors：\(diagnostic.iceCandidateErrors)")
         lines.append("selected_candidate_pair：\(diagnostic.selectedCandidatePair)")
         lines.append("ice_candidate_pair_stats：\(diagnostic.iceCandidatePairStats)")
@@ -467,9 +471,11 @@ final class NativePikoModel: ObservableObject {
                 localCandidateDetails: fields["local_candidate_details"]?.nilIfBlank ?? "none",
                 remoteCandidateDetails: fields["remote_candidate_details"]?.nilIfBlank ?? "none",
                 iceConnectionState: fields["ice_connection_state"]?.nilIfBlank ?? "unknown",
+                peerConnectionState: fields["peer_connection_state"]?.nilIfBlank ?? "unknown",
                 iceGatheringState: fields["ice_gathering_state"]?.nilIfBlank ?? "unknown",
                 signalingState: fields["signaling_state"]?.nilIfBlank ?? "unknown",
                 dataChannelState: fields["data_channel_state"]?.nilIfBlank ?? "unknown",
+                sendFailure: fields["send_failure"]?.nilIfBlank ?? "none",
                 iceCandidateErrors: fields["ice_candidate_errors"]?.nilIfBlank ?? "none",
                 selectedCandidatePair: fields["selected_candidate_pair"]?.nilIfBlank ?? "none",
                 iceCandidatePairStats: fields["ice_candidate_pair_stats"]?.nilIfBlank ?? "none",
@@ -502,9 +508,11 @@ final class NativePikoModel: ObservableObject {
                 localCandidateDetails: "none",
                 remoteCandidateDetails: "none",
                 iceConnectionState: "unknown",
+                peerConnectionState: "unknown",
                 iceGatheringState: "unknown",
                 signalingState: "unknown",
                 dataChannelState: "unknown",
+                sendFailure: "none",
                 iceCandidateErrors: "none",
                 selectedCandidatePair: "none",
                 iceCandidatePairStats: "none",

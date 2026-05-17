@@ -394,9 +394,11 @@ class IosAndroidUiParityTest {
             "local_candidate_details：",
             "remote_candidate_details：",
             "ice_connection_state：",
+            "peer_connection_state：",
             "ice_gathering_state：",
             "signaling_state：",
             "data_channel_state：",
+            "send_failure：",
             "ice_candidate_errors：",
             "selected_candidate_pair：",
             "ice_candidate_pair_stats：",
@@ -530,9 +532,11 @@ class IosAndroidUiParityTest {
             "localCandidateDetails: Self.candidateDetailsDescription(localCandidateDetails)",
             "remoteCandidateDetails: Self.candidateDetailsDescription(remoteCandidateDetails)",
             "iceConnectionState = value",
+            "peerConnectionState = value",
             "iceGatheringState = value",
             "signalingState = value",
             "dataChannelState = value",
+            "sendFailure = \"reason=\\(reason)|state=\\(state)|buffered_bytes=\\(bufferedBytes)|frame_bytes=\\(frameBytes)\"",
             "pc.onicecandidateerror",
             "iceCandidateErrors.append",
             "iceCandidateErrors: iceCandidateErrors.joined",
@@ -814,6 +818,8 @@ class IosAndroidUiParityTest {
             "directAttemptResult",
             "directLastError",
             "stunErrorRate",
+            "peerConnectionState",
+            "sendFailure",
             "gatheringIncomplete",
             "symmetricNatSuspect",
             "remoteOnlyMdns",
@@ -831,8 +837,10 @@ class IosAndroidUiParityTest {
 
         assertTrue("const val chunkSize: Int =" in androidProtocol)
         assertTrue("static let chunkSize =" in iosProtocol)
-        assertTrue("const val chunkSize: Int = 256 * 1024" in androidProtocol)
-        assertTrue("static let chunkSize = 256 * 1024" in iosProtocol)
+        assertTrue("const val chunkSize: Int = 64 * 1024" in androidProtocol)
+        assertTrue("static let chunkSize = 64 * 1024" in iosProtocol)
+        assertFalse("const val chunkSize: Int = 256 * 1024" in androidProtocol)
+        assertFalse("static let chunkSize = 256 * 1024" in iosProtocol)
     }
 
     @Test
@@ -884,6 +892,25 @@ class IosAndroidUiParityTest {
         assertTrue("channel.bufferedAmount()" in androidClient)
         assertTrue("notifyBufferedAmountChanged()" in androidClient)
         assertTrue("onBufferedAmountChange(previousAmount: Long)" in androidClient)
+        assertTrue("stateBeforeSend == DataChannel.State.OPEN" in androidClient)
+        assertTrue("P2P WebRTC 通道不可写" in androidClient)
+        assertTrue("frame_bytes=" in androidClient)
+    }
+
+    @Test
+    fun iosWebRtcDataChannelRecordsSendFailureBeforeReturningFalse() {
+        val iosWebRtc = readIos("NativeWebRTCEngine.swift")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("recordSendFailure(" in iosWebRtc)
+        assertTrue("kind: \"send_failure\"" in iosWebRtc)
+        assertTrue("channel.readyState !== \"open\"" in iosWebRtc)
+        assertTrue("buffered_bytes" in iosWebRtc)
+        assertTrue("frame_bytes" in iosWebRtc)
+        assertTrue("send_exception=" in iosWebRtc)
+        assertTrue("peer_connection_state" in iosWebRtc)
+        assertTrue("send_failure：\\(diagnostic.sendFailure)" in iosClient)
+        assertTrue("peer_connection_state：\\(diagnostic.peerConnectionState)" in iosClient)
     }
 
     @Test
@@ -937,7 +964,7 @@ class IosAndroidUiParityTest {
         }
         assertTrue("in_flight_window=${'$'}P2P_MAX_IN_FLIGHT_CHUNKS" in androidClient)
         assertTrue("in_flight_window=\\(maxInFlightChunks)" in iosClient)
-        assertTrue("256 KiB" in docs)
+        assertTrue("64 KiB" in docs)
         assertTrue("in-flight window 16" in docs)
         assertFalse("chunk_size=1MiB" in docs)
         assertFalse("\"chunk_size\": 1048576" in docs)
