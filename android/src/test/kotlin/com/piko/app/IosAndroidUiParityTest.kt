@@ -225,7 +225,7 @@ class IosAndroidUiParityTest {
         assertTrue("channel.state() == DataChannel.State.OPEN" in androidP2P)
         assertTrue("P2P_MAX_IN_FLIGHT_CHUNKS" in androidP2P)
         assertTrue("confirmedBytes = AtomicLong(0L)" in androidP2P)
-        assertTrue("inFlightPermits.tryAcquire(30, TimeUnit.SECONDS)" in androidP2P)
+        assertTrue("ackWindow.acquire(30, TimeUnit.SECONDS)" in androidP2P)
         assertTrue("TransferProtocolV3.encodeRetry(fileIndex, chunkIndex)" in androidP2P)
         assertTrue("sha256File(tempFile).contentEquals(file.fileHash)" in androidP2P)
         assertFalse("SendTransportPath.P2P -> online &&" in androidState)
@@ -444,12 +444,12 @@ class IosAndroidUiParityTest {
             "fun openDirectChannelRace(",
             "Thread(runnable, \"piko-p2p-direct-race\")",
             "AtomicBoolean(false)",
-            "completion.submit { openDirectRaceChannel() }",
-            "completion.submit { openWebRtcRaceChannel() }",
+            "val directFuture = completion.submit { openDirectRaceChannel() }",
+            "val webRtcFuture = completion.submit { openWebRtcRaceChannel() }",
+            "directCandidate ?: webRtcCandidate",
             "channel = webRtcChannel",
             "transportName = if (endpoint.name == \"quic_ipv6_direct\") \"QUIC 直连通道\" else \"TCP 直连通道\"",
             "transportName = \"WebRTC 通道\"",
-            "peer.recordDirectAttempt(result = \"not_selected\", error = \"WebRTC 通道先完成连接\")",
             "SendTransferEvent.TransportNotice(transferId, \"正在同时尝试直连通道和 WebRTC 通道\")",
             "SendTransferEvent.TransportNotice(transferId, \"已连接\${selectedChannel.transportName}，开始传输文件\")",
             "XQuicDirectTransport",
@@ -522,9 +522,9 @@ class IosAndroidUiParityTest {
         )
         assertInOrder(
             androidP2P,
-            "completion.submit { openDirectRaceChannel() }",
-            "completion.submit { openWebRtcRaceChannel() }",
-            "val selectedChannel = preparedChannel",
+            "val directFuture = completion.submit { openDirectRaceChannel() }",
+            "val webRtcFuture = completion.submit { openWebRtcRaceChannel() }",
+            "directCandidate ?: webRtcCandidate",
             "val channel = selectedChannel.channel",
             "val sessionKey = selectedChannel.sessionKey",
             "TransferProtocolV3.encodeManifest(",
@@ -575,15 +575,15 @@ class IosAndroidUiParityTest {
             "nativeP2PTimingLog(stage: \"create_session_done\"",
             "func openDirectRaceChannel() async -> NativePreparedP2PChannel?",
             "func openWebRTCRaceChannel() async -> NativePreparedP2PChannel?",
-            "NativeP2PConnectionRace(expectedCount: 2)",
             "let directRace = NativeP2PConnectionRace(expectedCount: endpoints.count)",
             "nativeP2PTimingLog(stage: \"direct_endpoint_wait_done\"",
             "nativeP2PTimingLog(stage: \"direct_open_start\"",
             "nativeP2PTimingLog(stage: \"direct_open_done\"",
             "return await directRace.waitForWinner()",
-            "let candidate = await openDirectRaceChannel()",
-            "let candidate = await openWebRTCRaceChannel()",
-            "guard let selectedChannel = await race.waitForWinner()",
+            "let directTask = Task { @MainActor in await openDirectRaceChannel() }",
+            "let webRTCTask = Task { @MainActor in await openWebRTCRaceChannel() }",
+            "let directCandidate = await directTask.value",
+            "guard let selectedChannel = directCandidate ?? webRTCCandidate",
             "sessionContext.sessionKey = selectedChannel.sessionKey",
             "selectedChannel.closeAfterSelectedUse()",
             "candidate.closeIfUnused()",
@@ -591,7 +591,6 @@ class IosAndroidUiParityTest {
             "transportNotice(\"已连接\\(selectedChannel.transportName)，开始传输文件\")",
             "transportName: endpoint.name == \"quic_ipv6_direct\" ? \"QUIC 直连通道\" : \"TCP 直连通道\"",
             "transportName: \"WebRTC 通道\"",
-            "directTracker.recordAttempt(result: \"not_selected\", error: \"WebRTC 通道先完成连接\")",
             "func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic",
             "if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == \"none\"",
             "diagnostic.sendFailure = message",
@@ -631,10 +630,10 @@ class IosAndroidUiParityTest {
         )
         assertInOrder(
             iosP2P,
-            "let race = NativeP2PConnectionRace(expectedCount: 2)",
-            "let candidate = await openDirectRaceChannel()",
-            "let candidate = await openWebRTCRaceChannel()",
-            "guard let selectedChannel = await race.waitForWinner()",
+            "let directTask = Task { @MainActor in await openDirectRaceChannel() }",
+            "let webRTCTask = Task { @MainActor in await openWebRTCRaceChannel() }",
+            "let directCandidate = await directTask.value",
+            "guard let selectedChannel = directCandidate ?? webRTCCandidate",
             "let sessionKey = selectedChannel.sessionKey",
             "NativeTransferProtocolV3.encodeManifest(",
         )
@@ -878,7 +877,24 @@ class IosAndroidUiParityTest {
         val iosClient = readIos("NativeP2PTransferClient.swift")
 
         assertTrue("private const val P2P_MAX_IN_FLIGHT_CHUNKS = 16" in androidClient)
+        assertTrue("private const val P2P_INITIAL_IN_FLIGHT_CHUNKS = 2" in androidClient)
+        assertTrue("private class P2PAckWindow" in androidClient)
+        assertTrue("val ackWindow = P2PAckWindow(" in androidClient)
+        assertTrue("initialWindow = P2P_INITIAL_IN_FLIGHT_CHUNKS" in androidClient)
+        assertTrue("ackWindow.acquire(30, TimeUnit.SECONDS)" in androidClient)
+        assertTrue("ackWindow.onAck()" in androidClient)
+        assertTrue("currentWindow" in androidClient)
+        assertTrue("max_in_flight_window=" in androidClient)
+        assertFalse("Semaphore(P2P_MAX_IN_FLIGHT_CHUNKS)" in androidClient)
+
         assertTrue("private let maxInFlightChunks = 16" in iosClient)
+        assertTrue("private let initialInFlightChunks = 2" in iosClient)
+        assertTrue("var currentInFlightWindow = initialInFlightChunks" in iosClient)
+        assertTrue("currentInFlightWindow = min(maxInFlightChunks, currentInFlightWindow + 1)" in iosClient)
+        assertTrue("let ackTarget = queuedChunks - currentInFlightWindow + 1" in iosClient)
+        assertTrue("in_flight_window=\\(currentInFlightWindow)" in iosClient)
+        assertTrue("max_in_flight_window=\\(maxInFlightChunks)" in iosClient)
+        assertFalse("let ackTarget = queuedChunks - maxInFlightChunks + 1" in iosClient)
     }
 
     @Test
@@ -1018,10 +1034,28 @@ class IosAndroidUiParityTest {
             "in_flight_chunks=",
             "confirmed_bytes=",
             "in_flight_window=",
+            "max_in_flight_window=",
         ).forEach { marker ->
             assertTrue(marker in androidClient, "Android ACK timeout diagnostic must include $marker")
             assertTrue(marker in iosClient, "iOS ACK timeout diagnostic must include $marker")
         }
+    }
+
+    @Test
+    fun p2pConnectionRacePrefersDirectCandidateBeforeWebRtcFallback() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("val directFuture = completion.submit { openDirectRaceChannel() }" in androidClient)
+        assertTrue("val webRtcFuture = completion.submit { openWebRtcRaceChannel() }" in androidClient)
+        assertTrue("directCandidate ?: webRtcCandidate" in androidClient)
+        assertFalse("peer.recordDirectAttempt(result = \"not_selected\", error = \"WebRTC 通道先完成连接\")" in androidClient)
+
+        assertTrue("let directTask = Task { @MainActor in await openDirectRaceChannel() }" in iosClient)
+        assertTrue("let webRTCTask = Task { @MainActor in await openWebRTCRaceChannel() }" in iosClient)
+        assertTrue("guard let selectedChannel = directCandidate ?? webRTCCandidate" in iosClient)
+        assertTrue("guard !Task.isCancelled else" in iosClient)
+        assertFalse("directTracker.recordAttempt(result: \"not_selected\", error: \"WebRTC 通道先完成连接\")" in iosClient)
     }
 
     @Test
@@ -1060,8 +1094,8 @@ class IosAndroidUiParityTest {
             assertTrue(field in iosClient, "iOS P2P throughput log must include $field")
             assertTrue(field in docs, "cross-network transfer docs must include $field")
         }
-        assertTrue("in_flight_window=${'$'}P2P_MAX_IN_FLIGHT_CHUNKS" in androidClient)
-        assertTrue("in_flight_window=\\(maxInFlightChunks)" in iosClient)
+        assertTrue("in_flight_window=${'$'}{ackWindow.currentWindow} max_in_flight_window=${'$'}P2P_MAX_IN_FLIGHT_CHUNKS" in androidClient)
+        assertTrue("in_flight_window=\\(currentInFlightWindow) max_in_flight_window=\\(maxInFlightChunks)" in iosClient)
         assertTrue("256 KiB" in docs)
         assertTrue("in-flight window 16" in docs)
         assertFalse("chunk_size=1MiB" in docs)

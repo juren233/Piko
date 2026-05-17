@@ -61,6 +61,7 @@ final class NativeP2PTransferClient {
     private var senderAbortCallbacks: [String: () -> Void] = [:]
     private let progressStore = NativeTransferProgressStore()
     private let maxInFlightChunks = 16
+    private let initialInFlightChunks = 2
 
     init(
         authStore: NativeAuthStore,
@@ -215,6 +216,8 @@ final class NativeP2PTransferClient {
             var chunkByteCounts: [String: Int] = [:]
             var confirmedBytes = 0
             var queuedChunks = 0
+            var inFlightChunks = 0
+            var currentInFlightWindow = initialInFlightChunks
             var transferDataStartedAt: Date?
             var receiverReadyLogged = false
             var firstAckLogged = false
@@ -242,7 +245,7 @@ final class NativeP2PTransferClient {
                 return diagnostic
             }
             func attachAckTimeoutDiagnostic(_ diagnostic: inout NativeWebRTCDiagnostic, message: String) {
-                let ackDetail = "\(message)|acked_chunks=\(ackTracker.ackedCount)|total_chunks=\(totalChunks)|in_flight_chunks=\(max(queuedChunks - ackTracker.ackedCount, 0))|confirmed_bytes=\(confirmedBytes)|in_flight_window=\(maxInFlightChunks)"
+                let ackDetail = "\(message)|acked_chunks=\(ackTracker.ackedCount)|total_chunks=\(totalChunks)|in_flight_chunks=\(inFlightChunks)|confirmed_bytes=\(confirmedBytes)|in_flight_window=\(currentInFlightWindow)|max_in_flight_window=\(maxInFlightChunks)"
                 if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == "none" || diagnostic.sendFailure == message {
                     diagnostic.sendFailure = ackDetail
                 } else {
@@ -269,7 +272,7 @@ final class NativeP2PTransferClient {
                     sessionId: config.sessionId,
                     transferId: transferId,
                     startedAt: timingStartedAt,
-                    detail: "transport=\(selectedTransportName) completed_bytes=\(completed) elapsed_ms=\(elapsedMs) throughput_bps=\(throughputBps) in_flight_window=\(maxInFlightChunks) retry_count=\(retryCount)"
+                    detail: "transport=\(selectedTransportName) completed_bytes=\(completed) elapsed_ms=\(elapsedMs) throughput_bps=\(throughputBps) in_flight_window=\(currentInFlightWindow) max_in_flight_window=\(maxInFlightChunks) retry_count=\(retryCount)"
                 )
             }
             diagnosticSnapshot = { diagnosticWithDirect(.empty) }
@@ -297,6 +300,10 @@ final class NativeP2PTransferClient {
                 case .ack(let fileIndex, let chunkIndex):
                     let key = chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)
                     if ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex) {
+                        if sentFrames[key] != nil, inFlightChunks > 0 {
+                            inFlightChunks -= 1
+                            currentInFlightWindow = min(maxInFlightChunks, currentInFlightWindow + 1)
+                        }
                         confirmedBytes += chunkByteCounts[key] ?? 0
                         if !firstAckLogged {
                             nativeP2PTimingLog(stage: "first_ack_received", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "completed_bytes=\(confirmedBytes)")
@@ -423,6 +430,9 @@ final class NativeP2PTransferClient {
                 return nil
             }
             func openWebRTCRaceChannel() async -> NativePreparedP2PChannel? {
+                guard !Task.isCancelled else {
+                    return nil
+                }
                 let session = makeSession(
                     sessionId: config.sessionId,
                     iceServers: config.iceServers,
@@ -439,13 +449,25 @@ final class NativeP2PTransferClient {
                     let base = await session.diagnosticSnapshotWithStats()
                     return diagnosticWithDirect(base)
                 }
+                guard !Task.isCancelled else {
+                    closeWebRTCSessionIfStored()
+                    return nil
+                }
                 guard await session.createOffer() else {
                     recordRaceFailure(stage: "data_channel_open", code: "OFFER_FAILED", message: "WebRTC offer 创建失败")
                     closeWebRTCSessionIfStored()
                     return nil
                 }
+                guard !Task.isCancelled else {
+                    closeWebRTCSessionIfStored()
+                    return nil
+                }
                 nativeP2PTimingLog(stage: "webrtc_offer_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
                 var opened = await session.waitUntilOpen(seconds: NativeP2PTiming.initialOpenWaitSeconds)
+                guard !Task.isCancelled else {
+                    closeWebRTCSessionIfStored()
+                    return nil
+                }
                 if !opened && !receiverReadyTracker.isAborted {
                     let initialDiagnostic = await session.diagnosticSnapshotWithStats()
                     if !NativeP2PDiagnostics.shouldContinueWaitingForIce(initialDiagnostic) {
@@ -456,6 +478,10 @@ final class NativeP2PTransferClient {
                     nativeP2PTimingLog(stage: "webrtc_early_ice_restart", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "wait_seconds=\(Int(NativeP2PTiming.initialOpenWaitSeconds))")
                     _ = await session.restartIce()
                     opened = await session.waitUntilOpen(seconds: NativeP2PTiming.restartOpenWaitSeconds)
+                }
+                guard !Task.isCancelled else {
+                    closeWebRTCSessionIfStored()
+                    return nil
                 }
                 guard opened else {
                     closeWebRTCSessionIfStored()
@@ -472,6 +498,10 @@ final class NativeP2PTransferClient {
                     closeWebRTCSessionIfStored()
                     return nil
                 }
+                guard !Task.isCancelled else {
+                    closeWebRTCSessionIfStored()
+                    return nil
+                }
                 return NativePreparedP2PChannel(
                     sessionKey: sessionKey,
                     transportName: "WebRTC 通道",
@@ -483,16 +513,18 @@ final class NativeP2PTransferClient {
                 )
             }
             transportNotice("正在同时尝试直连通道和 WebRTC 通道")
-            let race = NativeP2PConnectionRace(expectedCount: 2)
-            Task { @MainActor in
-                let candidate = await openDirectRaceChannel()
-                race.submit(candidate)
+            let directTask = Task { @MainActor in await openDirectRaceChannel() }
+            let webRTCTask = Task { @MainActor in await openWebRTCRaceChannel() }
+            let directCandidate = await directTask.value
+            let webRTCCandidate: NativePreparedP2PChannel?
+            if directCandidate != nil {
+                webRTCTask.cancel()
+                sessions.removeValue(forKey: config.sessionId)?.close()
+                webRTCCandidate = nil
+            } else {
+                webRTCCandidate = await webRTCTask.value
             }
-            Task { @MainActor in
-                let candidate = await openWebRTCRaceChannel()
-                race.submit(candidate)
-            }
-            guard let selectedChannel = await race.waitForWinner() else {
+            guard let selectedChannel = directCandidate ?? webRTCCandidate else {
                 var diagnostic = await diagnosticSnapshot()
                 let abortedByPeer = receiverReadyTracker.isAborted
                 closeSession(config.sessionId)
@@ -513,9 +545,6 @@ final class NativeP2PTransferClient {
             sendBatch = selectedChannel.sendBatch
             let sessionKey = selectedChannel.sessionKey
             selectedTransportName = selectedChannel.transportName
-            if selectedChannel.transportName == "WebRTC 通道" {
-                directTracker.recordAttempt(result: "not_selected", error: "WebRTC 通道先完成连接")
-            }
             nativeP2PTimingLog(stage: "race_winner", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
             transportNotice("已连接\(selectedChannel.transportName)，开始传输文件")
             let peerCompletedChunks = NativeTransferProgressStore.decodeCompletedBitmap(selectedChannel.completedBitmapB64)
@@ -535,7 +564,7 @@ final class NativeP2PTransferClient {
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
                 return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: message, diagnostic: diagnostic))
             }
-            nativeP2PTimingLog(stage: "manifest_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "chunk_size_bytes=\(NativeTransferProtocolV3.chunkSize) in_flight_window=\(maxInFlightChunks)")
+            nativeP2PTimingLog(stage: "manifest_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "chunk_size_bytes=\(NativeTransferProtocolV3.chunkSize) in_flight_window=\(currentInFlightWindow) max_in_flight_window=\(maxInFlightChunks)")
             guard await receiverReadyTracker.wait(seconds: 120) else {
                 let abortedByPeer = receiverReadyTracker.isAborted
                 let message = abortedByPeer ? "对方已取消接收" : "等待接收端确认超时"
@@ -632,6 +661,7 @@ final class NativeP2PTransferClient {
                     pendingChunkBatchBytes += chunkFrame.count
                     sentFrames[key] = chunkFrame
                     queuedChunks += 1
+                    inFlightChunks += 1
                     chunkIndex += 1
                     if pendingChunkBatch.count >= nativeP2PWebRtcChunkBatchLimit || pendingChunkBatchBytes >= nativeP2PWebRtcChunkBatchBytes {
                         guard await flushChunkBatch() else {
@@ -648,7 +678,7 @@ final class NativeP2PTransferClient {
                             firstChunkLogged = true
                         }
                     }
-                    let ackTarget = queuedChunks - maxInFlightChunks + 1
+                    let ackTarget = queuedChunks - currentInFlightWindow + 1
                     if ackTarget > 0, !Task.isCancelled {
                         guard await flushChunkBatch() else {
                             let message = "文件分片发送失败"

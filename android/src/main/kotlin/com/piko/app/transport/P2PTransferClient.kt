@@ -65,6 +65,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
 
 private const val P2P_MAX_IN_FLIGHT_CHUNKS = 16
+private const val P2P_INITIAL_IN_FLIGHT_CHUNKS = 2
 private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
 private const val P2P_WEBRTC_BUFFER_HIGH_WATERMARK_BYTES = 1 * 1024 * 1024L
 private const val P2P_WEBRTC_BUFFER_LOW_WATERMARK_BYTES = 512 * 1024L
@@ -288,6 +289,10 @@ class P2PTransferClient(
         val firstAckLogged = AtomicBoolean(false)
         val retryCount = AtomicLong(0L)
         val lastThroughputLogBytes = AtomicLong(0L)
+        val ackWindow = P2PAckWindow(
+            initialWindow = P2P_INITIAL_IN_FLIGHT_CHUNKS,
+            maxWindow = P2P_MAX_IN_FLIGHT_CHUNKS,
+        )
         fun logThroughput(completed: Long, force: Boolean = false) {
             if (completed <= 0L) return
             val startedAt = transferDataStartedAt.get()
@@ -303,7 +308,7 @@ class P2PTransferClient(
             val throughputBps = (completed * 1000L) / elapsedMs
             logTiming(
                 if (force) "transfer_done" else "throughput",
-                "transport=${selectedTransportName.get()} completed_bytes=$completed elapsed_ms=$elapsedMs throughput_bps=$throughputBps in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS retry_count=${retryCount.get()}",
+                "transport=${selectedTransportName.get()} completed_bytes=$completed elapsed_ms=$elapsedMs throughput_bps=$throughputBps in_flight_window=${ackWindow.currentWindow} max_in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS retry_count=${retryCount.get()}",
             )
         }
         logTiming("create_session_done")
@@ -311,7 +316,6 @@ class P2PTransferClient(
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
         val chunkByteCounts = ConcurrentHashMap<ChunkKey, Long>()
         val confirmedBytes = AtomicLong(0L)
-        val inFlightPermits = Semaphore(P2P_MAX_IN_FLIGHT_CHUNKS)
         val totalChunks = manifestFiles.sumOf { TransferProtocolV3.chunkCount(it.sizeBytes) }
         val ackLatch = CountDownLatch(totalChunks)
         val receiverReadyLatch = CountDownLatch(1)
@@ -332,7 +336,7 @@ class P2PTransferClient(
                     ackedChunks = ackedChunks,
                     ackLatch = ackLatch,
                     receiverReadyLatch = receiverReadyLatch,
-                    inFlightPermits = inFlightPermits,
+                    ackWindow = ackWindow,
                     confirmedBytes = confirmedBytes,
                     totalCompletedBeforeTarget = totalCompletedBeforeTarget,
                     totalBytes = totalBytes,
@@ -354,7 +358,7 @@ class P2PTransferClient(
         )
         peers[session.sessionId] = peer
         peer.setAbortCallback {
-            inFlightPermits.release(P2P_MAX_IN_FLIGHT_CHUNKS)
+            ackWindow.abort()
             while (ackLatch.count > 0) ackLatch.countDown()
             receiverReadyLatch.countDown()
         }
@@ -390,7 +394,7 @@ class P2PTransferClient(
                 ackedChunks = ackedChunks,
                 ackLatch = ackLatch,
                 receiverReadyLatch = receiverReadyLatch,
-                inFlightPermits = inFlightPermits,
+                ackWindow = ackWindow,
                 confirmedBytes = confirmedBytes,
                 totalCompletedBeforeTarget = totalCompletedBeforeTarget,
                 totalBytes = totalBytes,
@@ -607,29 +611,29 @@ class P2PTransferClient(
             Thread(runnable, "piko-p2p-connect-race").apply { isDaemon = true }
         }
         val completion = ExecutorCompletionService<P2PPreparedChannel?>(raceExecutor)
-        val futures = listOf(
-            completion.submit { openDirectRaceChannel() },
-            completion.submit { openWebRtcRaceChannel() },
-        )
-        var preparedChannel: P2PPreparedChannel? = null
+        val directFuture = completion.submit { openDirectRaceChannel() }
+        val webRtcFuture = completion.submit { openWebRtcRaceChannel() }
         var lastFailure: Throwable? = null
-        try {
-            var remainingAttempts = futures.size
-            while (remainingAttempts > 0 && preparedChannel == null) {
-                remainingAttempts -= 1
-                val future = completion.take()
-                val candidate = runCatching { future.get() }
+        val selectedChannel = try {
+            val directCandidate = runCatching { directFuture.get() }
+                .onFailure { lastFailure = it.cause ?: it }
+                .getOrNull()
+            val webRtcCandidate = if (directCandidate == null) {
+                runCatching { webRtcFuture.get() }
                     .onFailure { lastFailure = it.cause ?: it }
                     .getOrNull()
-                if (candidate != null) {
-                    preparedChannel = candidate
+            } else {
+                if (webRtcFuture.isDone) {
+                    runCatching { webRtcFuture.get()?.channel?.close() }
                 }
+                null
             }
+            directCandidate ?: webRtcCandidate
         } finally {
-            futures.forEach { future -> if (!future.isDone) future.cancel(true) }
+            if (!directFuture.isDone) directFuture.cancel(true)
+            if (!webRtcFuture.isDone) webRtcFuture.cancel(true)
             raceExecutor.shutdownNow()
-        }
-        val selectedChannel = preparedChannel ?: run {
+        } ?: run {
             lastFailure?.let { error ->
                 if (error is P2PTransferFailure) throw error
             }
@@ -647,9 +651,6 @@ class P2PTransferClient(
         val channel = selectedChannel.channel
         val peerHandshake = selectedChannel.handshake
         val sessionKey = selectedChannel.sessionKey
-        if (selectedChannel.transportName == "WebRTC 通道") {
-            peer.recordDirectAttempt(result = "not_selected", error = "WebRTC 通道先完成连接")
-        }
         selectedTransportName.set(selectedChannel.transportName)
         logTiming("race_winner", "transport=${selectedChannel.transportName}")
         callback(SendTransferEvent.TransportNotice(transferId, "已连接${selectedChannel.transportName}，开始传输文件"))
@@ -694,7 +695,7 @@ class P2PTransferClient(
                 cause = error,
             )
         }
-        logTiming("manifest_sent", "chunk_size_bytes=${TransferProtocolV3.chunkSize} in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS")
+        logTiming("manifest_sent", "chunk_size_bytes=${TransferProtocolV3.chunkSize} in_flight_window=${ackWindow.currentWindow} max_in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS")
         if (!receiverReadyLatch.await(120, TimeUnit.SECONDS) || peer.isAborted) {
             val abortedByPeer = peer.isAborted
             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时"
@@ -762,7 +763,7 @@ class P2PTransferClient(
                             )
                         }
                         sentFrames[chunkKey] = chunkFrame
-                        if (!inFlightPermits.tryAcquire(30, TimeUnit.SECONDS) || peer.isAborted) {
+                        if (!ackWindow.acquire(30, TimeUnit.SECONDS) || peer.isAborted) {
                             val abortedByPeer = peer.isAborted
                             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
                             val baseDiagnostic = peer.diagnosticSnapshot()
@@ -775,7 +776,7 @@ class P2PTransferClient(
                                         existingSendFailure = baseDiagnostic.sendFailure,
                                         ackedChunks = ackedChunks,
                                         totalChunks = totalChunks,
-                                        inFlightPermits = inFlightPermits,
+                                        ackWindow = ackWindow,
                                         confirmedBytes = confirmedBytes,
                                     )
                                 },
@@ -795,7 +796,7 @@ class P2PTransferClient(
                         }.getOrElse { error ->
                             val reason = error.message ?: "文件分片发送失败"
                             val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
-                            inFlightPermits.release()
+                            ackWindow.releaseSendSlot()
                             peer.close()
                             peers.remove(session.sessionId)
                             throw P2PTransferFailure(
@@ -844,7 +845,7 @@ class P2PTransferClient(
                         existingSendFailure = baseDiagnostic.sendFailure,
                         ackedChunks = ackedChunks,
                         totalChunks = totalChunks,
-                        inFlightPermits = inFlightPermits,
+                        ackWindow = ackWindow,
                         confirmedBytes = confirmedBytes,
                     )
                 },
@@ -1850,15 +1851,96 @@ private class BlockingSdpObserver : SdpObserver {
 
 private data class ChunkKey(val fileIndex: Int, val chunkIndex: Int)
 
+private class P2PAckWindow(
+    initialWindow: Int,
+    private val maxWindow: Int,
+) {
+    private val lock = ReentrantLock()
+    private val permits = Semaphore(initialWindow.coerceIn(1, maxWindow))
+    private var current = initialWindow.coerceIn(1, maxWindow)
+    private var inFlight = 0
+
+    val currentWindow: Int
+        get() {
+            lock.lock()
+            return try {
+                current
+            } finally {
+                lock.unlock()
+            }
+        }
+
+    val inFlightChunks: Int
+        get() {
+            lock.lock()
+            return try {
+                inFlight
+            } finally {
+                lock.unlock()
+            }
+        }
+
+    fun acquire(timeout: Long, unit: TimeUnit): Boolean {
+        if (!permits.tryAcquire(timeout, unit)) return false
+        lock.lock()
+        try {
+            inFlight += 1
+        } finally {
+            lock.unlock()
+        }
+        return true
+    }
+
+    fun onAck() {
+        var releaseCount = 0
+        lock.lock()
+        try {
+            if (inFlight > 0) {
+                inFlight -= 1
+                releaseCount += 1
+            }
+            if (current < maxWindow) {
+                current += 1
+                releaseCount += 1
+            }
+        } finally {
+            lock.unlock()
+        }
+        if (releaseCount > 0) {
+            permits.release(releaseCount)
+        }
+    }
+
+    fun releaseSendSlot() {
+        var shouldRelease = false
+        lock.lock()
+        try {
+            if (inFlight > 0) {
+                inFlight -= 1
+                shouldRelease = true
+            }
+        } finally {
+            lock.unlock()
+        }
+        if (shouldRelease) {
+            permits.release()
+        }
+    }
+
+    fun abort() {
+        permits.release(maxWindow)
+    }
+}
+
 private fun ackTimeoutSendFailure(
     baseReason: String,
     existingSendFailure: String,
     ackedChunks: Set<ChunkKey>,
     totalChunks: Int,
-    inFlightPermits: Semaphore,
+    ackWindow: P2PAckWindow,
     confirmedBytes: AtomicLong,
 ): String {
-    val detail = "$baseReason|acked_chunks=${ackedChunks.size}|total_chunks=$totalChunks|in_flight_chunks=${P2P_MAX_IN_FLIGHT_CHUNKS - inFlightPermits.availablePermits()}|confirmed_bytes=${confirmedBytes.get()}|in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS"
+    val detail = "$baseReason|acked_chunks=${ackedChunks.size}|total_chunks=$totalChunks|in_flight_chunks=${ackWindow.inFlightChunks}|confirmed_bytes=${confirmedBytes.get()}|in_flight_window=${ackWindow.currentWindow}|max_in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS"
     return if (existingSendFailure.isBlank() || existingSendFailure == "none" || existingSendFailure == baseReason) {
         detail
     } else {
@@ -2382,7 +2464,7 @@ private fun handleSenderControlFrame(
     ackedChunks: MutableSet<ChunkKey>,
     ackLatch: CountDownLatch,
     receiverReadyLatch: CountDownLatch,
-    inFlightPermits: Semaphore,
+    ackWindow: P2PAckWindow,
     confirmedBytes: AtomicLong,
     totalCompletedBeforeTarget: Long,
     totalBytes: Long,
@@ -2404,7 +2486,9 @@ private fun handleSenderControlFrame(
             val chunkKey = ChunkKey(frame.fileIndex, frame.chunkIndex)
             if (ackedChunks.add(chunkKey)) {
                 ackLatch.countDown()
-                inFlightPermits.release()
+                if (sentFrames.containsKey(chunkKey)) {
+                    ackWindow.onAck()
+                }
                 val completed = confirmedBytes.addAndGet(chunkByteCounts[chunkKey] ?: 0L)
                 onAckProgress(completed)
                 callback(
