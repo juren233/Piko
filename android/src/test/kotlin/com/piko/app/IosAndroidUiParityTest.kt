@@ -536,7 +536,7 @@ class IosAndroidUiParityTest {
             "iceGatheringState = value",
             "signalingState = value",
             "dataChannelState = value",
-            "sendFailure = \"reason=\\(reason)|state=\\(state)|buffered_bytes=\\(bufferedBytes)|frame_bytes=\\(frameBytes)\"",
+            "sendFailure = \"reason=\\(reason)|state=\\(state)|buffered_bytes=\\(bufferedBytes)|frame_bytes=\\(frameBytes)|fragment_bytes=\\(fragmentBytes)\"",
             "pc.onicecandidateerror",
             "iceCandidateErrors.append",
             "iceCandidateErrors: iceCandidateErrors.joined",
@@ -837,10 +837,10 @@ class IosAndroidUiParityTest {
 
         assertTrue("const val chunkSize: Int =" in androidProtocol)
         assertTrue("static let chunkSize =" in iosProtocol)
-        assertTrue("const val chunkSize: Int = 64 * 1024" in androidProtocol)
-        assertTrue("static let chunkSize = 64 * 1024" in iosProtocol)
-        assertFalse("const val chunkSize: Int = 256 * 1024" in androidProtocol)
-        assertFalse("static let chunkSize = 256 * 1024" in iosProtocol)
+        assertTrue("const val chunkSize: Int = 256 * 1024" in androidProtocol)
+        assertTrue("static let chunkSize = 256 * 1024" in iosProtocol)
+        assertFalse("const val chunkSize: Int = 64 * 1024" in androidProtocol)
+        assertFalse("static let chunkSize = 64 * 1024" in iosProtocol)
     }
 
     @Test
@@ -898,6 +898,24 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun androidWebRtcSplitsLargeFramesIntoTransportFragments() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+
+        assertTrue("P2P_WEBRTC_FRAGMENT_MAGIC" in androidClient)
+        assertTrue("P2P_WEBRTC_FRAGMENT_VERSION" in androidClient)
+        assertTrue("P2P_WEBRTC_FRAGMENT_HEADER_BYTES = 26" in androidClient)
+        assertTrue("P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES = 32 * 1024" in androidClient)
+        assertTrue("P2P_WEBRTC_MAX_REASSEMBLY_BYTES = 2 * 1024 * 1024" in androidClient)
+        assertTrue("P2P_WEBRTC_MAX_REASSEMBLY_FRAGMENTS" in androidClient)
+        assertTrue("sendFragmented(bytes)" in androidClient)
+        assertTrue("encodeWebRtcFragments(nextFrameId.getAndIncrement(), bytes)" in androidClient)
+        assertTrue("WebRtcFrameReassembler" in androidClient)
+        assertTrue("runCatching { reassembler.accept(bytes) }.getOrDefault(emptyList())" in androidClient)
+        assertTrue("binaryChannel.reassemble(bytes).forEach" in androidClient)
+        assertTrue("fragment_bytes=" in androidClient)
+    }
+
+    @Test
     fun iosWebRtcDataChannelRecordsSendFailureBeforeReturningFalse() {
         val iosWebRtc = readIos("NativeWebRTCEngine.swift")
         val iosClient = readIos("NativeP2PTransferClient.swift")
@@ -907,10 +925,28 @@ class IosAndroidUiParityTest {
         assertTrue("channel.readyState !== \"open\"" in iosWebRtc)
         assertTrue("buffered_bytes" in iosWebRtc)
         assertTrue("frame_bytes" in iosWebRtc)
+        assertTrue("fragment_bytes" in iosWebRtc)
         assertTrue("send_exception=" in iosWebRtc)
         assertTrue("peer_connection_state" in iosWebRtc)
         assertTrue("send_failure：\\(diagnostic.sendFailure)" in iosClient)
         assertTrue("peer_connection_state：\\(diagnostic.peerConnectionState)" in iosClient)
+    }
+
+    @Test
+    fun iosWebRtcSplitsLargeFramesIntoTransportFragments() {
+        val iosWebRtc = readIos("NativeWebRTCEngine.swift")
+
+        assertTrue("const FRAGMENT_MAGIC" in iosWebRtc)
+        assertTrue("const FRAGMENT_VERSION = 1" in iosWebRtc)
+        assertTrue("const FRAGMENT_HEADER_BYTES = 26" in iosWebRtc)
+        assertTrue("const FRAGMENT_PAYLOAD_BYTES = 32 * 1024" in iosWebRtc)
+        assertTrue("const FRAGMENT_MAX_REASSEMBLY_BYTES = 2 * 1024 * 1024" in iosWebRtc)
+        assertTrue("const FRAGMENT_MAX_REASSEMBLY_FRAGMENTS = Math.ceil(FRAGMENT_MAX_REASSEMBLY_BYTES / FRAGMENT_PAYLOAD_BYTES)" in iosWebRtc)
+        assertTrue("function fragmentFrame(bytes)" in iosWebRtc)
+        assertTrue("function acceptFragment(bytes)" in iosWebRtc)
+        assertTrue("async function sendBytes(bytes)" in iosWebRtc)
+        assertTrue("for (const fragment of fragmentFrame(bytes))" in iosWebRtc)
+        assertTrue("for (const frame of acceptFragment(new Uint8Array(buffer)))" in iosWebRtc)
     }
 
     @Test
@@ -964,7 +1000,7 @@ class IosAndroidUiParityTest {
         }
         assertTrue("in_flight_window=${'$'}P2P_MAX_IN_FLIGHT_CHUNKS" in androidClient)
         assertTrue("in_flight_window=\\(maxInFlightChunks)" in iosClient)
-        assertTrue("64 KiB" in docs)
+        assertTrue("256 KiB" in docs)
         assertTrue("in-flight window 16" in docs)
         assertFalse("chunk_size=1MiB" in docs)
         assertFalse("\"chunk_size\": 1048576" in docs)

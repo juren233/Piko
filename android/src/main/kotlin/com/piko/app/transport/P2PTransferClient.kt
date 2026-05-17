@@ -51,6 +51,7 @@ import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.Collections
+import java.util.LinkedHashMap
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CountDownLatch
@@ -68,6 +69,14 @@ private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
 private const val P2P_WEBRTC_BUFFER_HIGH_WATERMARK_BYTES = 1 * 1024 * 1024L
 private const val P2P_WEBRTC_BUFFER_LOW_WATERMARK_BYTES = 512 * 1024L
 private const val P2P_WEBRTC_BUFFER_WAIT_TIMEOUT_MS = 15_000L
+private const val P2P_WEBRTC_FRAGMENT_MAGIC = 0x504B4631
+private const val P2P_WEBRTC_FRAGMENT_VERSION = 1
+private const val P2P_WEBRTC_FRAGMENT_HEADER_BYTES = 26
+private const val P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES = 32 * 1024
+private const val P2P_WEBRTC_REASSEMBLY_TIMEOUT_MS = 30_000L
+private const val P2P_WEBRTC_MAX_REASSEMBLY_BYTES = 2 * 1024 * 1024
+private const val P2P_WEBRTC_MAX_REASSEMBLY_FRAGMENTS =
+    (P2P_WEBRTC_MAX_REASSEMBLY_BYTES + P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES - 1) / P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES
 private const val P2P_THROUGHPUT_LOG_INTERVAL_BYTES = 32 * 1024 * 1024L
 private const val P2P_DIRECT_ENDPOINT_WAIT_SECONDS = 5L
 private const val P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L
@@ -1216,7 +1225,9 @@ class P2PTransferClient(
                             override fun onMessage(buffer: DataChannel.Buffer) {
                                 val bytes = ByteArray(buffer.data.remaining())
                                 buffer.data.get(bytes)
-                                receiver?.receive(bytes, binaryChannel)
+                                binaryChannel.reassemble(bytes).forEach { frame ->
+                                    receiver?.receive(frame, binaryChannel)
+                                }
                             }
                         })
                     }
@@ -1241,7 +1252,9 @@ class P2PTransferClient(
                 override fun onMessage(buffer: DataChannel.Buffer) {
                     val bytes = ByteArray(buffer.data.remaining())
                     buffer.data.get(bytes)
-                    onBinary?.invoke(bytes, binaryChannel)
+                    binaryChannel.reassemble(bytes).forEach { frame ->
+                        onBinary?.invoke(frame, binaryChannel)
+                    }
                 }
             })
             val offer = createSdp { observer ->
@@ -1799,19 +1812,30 @@ private interface P2PBinaryChannel {
 private class WebRtcBinaryChannel(private val channel: DataChannel) : P2PBinaryChannel {
     private val bufferLock = ReentrantLock()
     private val bufferDrained = bufferLock.newCondition()
+    private val nextFrameId = AtomicLong(1L)
+    private val reassembler = WebRtcFrameReassembler()
 
     override val isOpen: Boolean
         get() = channel.state() == DataChannel.State.OPEN
 
     override fun send(bytes: ByteArray) {
-        awaitWritableBuffer()
-        val stateBeforeSend = channel.state()
-        val bufferedBeforeSend = channel.bufferedAmount()
-        require(stateBeforeSend == DataChannel.State.OPEN) {
-            "P2P WebRTC 通道已关闭，无法发送：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size}"
-        }
-        require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))) {
-            "P2P WebRTC 通道不可写：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size}"
+        sendFragmented(bytes)
+    }
+
+    fun reassemble(bytes: ByteArray): List<ByteArray> =
+        runCatching { reassembler.accept(bytes) }.getOrDefault(emptyList())
+
+    private fun sendFragmented(bytes: ByteArray) {
+        encodeWebRtcFragments(nextFrameId.getAndIncrement(), bytes).forEach { fragment ->
+            awaitWritableBuffer()
+            val stateBeforeSend = channel.state()
+            val bufferedBeforeSend = channel.bufferedAmount()
+            require(stateBeforeSend == DataChannel.State.OPEN) {
+                "P2P WebRTC 通道已关闭，无法发送：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size} fragment_bytes=${fragment.size}"
+            }
+            require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(fragment), true))) {
+                "P2P WebRTC 通道不可写：state=$stateBeforeSend buffered_bytes=$bufferedBeforeSend frame_bytes=${bytes.size} fragment_bytes=${fragment.size}"
+            }
         }
     }
 
@@ -1846,6 +1870,86 @@ private class WebRtcBinaryChannel(private val channel: DataChannel) : P2PBinaryC
         }
     }
 }
+
+private fun encodeWebRtcFragments(frameId: Long, bytes: ByteArray): List<ByteArray> {
+    if (bytes.size <= P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES) return listOf(bytes)
+    val count = (bytes.size + P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES - 1) / P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES
+    return List(count) { index ->
+        val start = index * P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES
+        val end = minOf(start + P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES, bytes.size)
+        ByteBuffer.allocate(P2P_WEBRTC_FRAGMENT_HEADER_BYTES + (end - start)).apply {
+            putInt(P2P_WEBRTC_FRAGMENT_MAGIC)
+            put(P2P_WEBRTC_FRAGMENT_VERSION.toByte())
+            put(if (index == count - 1) 0x01 else 0x00)
+            putLong(frameId)
+            putInt(index)
+            putInt(count)
+            putInt(bytes.size)
+            put(bytes, start, end - start)
+        }.array()
+    }
+}
+
+private class WebRtcFrameReassembler {
+    private data class PendingFrame(
+        val totalLength: Int,
+        val createdAtNanos: Long,
+        val fragments: Array<ByteArray?>,
+    )
+
+    private val pending = LinkedHashMap<Long, PendingFrame>()
+    private val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(P2P_WEBRTC_REASSEMBLY_TIMEOUT_MS)
+
+    fun accept(bytes: ByteArray): List<ByteArray> {
+        if (!bytes.hasWebRtcFragmentMagic()) return listOf(bytes)
+        val input = ByteBuffer.wrap(bytes)
+        input.int
+        val version = input.get().toInt() and 0xff
+        require(version == P2P_WEBRTC_FRAGMENT_VERSION) { "P2P WebRTC fragment 版本不支持" }
+        input.get()
+        val frameId = input.long
+        val index = input.int
+        val count = input.int
+        val totalLength = input.int
+        require(count in 1..P2P_WEBRTC_MAX_REASSEMBLY_FRAGMENTS) { "P2P WebRTC fragment 数量异常" }
+        require(totalLength in 1..P2P_WEBRTC_MAX_REASSEMBLY_BYTES) { "P2P WebRTC fragment 总长度异常" }
+        require(index in 0 until count) { "P2P WebRTC fragment 下标异常" }
+        val payload = ByteArray(input.remaining()).also(input::get)
+        require(payload.isNotEmpty() && payload.size <= P2P_WEBRTC_FRAGMENT_PAYLOAD_BYTES) {
+            "P2P WebRTC fragment 载荷长度异常"
+        }
+        cleanupExpired()
+        val pendingFrame = pending.getOrPut(frameId) {
+            PendingFrame(totalLength, System.nanoTime(), arrayOfNulls(count))
+        }
+        require(pendingFrame.totalLength == totalLength && pendingFrame.fragments.size == count) {
+            "P2P WebRTC fragment 元数据冲突"
+        }
+        pendingFrame.fragments[index] = payload
+        if (pendingFrame.fragments.any { it == null }) return emptyList()
+        pending.remove(frameId)
+        val output = ByteArray(totalLength)
+        var offset = 0
+        pendingFrame.fragments.forEach { part ->
+            val fragment = requireNotNull(part)
+            require(offset + fragment.size <= output.size) { "P2P WebRTC fragment 重组长度溢出" }
+            fragment.copyInto(output, offset)
+            offset += fragment.size
+        }
+        require(offset == totalLength) { "P2P WebRTC fragment 重组长度不一致" }
+        return listOf(output)
+    }
+
+    private fun cleanupExpired() {
+        val now = System.nanoTime()
+        val expired = pending.filterValues { frame -> now - frame.createdAtNanos > timeoutNanos }.keys
+        expired.forEach(pending::remove)
+    }
+}
+
+private fun ByteArray.hasWebRtcFragmentMagic(): Boolean =
+    size >= P2P_WEBRTC_FRAGMENT_HEADER_BYTES &&
+        ByteBuffer.wrap(this, 0, 4).int == P2P_WEBRTC_FRAGMENT_MAGIC
 
 private class FramedSocketBinaryChannel(private val socket: Socket) : P2PBinaryChannel {
     private val input = DataInputStream(socket.getInputStream())

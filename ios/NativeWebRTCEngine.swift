@@ -507,8 +507,17 @@ final class NativeWebRTCSession: NSObject {
     const native = window.webkit.messageHandlers.pikoWebRTC;
     let pc = null;
     let channel = null;
+    let nextFrameId = 1;
     const pendingIceCandidates = [];
+    const pendingFragments = new Map();
     const IPV6_DIRECT_CANDIDATE_PRIORITY = 2130706431;
+    const FRAGMENT_MAGIC = [0x50, 0x4B, 0x46, 0x31];
+    const FRAGMENT_VERSION = 1;
+    const FRAGMENT_HEADER_BYTES = 26;
+    const FRAGMENT_PAYLOAD_BYTES = 32 * 1024;
+    const FRAGMENT_REASSEMBLY_TIMEOUT_MS = 30000;
+    const FRAGMENT_MAX_REASSEMBLY_BYTES = 2 * 1024 * 1024;
+    const FRAGMENT_MAX_REASSEMBLY_FRAGMENTS = Math.ceil(FRAGMENT_MAX_REASSEMBLY_BYTES / FRAGMENT_PAYLOAD_BYTES);
     function post(message) { native.postMessage(message); }
     function toBase64(buffer) {
       let binary = "";
@@ -525,6 +534,89 @@ final class NativeWebRTCSession: NSObject {
         bytes[i] = binary.charCodeAt(i);
       }
       return bytes;
+    }
+    function appendUint32(bytes, offset, value) {
+      bytes[offset] = (value >>> 24) & 0xff;
+      bytes[offset + 1] = (value >>> 16) & 0xff;
+      bytes[offset + 2] = (value >>> 8) & 0xff;
+      bytes[offset + 3] = value & 0xff;
+    }
+    function appendUint64(bytes, offset, value) {
+      const high = Math.floor(value / 0x100000000);
+      const low = value >>> 0;
+      appendUint32(bytes, offset, high);
+      appendUint32(bytes, offset + 4, low);
+    }
+    function readUint32(bytes, offset) {
+      return ((bytes[offset] << 24) >>> 0) + (bytes[offset + 1] << 16) + (bytes[offset + 2] << 8) + bytes[offset + 3];
+    }
+    function readUint64(bytes, offset) {
+      return readUint32(bytes, offset) * 0x100000000 + readUint32(bytes, offset + 4);
+    }
+    function hasFragmentMagic(bytes) {
+      return bytes.byteLength >= FRAGMENT_HEADER_BYTES &&
+        FRAGMENT_MAGIC.every((value, index) => bytes[index] === value);
+    }
+    function fragmentFrame(bytes) {
+      if (bytes.byteLength <= FRAGMENT_PAYLOAD_BYTES) { return [bytes]; }
+      const frameId = nextFrameId++;
+      const count = Math.ceil(bytes.byteLength / FRAGMENT_PAYLOAD_BYTES);
+      const fragments = [];
+      for (let index = 0; index < count; index += 1) {
+        const start = index * FRAGMENT_PAYLOAD_BYTES;
+        const end = Math.min(start + FRAGMENT_PAYLOAD_BYTES, bytes.byteLength);
+        const payload = bytes.slice(start, end);
+        const out = new Uint8Array(FRAGMENT_HEADER_BYTES + payload.byteLength);
+        out.set(FRAGMENT_MAGIC, 0);
+        out[4] = FRAGMENT_VERSION;
+        out[5] = index === count - 1 ? 1 : 0;
+        appendUint64(out, 6, frameId);
+        appendUint32(out, 14, index);
+        appendUint32(out, 18, count);
+        appendUint32(out, 22, bytes.byteLength);
+        out.set(payload, FRAGMENT_HEADER_BYTES);
+        fragments.push(out);
+      }
+      return fragments;
+    }
+    function cleanupFragments() {
+      const now = Date.now();
+      for (const [key, pending] of pendingFragments.entries()) {
+        if (now - pending.createdAt > FRAGMENT_REASSEMBLY_TIMEOUT_MS) {
+          pendingFragments.delete(key);
+        }
+      }
+    }
+    function acceptFragment(bytes) {
+      if (!hasFragmentMagic(bytes)) { return [bytes]; }
+      if (bytes[4] !== FRAGMENT_VERSION) { return []; }
+      const frameId = readUint64(bytes, 6);
+      const index = readUint32(bytes, 14);
+      const count = readUint32(bytes, 18);
+      const totalLength = readUint32(bytes, 22);
+      if (count <= 0 || count > FRAGMENT_MAX_REASSEMBLY_FRAGMENTS || totalLength <= 0 || totalLength > FRAGMENT_MAX_REASSEMBLY_BYTES || index >= count) { return []; }
+      const payload = bytes.slice(FRAGMENT_HEADER_BYTES);
+      if (payload.byteLength <= 0 || payload.byteLength > FRAGMENT_PAYLOAD_BYTES) { return []; }
+      const key = String(frameId);
+      const pending = pendingFragments.get(key) || {
+        totalLength,
+        createdAt: Date.now(),
+        fragments: new Array(count)
+      };
+      if (pending.totalLength !== totalLength || pending.fragments.length !== count) { return []; }
+      pending.fragments[index] = payload;
+      pendingFragments.set(key, pending);
+      cleanupFragments();
+      if (pending.fragments.some((item) => !item)) { return []; }
+      pendingFragments.delete(key);
+      const out = new Uint8Array(totalLength);
+      let offset = 0;
+      for (const part of pending.fragments) {
+        if (offset + part.byteLength > totalLength) { return []; }
+        out.set(part, offset);
+        offset += part.byteLength;
+      }
+      return offset === totalLength ? [out] : [];
     }
     function candidateType(candidate) {
       const match = candidate.match(/ typ ([A-Za-z0-9_-]+)/);
@@ -630,7 +722,9 @@ final class NativeWebRTCSession: NSObject {
       };
       channel.onmessage = async (event) => {
         const buffer = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
-        post({ kind: "binary", data: toBase64(buffer) });
+        for (const frame of acceptFragment(new Uint8Array(buffer))) {
+          post({ kind: "binary", data: toBase64(frame) });
+        }
       };
     }
     function setupPeer(urls) {
@@ -717,18 +811,19 @@ final class NativeWebRTCSession: NSObject {
       post({ kind: "signal", type: "offer", sdp: offer.sdp });
       return true;
     }
-    function recordSendFailure(reason, frameBytes) {
+    function recordSendFailure(reason, frameBytes, fragmentBytes) {
       post({
         kind: "send_failure",
         reason: reason || "unknown",
         state: channel ? channel.readyState : "missing",
         buffered_bytes: channel ? channel.bufferedAmount : 0,
-        frame_bytes: frameBytes || 0
+        frame_bytes: frameBytes || 0,
+        fragment_bytes: fragmentBytes || frameBytes || 0
       });
     }
-    async function waitForWritableChannel(frameBytes) {
+    async function waitForWritableChannel(frameBytes, fragmentBytes) {
       if (!channel || channel.readyState !== "open") {
-        recordSendFailure("channel_not_open", frameBytes);
+        recordSendFailure("channel_not_open", frameBytes, fragmentBytes);
         return false;
       }
       const highWaterMark = 512 * 1024;
@@ -748,28 +843,25 @@ final class NativeWebRTCSession: NSObject {
           resolve(channel && channel.readyState === "open");
         };
       });
-      if (!writable) { recordSendFailure("buffer_timeout", frameBytes); }
+      if (!writable) { recordSendFailure("buffer_timeout", frameBytes, fragmentBytes); }
       return writable;
     }
     async function sendBase64(value) {
-      const bytes = fromBase64(value);
-      if (!await waitForWritableChannel(bytes.byteLength)) { return false; }
-      try {
-        channel.send(bytes);
-        return true;
-      } catch (error) {
-        recordSendFailure(`send_exception=${error && error.name ? error.name : "unknown"}`, bytes.byteLength);
-        return false;
-      }
+      return await sendBytes(fromBase64(value));
     }
     async function sendMultipleBase64(arr) {
       for (const b64 of arr) {
-        const bytes = fromBase64(b64);
-        if (!await waitForWritableChannel(bytes.byteLength)) { return false; }
+        if (!await sendBytes(fromBase64(b64))) { return false; }
+      }
+      return true;
+    }
+    async function sendBytes(bytes) {
+      for (const fragment of fragmentFrame(bytes)) {
+        if (!await waitForWritableChannel(bytes.byteLength, fragment.byteLength)) { return false; }
         try {
-          channel.send(bytes);
+          channel.send(fragment);
         } catch (error) {
-          recordSendFailure(`send_exception=${error && error.name ? error.name : "unknown"}`, bytes.byteLength);
+          recordSendFailure(`send_exception=${error && error.name ? error.name : "unknown"}`, bytes.byteLength, fragment.byteLength);
           return false;
         }
       }
@@ -831,7 +923,8 @@ extension NativeWebRTCSession: WKScriptMessageHandler {
             let state = (body["state"] as? String)?.nilIfBlank ?? "unknown"
             let bufferedBytes = body["buffered_bytes"].map { "\($0)" } ?? "unknown"
             let frameBytes = body["frame_bytes"].map { "\($0)" } ?? "unknown"
-            sendFailure = "reason=\(reason)|state=\(state)|buffered_bytes=\(bufferedBytes)|frame_bytes=\(frameBytes)"
+            let fragmentBytes = body["fragment_bytes"].map { "\($0)" } ?? "unknown"
+            sendFailure = "reason=\(reason)|state=\(state)|buffered_bytes=\(bufferedBytes)|frame_bytes=\(frameBytes)|fragment_bytes=\(fragmentBytes)"
         case "ice_candidate_error":
             let url = (body["url"] as? String)?.nilIfBlank ?? "unknown-url"
             let address = (body["address"] as? String)?.nilIfBlank ?? "unknown-address"
