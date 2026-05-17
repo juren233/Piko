@@ -1,15 +1,16 @@
+import AVFoundation
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
 
-struct NativePhotoPicker: UIViewControllerRepresentable {
+struct NativeMediaPicker: UIViewControllerRepresentable {
     let onSelect: ([NativeTransferItem]) -> Void
 
     func makeUIViewController(context: Context) -> UIViewController {
         var configuration = PHPickerConfiguration(photoLibrary: .shared())
-        configuration.filter = .images
-        configuration.selectionLimit = 30
+        configuration.filter = .any(of: [.images, .videos])
+        configuration.selectionLimit = 0
         let controller = PHPickerViewController(configuration: configuration)
         controller.delegate = context.coordinator
         return controller
@@ -40,24 +41,35 @@ struct NativePhotoPicker: UIViewControllerRepresentable {
 
             for result in results {
                 let provider = result.itemProvider
-                guard provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) else {
+                let fileType: NativeFileType
+                let typeIdentifier: String
+                if provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) {
+                    fileType = .video
+                    typeIdentifier = UTType.movie.identifier
+                } else if provider.hasItemConformingToTypeIdentifier(UTType.video.identifier) {
+                    fileType = .video
+                    typeIdentifier = UTType.video.identifier
+                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                    fileType = .image
+                    typeIdentifier = UTType.image.identifier
+                } else {
                     continue
                 }
 
                 group.enter()
-                provider.loadFileRepresentation(forTypeIdentifier: UTType.image.identifier) { url, _ in
+                provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, _ in
                     defer {
                         group.leave()
                     }
                     guard let url else {
                         return
                     }
-                    let name = provider.suggestedName.map { "\($0).jpg" } ?? "image-\(UUID().uuidString).jpg"
+                    let name = mediaDisplayName(provider: provider, sourceURL: url, fileType: fileType)
                     guard let item = copyTransferItem(
                         from: url,
-                        id: "photo-\(UUID().uuidString)",
+                        id: "media-\(UUID().uuidString)",
                         displayName: name,
-                        fileType: .image
+                        fileType: fileType
                     ) else {
                         return
                     }
@@ -139,8 +151,69 @@ private func copyTransferItem(
         displayName: displayName,
         fileType: fileType,
         fileURL: destination,
-        sizeBytes: sizeBytes
+        sizeBytes: sizeBytes,
+        previewData: mediaPreviewData(for: destination, fileType: fileType)
     )
+}
+
+private func mediaDisplayName(
+    provider: NSItemProvider,
+    sourceURL: URL,
+    fileType: NativeFileType
+) -> String {
+    let fallbackExtension = sourceURL.pathExtension.isEmpty ? fileType.defaultFileExtension : sourceURL.pathExtension
+    if let suggestedName = provider.suggestedName, !suggestedName.isEmpty {
+        let suggestedURL = URL(fileURLWithPath: suggestedName)
+        if suggestedURL.pathExtension.isEmpty {
+            return "\(suggestedName).\(fallbackExtension)"
+        }
+        return suggestedName
+    }
+    return "\(fileType == .video ? "video" : "image")-\(UUID().uuidString).\(fallbackExtension)"
+}
+
+private func mediaPreviewData(for url: URL, fileType: NativeFileType) -> Data? {
+    switch fileType {
+    case .image:
+        return UIImage(contentsOfFile: url.path)?.scaledPreviewData()
+    case .video:
+        let asset = AVURLAsset(url: url)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        guard let cgImage = try? generator.copyCGImage(at: .zero, actualTime: nil) else {
+            return nil
+        }
+        return UIImage(cgImage: cgImage).scaledPreviewData()
+    default:
+        return nil
+    }
+}
+
+private extension UIImage {
+    func scaledPreviewData() -> Data? {
+        let targetSide: CGFloat = 320
+        let scale = min(targetSide / max(size.width, size.height), 1)
+        let targetSize = CGSize(width: max(size.width * scale, 1), height: max(size.height * scale, 1))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let image = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        return image.jpegData(compressionQuality: 0.82)
+    }
+}
+
+private extension NativeFileType {
+    var defaultFileExtension: String {
+        switch self {
+        case .video:
+            return "mov"
+        case .image:
+            return "jpg"
+        default:
+            return "dat"
+        }
+    }
 }
 
 extension NativeFileType {

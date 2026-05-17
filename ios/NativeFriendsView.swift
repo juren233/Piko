@@ -2,70 +2,58 @@ import SwiftUI
 
 struct NativeFriendsView: View {
     @ObservedObject var store: NativeFriendStore
-    @StateObject private var titleCollapseState = PikoTitleCollapseState()
     @State private var deletingFriend: NativeFriendUser?
 
     var body: some View {
-        ScrollView {
-            VStack(spacing: 22) {
-                PikoCollapsingPageHeroHeader(
-                    title: NativeAuthLabels.friendsEntry,
-                    subtitle: "搜索、申请、管理",
-                    metric: "\(store.friends.count) 人",
-                    collapseState: titleCollapseState
-                )
+        List {
+            Section {
                 TextField(NativeAuthLabels.searchPlaceholder, text: Binding(
                     get: { store.searchQuery },
                     set: { store.search(query: $0) }
                 ))
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
+            }
 
-                if !store.searchQuery.isEmpty {
-                    PikoSectionPanel(title: "搜索结果") {
+            if !store.searchQuery.isEmpty {
+                Section("搜索结果") {
+                    if store.searchResults.isEmpty {
+                        Text(store.isSearching ? "搜索中" : "没有结果")
+                            .foregroundStyle(.secondary)
+                    } else {
                         ForEach(store.searchResults) { result in
                             NativeFriendSearchResultRow(result: result, store: store)
                         }
                     }
                 }
+            }
 
-                PikoSectionPanel(title: "我的好友") {
-                    NavigationLink {
-                        NativeFriendRequestsView(store: store)
-                    } label: {
-                        Text(store.incomingRequests.isEmpty ? NativeAuthLabels.friendRequestsTitle : "\(NativeAuthLabels.friendRequestsTitle) \(store.incomingRequests.count)")
-                            .font(PikoFont.pill)
-                    }
-                } content: {
-                    if store.friends.isEmpty {
-                        Text(NativeAuthLabels.noFriendsHint)
-                            .font(PikoFont.rowSubtitle)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(store.friends) { friend in
-                            NativeFriendUserRow(friend: friend) {
-                                Button(NativeAuthLabels.removeFriendButton, role: .destructive) {
-                                    deletingFriend = friend
-                                }
-                                .font(PikoFont.button)
+            Section("我的好友") {
+                NavigationLink {
+                    NativeFriendRequestsView(store: store)
+                } label: {
+                    LabeledContent(
+                        NativeAuthLabels.friendRequestsTitle,
+                        value: store.incomingRequests.isEmpty ? "" : "\(store.incomingRequests.count)"
+                    )
+                }
+
+                if store.friends.isEmpty {
+                    Text(NativeAuthLabels.noFriendsHint)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(store.friends) { friend in
+                        NativeFriendUserRow(friend: friend) {
+                            Button(NativeAuthLabels.removeFriendButton, role: .destructive) {
+                                deletingFriend = friend
                             }
                         }
                     }
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 68)
-            .padding(.bottom, 136)
-            .background(alignment: .top) {
-                PikoScrollProgressObserver { progress in
-                    titleCollapseState.update(progress)
-                }
-                    .frame(width: 0, height: 0)
-            }
         }
-        .background(PikoPalette.pageBackground)
-        .systemBarBackgrounds()
+        .listStyle(.insetGrouped)
+        .navigationTitle(NativeAuthLabels.friendsEntry)
         .task {
             await store.refreshAll()
         }
@@ -83,6 +71,7 @@ struct NativeFriendsView: View {
                     self.deletingFriend = nil
                 }
             }
+            Button("取消", role: .cancel) {}
         }
     }
 }
@@ -97,10 +86,9 @@ private struct NativeFriendSearchResultRow: View {
                 Button(NativeAuthLabels.addFriendButton) {
                     store.sendRequest(to: result.user.userId)
                 }
-                .font(PikoFont.button)
             } else {
                 Text(result.relationship.label)
-                    .font(PikoFont.rowSubtitle)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
@@ -118,21 +106,23 @@ struct NativeFriendUserRow<Trailing: View>: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(friend.displayName)
-                    .font(PikoFont.rowTitle)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.88)
-                    .truncationMode(.tail)
-                Text(friend.presence.subtitleLabel)
-                    .font(PikoFont.rowSubtitle)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+            Label {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(friend.displayName)
+                        .font(.body)
+                        .lineLimit(1)
+                    Text(friend.presence.subtitleLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            } icon: {
+                Image(systemName: "person.crop.circle")
+                    .foregroundStyle(.tint)
             }
-            Spacer(minLength: 12)
+            Spacer()
             trailing
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 }

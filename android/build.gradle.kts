@@ -15,6 +15,11 @@ fun signingValue(propertyName: String, environmentName: String): String? =
     releaseSigningProperties.getProperty(propertyName)
         ?: System.getenv(environmentName)
 
+fun versionValue(propertyName: String, environmentName: String): String =
+    System.getenv(environmentName)
+        ?.takeIf { it.isNotBlank() }
+        ?: providers.gradleProperty(propertyName).get()
+
 val releaseStoreFile = signingValue("storeFile", "ANDROID_KEYSTORE_PATH")
 val releaseStorePassword = signingValue("storePassword", "ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = signingValue("keyAlias", "ANDROID_KEY_ALIAS")
@@ -25,8 +30,8 @@ val androidAbis = providers.gradleProperty("pikoAndroidAbis")
     .split(",")
     .map { it.trim() }
     .filter { it.isNotEmpty() }
-val pikoVersionName = providers.gradleProperty("piko.versionName").get()
-val pikoVersionCode = providers.gradleProperty("piko.versionCode").get().toInt()
+val pikoVersionName = versionValue("piko.versionName", "PIKO_VERSION_NAME")
+val pikoVersionCode = versionValue("piko.versionCode", "PIKO_VERSION_CODE").toInt()
 val hasReleaseSigning =
     !releaseStoreFile.isNullOrBlank() &&
         !releaseStorePassword.isNullOrBlank() &&
@@ -98,20 +103,21 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
         }
     }
+
 }
 
 dependencies {
-    implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.security.crypto)
     implementation(libs.backdrop)
     implementation(libs.bcprov)
     implementation(libs.compose.foundation)
-    implementation(libs.compose.material3)
     implementation(libs.compose.runtime)
     implementation(libs.compose.ui)
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kyant.shapes)
+    implementation(libs.miuix)
+    implementation(libs.miuix.icons)
     implementation(libs.okhttp)
     implementation(libs.org.json)
     implementation(libs.webrtc.android)

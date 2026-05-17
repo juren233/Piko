@@ -5,10 +5,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONFIG_PATH="$REPO_ROOT/.github/build-config.json"
 VERSION_PATH="$REPO_ROOT/gradle.properties"
+GRADLE_WRAPPER_PROPERTIES="$REPO_ROOT/gradle/wrapper/gradle-wrapper.properties"
 ANDROID_ARTIFACT_ROOT="$REPO_ROOT/scripts/artifacts/android"
 IOS_ARTIFACT_ROOT="$REPO_ROOT/scripts/artifacts/ios"
 
 PLATFORM="${1:-all}"
+ANDROID_BUILD_USED=false
 
 usage() {
   cat <<'EOF'
@@ -85,6 +87,40 @@ read_property() {
   ' "$VERSION_PATH"
 }
 
+read_version_value() {
+  local property_key="$1"
+  local environment_key="$2"
+  local environment_value="${!environment_key:-}"
+  if [[ -n "$environment_value" ]]; then
+    printf '%s\n' "$environment_value"
+    return 0
+  fi
+
+  read_property "$property_key"
+}
+
+read_gradle_wrapper_version() {
+  local distribution_url
+  distribution_url="$(awk -F= '$1 == "distributionUrl" { print substr($0, index($0, "=") + 1); exit }' "$GRADLE_WRAPPER_PROPERTIES")"
+  if [[ "$distribution_url" =~ gradle-([0-9.]+)-bin\.zip ]]; then
+    echo "${BASH_REMATCH[1]}"
+    return 0
+  fi
+
+  echo "无法从 $GRADLE_WRAPPER_PROPERTIES 读取 Gradle Wrapper 版本。" >&2
+  exit 1
+}
+
+run_gradle() {
+  require_file "$REPO_ROOT/gradlew"
+  require_file "$GRADLE_WRAPPER_PROPERTIES"
+
+  local gradle_version
+  gradle_version="$(read_gradle_wrapper_version)"
+  echo "使用项目 Gradle Wrapper：Gradle $gradle_version"
+  sh "$REPO_ROOT/gradlew" "$@"
+}
+
 detect_java_home() {
   if [[ -n "${JAVA_HOME:-}" && -x "$JAVA_HOME/bin/java" ]]; then
     export PATH="$JAVA_HOME/bin:$PATH"
@@ -108,6 +144,15 @@ detect_java_home() {
   echo "JAVA_HOME 未配置，且未找到 OpenJDK 21。请先安装或导出 JAVA_HOME。" >&2
   exit 1
 }
+
+cleanup_build_processes() {
+  if [[ "$ANDROID_BUILD_USED" == "true" && -f "$REPO_ROOT/gradlew" ]]; then
+    echo "清理 Gradle/Java 构建后台进程..."
+    run_gradle --stop >/dev/null 2>&1 || true
+  fi
+}
+
+trap cleanup_build_processes EXIT
 
 find_apksigner() {
   local roots=()
@@ -152,11 +197,17 @@ build_android() {
   fi
 
   detect_java_home
+  ANDROID_BUILD_USED=true
 
-  local version_name
-  version_name="$(read_property piko.versionName)"
+  local version_name version_code
+  version_name="$(read_version_value piko.versionName PIKO_VERSION_NAME)"
+  version_code="$(read_version_value piko.versionCode PIKO_VERSION_CODE)"
   if [[ -z "$version_name" ]]; then
     echo "gradle.properties 缺少 piko.versionName。" >&2
+    exit 1
+  fi
+  if [[ ! "$version_code" =~ ^[0-9]+$ ]]; then
+    echo "piko.versionCode 必须是整数，当前值：$version_code" >&2
     exit 1
   fi
 
@@ -193,9 +244,9 @@ EOF
 
     echo "Android 构建：abi=$abi variants=$variants"
     if [[ " $variants " == *" release "* ]]; then
-      sh "$REPO_ROOT/gradlew" "${tasks[@]}" -x lintVitalRelease "-PpikoAndroidAbis=$abi"
+      run_gradle "${tasks[@]}" -x lintVitalRelease "-PpikoAndroidAbis=$abi"
     else
-      sh "$REPO_ROOT/gradlew" "${tasks[@]}" "-PpikoAndroidAbis=$abi"
+      run_gradle "${tasks[@]}" "-PpikoAndroidAbis=$abi"
     fi
 
     for variant in $variants; do

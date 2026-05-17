@@ -16,64 +16,46 @@ struct NativeLoginView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(NativeAuthLabels.signIn)
-                .font(PikoFont.sectionTitle)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(NativeAuthLabels.email, text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .autocorrectionDisabled()
 
-            TextField(NativeAuthLabels.email, text: $email)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .textContentType(.emailAddress)
-                .autocorrectionDisabled()
-                .pikoAuthField()
-
-            SecureField(NativeAuthLabels.password, text: $password)
-                .textContentType(.password)
-                .pikoAuthField()
-
-            if let error = authStore.lastError {
-                Text(error.displayMessage)
-                    .font(PikoFont.rowSubtitle)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-            }
-
-            Button {
-                Task {
-                    await authStore.login(
-                        email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                        password: password
-                    )
+                    SecureField(NativeAuthLabels.password, text: $password)
+                        .textContentType(.password)
                 }
-            } label: {
-                Text(NativeAuthLabels.signIn)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSubmit)
 
-            Button(NativeAuthLabels.signUp) {
-                authStore.consumeError()
-                onSwitchToRegister()
+                if let error = authStore.lastError {
+                    Section {
+                        Text(error.displayMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    Button(NativeAuthLabels.signIn) {
+                        Task {
+                            await authStore.login(
+                                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                                password: password
+                            )
+                        }
+                    }
+                    .disabled(!canSubmit)
+
+                    Button(NativeAuthLabels.signUp) {
+                        authStore.consumeError()
+                        onSwitchToRegister()
+                    }
+                    .disabled(isSubmitting)
+                }
             }
-            .font(PikoFont.button)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .disabled(isSubmitting)
+            .navigationTitle(NativeAuthLabels.signIn)
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
-    }
-}
-
-extension View {
-    func pikoAuthField() -> some View {
-        textFieldStyle(.roundedBorder)
-            .font(PikoFont.rowTitle)
-            .lineLimit(1)
-            .minimumScaleFactor(0.88)
-            .truncationMode(.tail)
     }
 }

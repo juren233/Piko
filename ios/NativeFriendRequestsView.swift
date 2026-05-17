@@ -34,19 +34,17 @@ private struct NativeFriendRequestRow: View {
         NativeFriendUserRow(friend: request.otherUser) {
             if request.status != .pending {
                 Text(request.status.label)
-                    .font(PikoFont.rowSubtitle)
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
             } else if request.direction == .incoming {
                 HStack {
                     Button(NativeAuthLabels.acceptButton) { store.accept(request) }
                     Button(NativeAuthLabels.rejectButton, role: .destructive) { store.reject(request) }
                 }
-                .font(PikoFont.button)
             } else {
                 Button(NativeAuthLabels.cancelRequestButton, role: .destructive) {
                     store.cancel(request)
                 }
-                .font(PikoFont.button)
             }
         }
     }

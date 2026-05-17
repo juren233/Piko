@@ -1,19 +1,15 @@
 package com.piko.app.platform
 
-import android.Manifest
 import android.content.ContentResolver
 import android.content.ContentValues
-import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
@@ -24,7 +20,6 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments
 import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
 import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
-import androidx.activity.result.contract.ActivityResultContracts.RequestPermission
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -43,10 +38,9 @@ import com.piko.app.domain.SendDevice
 import com.piko.app.domain.SendDeviceGroup
 import com.piko.app.domain.SendFileItem
 import com.piko.app.domain.SendFileType
-import com.piko.app.domain.SendImageItem
 import com.piko.app.domain.SendLanDiscoveryState
 import com.piko.app.domain.SendPageState
-import com.piko.app.domain.SendPermissionState
+import com.piko.app.domain.SendMediaItem
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.domain.SendTransferHeader
 import com.piko.app.domain.SendTransferHeaderFile
@@ -81,7 +75,6 @@ private const val PIKO_SERVICE_PREFIX = "Piko-"
 private const val PIKO_ATTR_TITLE = "title"
 private const val PIKO_ATTR_CODE = "code"
 private const val PIKO_ATTR_FINGERPRINT = "fp"
-private const val RECENT_IMAGE_LIMIT = 24
 private val PIKO_MAGIC = byteArrayOf(0x50, 0x49, 0x4B, 0x4F)
 private const val PIKO_PROTOCOL_VERSION = 2
 
@@ -97,11 +90,8 @@ internal fun rememberAndroidSendPlatformActions(
 ): SendPlatformActions {
     val context = LocalContext.current
     val appContext = context.applicationContext
-    var recentImagesCallback by remember {
-        mutableStateOf<((SendPermissionState, List<SendImageItem>) -> Unit)?>(null)
-    }
-    var pickedImagesCallback by remember {
-        mutableStateOf<((List<SendImageItem>) -> Unit)?>(null)
+    var pickedMediaCallback by remember {
+        mutableStateOf<((List<SendMediaItem>) -> Unit)?>(null)
     }
     var pickedFilesCallback by remember {
         mutableStateOf<((List<SendFileItem>) -> Unit)?>(null)
@@ -126,19 +116,10 @@ internal fun rememberAndroidSendPlatformActions(
         )
     }
 
-    val imagePermissionLauncher = rememberLauncherForActivityResult(RequestPermission()) { granted ->
-        val callback = recentImagesCallback
-        recentImagesCallback = null
-        if (granted) {
-            callback?.invoke(SendPermissionState.Granted, loadRecentImages(appContext))
-        } else {
-            callback?.invoke(SendPermissionState.Denied, emptyList())
-        }
-    }
     val imagePickerLauncher = rememberLauncherForActivityResult(PickMultipleVisualMedia(30)) { uris ->
-        val callback = pickedImagesCallback
-        pickedImagesCallback = null
-        callback?.invoke(loadPickedImages(appContext, uris))
+        val callback = pickedMediaCallback
+        pickedMediaCallback = null
+        callback?.invoke(loadPickedMedia(appContext, uris))
     }
     val filePickerLauncher = rememberLauncherForActivityResult(OpenMultipleDocuments()) { uris ->
         val callback = pickedFilesCallback
@@ -155,18 +136,9 @@ internal fun rememberAndroidSendPlatformActions(
     }
 
     return SendPlatformActions(
-        requestRecentImages = { callback ->
-            if (hasImagePermission(appContext)) {
-                callback(SendPermissionState.Granted, loadRecentImages(appContext))
-            } else {
-                recentImagesCallback = callback
-                callback(SendPermissionState.Requesting, emptyList())
-                imagePermissionLauncher.launch(Manifest.permission.READ_MEDIA_IMAGES)
-            }
-        },
-        pickImages = { callback ->
-            pickedImagesCallback = callback
-            imagePickerLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageOnly))
+        pickMedia = { callback ->
+            pickedMediaCallback = callback
+            imagePickerLauncher.launch(PickVisualMediaRequest(PickVisualMedia.ImageAndVideo))
         },
         pickFiles = { callback ->
             pickedFilesCallback = callback
@@ -189,60 +161,21 @@ internal fun rememberAndroidSendPlatformActions(
     )
 }
 
-private fun hasImagePermission(context: Context): Boolean {
-    return context.checkSelfPermission(Manifest.permission.READ_MEDIA_IMAGES) == PackageManager.PERMISSION_GRANTED
-}
-
-private fun loadRecentImages(context: Context): List<SendImageItem> {
-    val resolver = context.contentResolver
-    val projection = arrayOf(
-        MediaStore.Images.Media._ID,
-        MediaStore.Images.Media.DISPLAY_NAME,
-        MediaStore.Images.Media.SIZE,
-    )
-    val queryArgs = Bundle().apply {
-        putStringArray(ContentResolver.QUERY_ARG_SORT_COLUMNS, arrayOf(MediaStore.Images.Media.DATE_ADDED))
-        putInt(ContentResolver.QUERY_ARG_SORT_DIRECTION, ContentResolver.QUERY_SORT_DIRECTION_DESCENDING)
-        putInt(ContentResolver.QUERY_ARG_LIMIT, RECENT_IMAGE_LIMIT)
-    }
-
-    return resolver.query(
-        MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-        projection,
-        queryArgs,
-        null,
-    )?.use { cursor ->
-        val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-        val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-        val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
-        buildList {
-            while (cursor.moveToNext()) {
-                val uri = ContentUris.withAppendedId(
-                    MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                    cursor.getLong(idColumn),
-                )
-                add(
-                    SendImageItem(
-                        id = uri.toString(),
-                        displayName = cursor.getString(nameColumn) ?: "图片",
-                        uri = uri.toString(),
-                        sizeBytes = cursor.getLong(sizeColumn).coerceAtLeast(0L),
-                        thumbnailBytes = loadThumbnailBytes(resolver, uri),
-                    ),
-                )
-            }
-        }
-    } ?: emptyList()
-}
-
-private fun loadPickedImages(context: Context, uris: List<Uri>): List<SendImageItem> {
+private fun loadPickedMedia(context: Context, uris: List<Uri>): List<SendMediaItem> {
     val resolver = context.contentResolver
     return uris.map { uri ->
-        SendImageItem(
+        val displayName = queryDisplayName(resolver, uri) ?: "媒体"
+        SendMediaItem(
             id = uri.toString(),
-            displayName = queryDisplayName(resolver, uri) ?: "图片",
+            displayName = displayName,
             uri = uri.toString(),
             sizeBytes = querySizeBytes(resolver, uri),
+            fileType = resolveFileType(
+                mimeType = resolver.getType(uri),
+                displayName = displayName,
+            ).let { fileType ->
+                if (fileType == SendFileType.Video) SendFileType.Video else SendFileType.Image
+            },
             thumbnailBytes = loadThumbnailBytes(resolver, uri),
         )
     }

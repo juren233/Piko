@@ -7,36 +7,23 @@ data class SendPageState(
     val lanDevices: List<SendDevice>,
     val friendDevices: List<SendDevice>,
     val selectedDeviceIds: Set<String>,
-    val recentImages: List<SendImageItem>,
-    val selectedImageIds: Set<String>,
+    val selectedMediaItems: List<SendMediaItem>,
     val selectedFiles: List<SendFileItem>,
-    val imageSectionExpanded: Boolean,
     val photoPermissionState: SendPermissionState,
     val lanDiscoveryState: SendLanDiscoveryState,
     val activeTransfer: SendTransferState,
 ) {
-    val visibleImages: List<SendImageItem>
-        get() {
-            if (imageSectionExpanded) {
-                return recentImages
-            }
-
-            val selectedImages = recentImages.filter { it.id in selectedImageIds }
-            return selectedImages.ifEmpty { recentImages.take(6) }
-        }
-
     val selectedTransferItems: List<SendTransferItem>
         get() {
-            val images = recentImages
-                .filter { image -> image.id in selectedImageIds }
-                .map { image ->
+            val media = selectedMediaItems
+                .map { item ->
                     SendTransferItem(
-                        id = image.id,
-                        displayName = image.displayName,
-                        sizeBytes = image.sizeBytes,
-                        fileType = SendFileType.Image,
-                        sourceUri = image.uri,
-                        inlineBytes = image.thumbnailBytes,
+                        id = item.id,
+                        displayName = item.displayName,
+                        sizeBytes = item.sizeBytes,
+                        fileType = item.fileType,
+                        sourceUri = item.uri,
+                        inlineBytes = item.thumbnailBytes,
                     )
                 }
             val files = selectedFiles.map { file ->
@@ -49,7 +36,7 @@ data class SendPageState(
                     inlineBytes = null,
                 )
             }
-            return (images + files).distinctBy { item -> item.id }
+            return (media + files).distinctBy { item -> item.id }
         }
 
     val selectedDevices: List<SendDevice>
@@ -75,33 +62,12 @@ data class SendPageState(
         return copy(selectedDeviceIds = nextIds)
     }
 
-    fun toggleImageSelection(imageId: String): SendPageState {
-        val nextIds = if (imageId in selectedImageIds) {
-            selectedImageIds - imageId
-        } else {
-            selectedImageIds + imageId
-        }
-        return copy(selectedImageIds = nextIds)
+    fun addSelectedMedia(items: List<SendMediaItem>): SendPageState {
+        return copy(selectedMediaItems = (selectedMediaItems + items).distinctBy { it.id })
     }
 
-    fun toggleImageSectionExpanded(): SendPageState {
-        return copy(imageSectionExpanded = !imageSectionExpanded)
-    }
-
-    fun replaceRecentImages(images: List<SendImageItem>): SendPageState {
-        val imageIds = images.map { it.id }.toSet()
-        return copy(
-            recentImages = images,
-            selectedImageIds = selectedImageIds.intersect(imageIds),
-        )
-    }
-
-    fun addSelectedImages(images: List<SendImageItem>): SendPageState {
-        val merged = (recentImages + images).distinctBy { it.id }
-        return copy(
-            recentImages = merged,
-            selectedImageIds = selectedImageIds + images.map { it.id },
-        )
+    fun removeSelectedMedia(mediaId: String): SendPageState {
+        return copy(selectedMediaItems = selectedMediaItems.filterNot { it.id == mediaId })
     }
 
     fun addSelectedFiles(files: List<SendFileItem>): SendPageState {
@@ -110,6 +76,13 @@ data class SendPageState(
 
     fun removeSelectedFile(fileId: String): SendPageState {
         return copy(selectedFiles = selectedFiles.filterNot { it.id == fileId })
+    }
+
+    fun clearSelectedItems(): SendPageState {
+        return copy(
+            selectedMediaItems = emptyList(),
+            selectedFiles = emptyList(),
+        )
     }
 
     fun updateLanDevices(devices: List<SendDevice>): SendPageState {
@@ -234,10 +207,8 @@ data class SendPageState(
                 lanDevices = emptyList(),
                 friendDevices = emptyList(),
                 selectedDeviceIds = emptySet(),
-                recentImages = emptyList(),
-                selectedImageIds = emptySet(),
+                selectedMediaItems = emptyList(),
                 selectedFiles = emptyList(),
-                imageSectionExpanded = false,
                 photoPermissionState = SendPermissionState.Unknown,
                 lanDiscoveryState = SendLanDiscoveryState.Idle,
                 activeTransfer = SendTransferState.Idle,
@@ -295,20 +266,22 @@ private val FriendDevice.platformLabel: String
         else -> platform
     }
 
-data class SendImageItem(
+data class SendMediaItem(
     val id: String,
     val displayName: String,
     val uri: String,
     val sizeBytes: Long = 0L,
+    val fileType: SendFileType = SendFileType.Image,
     val thumbnailBytes: ByteArray? = null,
 ) {
     override fun equals(other: Any?): Boolean {
         if (this === other) return true
-        if (other !is SendImageItem) return false
+        if (other !is SendMediaItem) return false
         return id == other.id &&
             displayName == other.displayName &&
             uri == other.uri &&
             sizeBytes == other.sizeBytes &&
+            fileType == other.fileType &&
             thumbnailBytes.contentEquals(other.thumbnailBytes)
     }
 
@@ -317,6 +290,7 @@ data class SendImageItem(
         result = 31 * result + displayName.hashCode()
         result = 31 * result + uri.hashCode()
         result = 31 * result + sizeBytes.hashCode()
+        result = 31 * result + fileType.hashCode()
         result = 31 * result + (thumbnailBytes?.contentHashCode() ?: 0)
         return result
     }

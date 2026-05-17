@@ -6,6 +6,7 @@ tasks/
 # Android
 .gradle/
 .kotlin/
+android/.cxx/
 **/build/
 local.properties
 captures/

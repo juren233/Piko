@@ -63,6 +63,18 @@ read_property() {
   ' "$VERSION_PATH"
 }
 
+read_version_value() {
+  local property_key="$1"
+  local environment_key="$2"
+  local environment_value="${!environment_key:-}"
+  if [[ -n "$environment_value" ]]; then
+    printf '%s\n' "$environment_value"
+    return 0
+  fi
+
+  read_property "$property_key"
+}
+
 build_xquic_native() {
   local configuration="$1"
   local target="$2"
@@ -122,8 +134,8 @@ if [[ -z "$targets" ]]; then
   exit 1
 fi
 
-version_name="$(read_property piko.versionName)"
-version_code="$(read_property piko.versionCode)"
+version_name="$(read_version_value piko.versionName PIKO_VERSION_NAME)"
+version_code="$(read_version_value piko.versionCode PIKO_VERSION_CODE)"
 if [[ -z "$version_name" ]]; then
   echo "gradle.properties 缺少 piko.versionName。" >&2
   exit 1

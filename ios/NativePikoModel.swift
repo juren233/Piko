@@ -83,7 +83,6 @@ final class NativePikoModel: ObservableObject {
     @Published var transferFailureMessage: String?
     @Published var transferToastMessage: String?
     @Published var discoveryLabel = "正在搜索"
-    @Published var imageSectionExpanded = false
     @Published var mediaSaveLocation: NativeMediaSaveLocation
 
     @Published private(set) var nickname: NativeDeviceNickname
@@ -193,12 +192,12 @@ final class NativePikoModel: ObservableObject {
         }
     }
 
-    var imageItems: [NativeTransferItem] {
-        items.filter { $0.fileType == .image }
+    var mediaItems: [NativeTransferItem] {
+        items.filter { $0.fileType == .image || $0.fileType == .video }
     }
 
     var fileItems: [NativeTransferItem] {
-        items.filter { $0.fileType != .image }
+        items.filter { $0.fileType != .image && $0.fileType != .video }
     }
 
     var transferProgressLabel: String {
@@ -310,8 +309,15 @@ final class NativePikoModel: ObservableObject {
         selectedItemIds.remove(id)
     }
 
-    func toggleImageSectionExpanded() {
-        imageSectionExpanded.toggle()
+    func clearSelectedItems() {
+        let sentIds = selectedItemIds
+        items
+            .filter { sentIds.contains($0.id) }
+            .forEach { item in
+                try? FileManager.default.removeItem(at: item.fileURL)
+            }
+        items.removeAll { sentIds.contains($0.id) }
+        selectedItemIds.removeAll()
     }
 
     func updateMediaSaveLocation(_ location: NativeMediaSaveLocation) {
@@ -381,6 +387,7 @@ final class NativePikoModel: ObservableObject {
             }
 
             self.transferStateMachine.finishSend()
+            self.clearSelectedItems()
         }
     }
 

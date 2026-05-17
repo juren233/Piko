@@ -21,64 +21,54 @@ struct NativeRegisterView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(NativeAuthLabels.signUp)
-                .font(PikoFont.sectionTitle)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        NavigationStack {
+            Form {
+                Section {
+                    TextField(NativeAuthLabels.email, text: $email)
+                        .textInputAutocapitalization(.never)
+                        .keyboardType(.emailAddress)
+                        .textContentType(.emailAddress)
+                        .autocorrectionDisabled()
 
-            TextField(NativeAuthLabels.email, text: $email)
-                .textInputAutocapitalization(.never)
-                .keyboardType(.emailAddress)
-                .textContentType(.emailAddress)
-                .autocorrectionDisabled()
-                .pikoAuthField()
+                    SecureField(NativeAuthLabels.password, text: $password)
+                        .textContentType(.newPassword)
 
-            SecureField(NativeAuthLabels.password, text: $password)
-                .textContentType(.newPassword)
-                .pikoAuthField()
+                    TextField(NativeAuthLabels.username, text: $username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
 
-            TextField(NativeAuthLabels.username, text: $username)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .pikoAuthField()
-
-            TextField(NativeAuthLabels.nickname, text: $nickname)
-                .pikoAuthField()
-
-            if let error = authStore.lastError {
-                Text(error.displayMessage)
-                    .font(PikoFont.rowSubtitle)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-            }
-
-            Button {
-                Task {
-                    await authStore.register(
-                        email: email.trimmingCharacters(in: .whitespacesAndNewlines),
-                        password: password,
-                        username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-                        nickname: nickname.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
-                    )
+                    TextField(NativeAuthLabels.nickname, text: $nickname)
                 }
-            } label: {
-                Text(NativeAuthLabels.signUp)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!canSubmit)
 
-            Button(NativeAuthLabels.signIn) {
-                authStore.consumeError()
-                onSwitchToLogin()
+                if let error = authStore.lastError {
+                    Section {
+                        Text(error.displayMessage)
+                            .foregroundStyle(.red)
+                    }
+                }
+
+                Section {
+                    Button(NativeAuthLabels.signUp) {
+                        Task {
+                            await authStore.register(
+                                email: email.trimmingCharacters(in: .whitespacesAndNewlines),
+                                password: password,
+                                username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                                nickname: nickname.trimmingCharacters(in: .whitespacesAndNewlines).nilIfBlank
+                            )
+                        }
+                    }
+                    .disabled(!canSubmit)
+
+                    Button(NativeAuthLabels.signIn) {
+                        authStore.consumeError()
+                        onSwitchToLogin()
+                    }
+                    .disabled(isSubmitting)
+                }
             }
-            .font(PikoFont.button)
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .disabled(isSubmitting)
+            .navigationTitle(NativeAuthLabels.signUp)
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
     }
 }

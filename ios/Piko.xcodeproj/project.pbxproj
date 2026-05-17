@@ -8,17 +8,13 @@
 
 /* Begin PBXBuildFile section */
 		8F2E59B12C00000100A10001 /* PikoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59B02C00000100A10001 /* PikoApp.swift */; };
-		8F2E59D02C00000100A10001 /* PikoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C02C00000100A10001 /* PikoRootView.swift */; };
+		8F2E5C102C00000100A10001 /* PikoRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C02C00000100A10001 /* PikoRootView.swift */; };
 		8F2E59D12C00000100A10001 /* NativeReceiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C12C00000100A10001 /* NativeReceiveView.swift */; };
 		8F2E59D22C00000100A10001 /* NativeSendView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C22C00000100A10001 /* NativeSendView.swift */; };
 		8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C32C00000100A10001 /* NativeSettingsView.swift */; };
 		8F2E59D42C00000100A10001 /* NativePikoModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C42C00000100A10001 /* NativePikoModel.swift */; };
 		8F2E59D52C00000100A10001 /* NativeTransferProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */; };
 		8F2E59D62C00000100A10001 /* NativePickers.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C62C00000100A10001 /* NativePickers.swift */; };
-		8F2E59D72C00000100A10001 /* PikoStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C72C00000100A10001 /* PikoStyle.swift */; };
-		8F2E59D82C00000100A10001 /* NativeSendDeviceSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */; };
-		8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */; };
-		8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */; };
 		8F2E59DB2C00000100A10001 /* NativeLocalSendProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */; };
 		8F2E59DC2C00000100A10001 /* NativeHttpMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */; };
 		8F2E59DD2C00000100A10001 /* NativeLocalSendMulticast.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */; };
@@ -64,10 +60,6 @@
 		8F2E59C42C00000100A10001 /* NativePikoModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePikoModel.swift; sourceTree = "<group>"; };
 		8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTransferProtocol.swift; sourceTree = "<group>"; };
 		8F2E59C62C00000100A10001 /* NativePickers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativePickers.swift; sourceTree = "<group>"; };
-		8F2E59C72C00000100A10001 /* PikoStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PikoStyle.swift; sourceTree = "<group>"; };
-		8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendDeviceSection.swift; sourceTree = "<group>"; };
-		8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendItemSection.swift; sourceTree = "<group>"; };
-		8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSendTransferSection.swift; sourceTree = "<group>"; };
 		8F2E59CB2C00000100A10001 /* NativeLocalSendProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendProtocol.swift; sourceTree = "<group>"; };
 		8F2E59CC2C00000100A10001 /* NativeHttpMessage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeHttpMessage.swift; sourceTree = "<group>"; };
 		8F2E59CD2C00000100A10001 /* NativeLocalSendMulticast.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeLocalSendMulticast.swift; sourceTree = "<group>"; };
@@ -137,9 +129,6 @@
 				8F2E59C02C00000100A10001 /* PikoRootView.swift */,
 				8F2E59C12C00000100A10001 /* NativeReceiveView.swift */,
 				8F2E59C22C00000100A10001 /* NativeSendView.swift */,
-				8F2E59C82C00000100A10001 /* NativeSendDeviceSection.swift */,
-				8F2E59C92C00000100A10001 /* NativeSendItemSection.swift */,
-				8F2E59CA2C00000100A10001 /* NativeSendTransferSection.swift */,
 				8F2E59C32C00000100A10001 /* NativeSettingsView.swift */,
 				8F2E59F82C00000100A10001 /* NativeAuthModels.swift */,
 				8F2E59F92C00000100A10001 /* NativeAccountApiClient.swift */,
@@ -176,7 +165,6 @@
 				8F2E59CE2C00000100A10001 /* NativeLocalSendListenerFactory.swift */,
 				8F2E59C52C00000100A10001 /* NativeTransferProtocol.swift */,
 				8F2E59C62C00000100A10001 /* NativePickers.swift */,
-				8F2E59C72C00000100A10001 /* PikoStyle.swift */,
 			);
 			name = Piko;
 			sourceTree = "<group>";
@@ -250,12 +238,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				8F2E59B12C00000100A10001 /* PikoApp.swift in Sources */,
-				8F2E59D02C00000100A10001 /* PikoRootView.swift in Sources */,
+				8F2E5C102C00000100A10001 /* PikoRootView.swift in Sources */,
 				8F2E59D12C00000100A10001 /* NativeReceiveView.swift in Sources */,
 				8F2E59D22C00000100A10001 /* NativeSendView.swift in Sources */,
-				8F2E59D82C00000100A10001 /* NativeSendDeviceSection.swift in Sources */,
-				8F2E59D92C00000100A10001 /* NativeSendItemSection.swift in Sources */,
-				8F2E59DA2C00000100A10001 /* NativeSendTransferSection.swift in Sources */,
 				8F2E59D32C00000100A10001 /* NativeSettingsView.swift in Sources */,
 				8F2E59F02C00000100A10001 /* NativeAuthModels.swift in Sources */,
 				8F2E59F12C00000100A10001 /* NativeAccountApiClient.swift in Sources */,
@@ -292,7 +277,6 @@
 				8F2E59DE2C00000100A10001 /* NativeLocalSendListenerFactory.swift in Sources */,
 				8F2E59D52C00000100A10001 /* NativeTransferProtocol.swift in Sources */,
 				8F2E59D62C00000100A10001 /* NativePickers.swift in Sources */,
-				8F2E59D72C00000100A10001 /* PikoStyle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

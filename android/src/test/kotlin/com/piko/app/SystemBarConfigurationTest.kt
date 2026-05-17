@@ -30,14 +30,15 @@ class SystemBarConfigurationTest {
     }
 
     @Test
-    fun iosSystemBarsUseTransparentBackgrounds() {
+    fun iosSystemBarsUseSystemDefaults() {
         val swift = File(rootDir, "ios/PikoApp.swift").readText()
+        val root = File(rootDir, "ios/PikoRootView.swift").readText()
 
-        assertTrue("configureWithTransparentBackground()" in swift)
-        assertTrue("UITabBar.appearance().isTranslucent = true" in swift)
-        assertTrue("UINavigationBar.appearance().isTranslucent = true" in swift)
-        assertTrue("toolbarBackground(.hidden, for: .navigationBar, .tabBar)" in swift)
-        assertFalse("configureWithOpaqueBackground()" in swift)
-        assertFalse(".toolbarBackground(.visible, for: .navigationBar, .tabBar)" in swift)
+        assertTrue("WindowGroup" in swift)
+        assertTrue("TabView(selection:" in root)
+        assertTrue("NavigationStack" in root)
+        assertFalse("UITabBarAppearance" in swift)
+        assertFalse("UINavigationBarAppearance" in swift)
+        assertFalse("toolbarBackground(.hidden" in swift)
     }
 }

@@ -2,17 +2,13 @@ package com.piko.app.platform
 
 import com.piko.app.domain.SendDevice
 import com.piko.app.domain.SendFileItem
-import com.piko.app.domain.SendImageItem
+import com.piko.app.domain.SendMediaItem
 import com.piko.app.domain.SendLanDiscoveryState
-import com.piko.app.domain.SendPermissionState
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.domain.SendTransferRequest
 
 class SendPlatformActions(
-    val requestRecentImages: (((SendPermissionState, List<SendImageItem>) -> Unit) -> Unit) = { callback ->
-        callback(SendPermissionState.Unavailable, emptyList())
-    },
-    val pickImages: ((List<SendImageItem>) -> Unit) -> Unit = { callback ->
+    val pickMedia: ((List<SendMediaItem>) -> Unit) -> Unit = { callback ->
         callback(emptyList())
     },
     val pickFiles: ((List<SendFileItem>) -> Unit) -> Unit = { callback ->

@@ -22,9 +22,21 @@ $propertiesText = Get-Content -LiteralPath $versionPath |
     Where-Object { $_ -match '\S' -and $_ -notmatch '^\s*[#!]' } |
     Out-String
 $properties = ConvertFrom-StringData $propertiesText
-$versionName = $properties["piko.versionName"]
+$versionName = if ([string]::IsNullOrWhiteSpace($env:PIKO_VERSION_NAME)) {
+    $properties["piko.versionName"]
+} else {
+    $env:PIKO_VERSION_NAME
+}
+$versionCode = if ([string]::IsNullOrWhiteSpace($env:PIKO_VERSION_CODE)) {
+    $properties["piko.versionCode"]
+} else {
+    $env:PIKO_VERSION_CODE
+}
 if ([string]::IsNullOrWhiteSpace($versionName)) {
     throw "gradle.properties 缺少 piko.versionName。"
+}
+if ($versionCode -notmatch '^\d+$') {
+    throw "piko.versionCode 必须是整数，当前值：$versionCode"
 }
 
 if (-not $config.build.enabled -or -not $config.android.enabled) {

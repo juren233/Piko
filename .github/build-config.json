@@ -50,6 +50,8 @@
     "enabled_comment": "true 表示构建成功后创建 GitHub Release；false 表示只上传 Actions Artifacts。",
     "enabled": true,
     "type_comment": "release 表示正式版；prerelease 表示预发布版。",
-    "type": "prerelease"
+    "type": "prerelease",
+    "betaRunNumberOffset_comment": "预发布自动编号偏移：beta 编号 = GitHub Actions run_number - offset。最近一次 Build Packages run number 为 146，对应 beta.20，所以 offset=126；下一次新 run 会生成 beta.21。",
+    "betaRunNumberOffset": 126
   }
 }

@@ -29,7 +29,14 @@ struct NativeTransferItem: Identifiable {
     }
 
     var systemImage: String {
-        fileType == .image ? "photo" : "doc"
+        switch fileType {
+        case .image:
+            return "photo"
+        case .video:
+            return "play.rectangle"
+        default:
+            return "doc"
+        }
     }
 }
 

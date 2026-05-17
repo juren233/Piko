@@ -15,16 +15,15 @@ class IosAndroidUiParityTest {
         val sendView = readIos("NativeSendView.swift")
         val settingsView = readIos("NativeSettingsView.swift")
         val receiveView = readIos("NativeReceiveView.swift")
-        val style = readIos("PikoStyle.swift")
 
-        listOf(sendView, settingsView, receiveView).forEach { source ->
+        listOf(sendView, settingsView).forEach { source ->
             assertFalse("NavigationView" in source)
-            assertFalse("navigationTitle" in source)
             assertFalse("pageGradient" in source)
         }
-        assertFalse("LinearGradient(" in style)
+        assertFalse("NavigationView" in receiveView)
+        assertFalse("pageGradient" in receiveView)
 
-        assertInOrder(sendView, "我的设备", "局域网设备", "我的好友", "NativeImageSection", "NativeFileSection")
+        assertInOrder(sendView, "我的设备", "局域网设备", "我的好友", "Section(\"图片/视频\")", "Section(\"文件\")")
         assertInOrder(
             settingsView,
             "传输",
@@ -36,12 +35,15 @@ class IosAndroidUiParityTest {
             "NativeAuthLabels.nickname",
         )
         assertFalse("最近接收" in receiveView)
+        assertTrue(".navigationTitle(\"Piko\")" in receiveView)
+        assertTrue(".navigationTitle(\"发送\")" in sendView)
+        assertTrue(".navigationTitle(\"设置\")" in settingsView)
         assertTrue("NativeReceiveHistoryRow" in receiveView)
     }
 
     @Test
     fun authLabelsParityAcrossPlatforms() {
-        val androidLabels = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/UiLabels.kt").readText()
+        val androidLabels = readAndroid("feature/settings/SettingsRoute.kt")
         val iosLabels = readIos("NativeAuthLabels.swift")
         val expectedLabels = listOf(
             "账号",
@@ -76,8 +78,7 @@ class IosAndroidUiParityTest {
         val androidHomeState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
         val androidFriendModels = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/FriendModels.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
-        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/SettingsScreen.kt").readText()
-        val androidLabels = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/UiLabels.kt").readText()
+        val androidSettings = readAndroid("feature/settings/SettingsRoute.kt")
         val iosModel = readIos("NativePikoModel.swift")
         val iosSettings = readIos("NativeSettingsView.swift")
         val iosRoot = readIos("PikoRootView.swift")
@@ -96,7 +97,7 @@ class IosAndroidUiParityTest {
         assertTrue("friendsState = FriendsState.Empty" in androidHomeState)
         assertTrue("friendsRepository.refreshAll()" in androidApp)
         assertTrue("FriendsEntryRow" in androidSettings)
-        assertTrue("friendsEntry" in androidLabels)
+        assertTrue("friendsEntry" in androidSettings)
 
         assertTrue("let friendStore: NativeFriendStore" in iosModel)
         assertTrue("NativeFriendApiClient()" in iosModel)
@@ -125,7 +126,9 @@ class IosAndroidUiParityTest {
         assertTrue("/v1/friends/requests" in iosFriendApi)
         assertTrue("func refreshAll()" in iosFriendStore)
         assertTrue("func search(query:" in iosFriendStore)
-        assertTrue("PikoCollapsingPageHeroHeader" in iosFriendsView)
+        assertTrue("List {" in iosFriendsView)
+        assertTrue(".navigationTitle(NativeAuthLabels.friendsEntry)" in iosFriendsView)
+        assertFalse("PikoCollapsingPageHeroHeader" in iosFriendsView)
         assertTrue("NativeFriendRequestsView" in iosFriendRequestsView)
         assertFalse("DispatchSourceTimer" in iosPresenceTicker)
         listOf(
@@ -307,7 +310,8 @@ class IosAndroidUiParityTest {
         assertTrue("private var pendingSignals: [String: [[String: Any]]] = [:]" in iosP2P)
         assertTrue("bufferSignal(message, for: sessionId)" in iosP2P)
         assertTrue("flushPendingSignals(for: sessionId)" in iosP2P)
-        assertTrue("ReceiveConfirmDialog(" in androidApp)
+        val androidShell = readAndroid("app/PikoAndroidAppShell.kt")
+        assertTrue("ReceiveConfirmDialog(" in androidShell)
         assertTrue("receiveConfirmationMessage" in androidHomeState)
         assertTrue("sendPlatformActions.acceptReceiveTransfer(transferId)" in androidApp)
         assertTrue("ReceiveTransferEvent.Canceled(transferId)" in androidApp)
@@ -352,17 +356,17 @@ class IosAndroidUiParityTest {
         assertTrue("@Published var transferFailureMessage: String?" in iosModel)
         assertTrue("p2pFailureMessage(target: target, transferId: transferId, error: error)" in iosModel)
         val iosSendView = readIos("NativeSendView.swift")
-        val androidSharedApp = readAndroid("ui/App.kt")
-        val androidSendScreen = readAndroid("ui/SendScreen.kt")
+        val androidSendStarter = readAndroid("app/SendTransferStarter.kt")
+        val androidSendScreen = readAndroid("feature/send/SendRoute.kt")
         assertTrue(".alert(\"P2P 传输失败\"" in iosSendView)
         assertTrue("Button(\"复制\")" in iosSendView)
         assertTrue("UIPasteboard.general.string = model.transferFailureMessage ?? \"\"" in iosSendView)
-        assertTrue("AlertDialog(" in androidSendScreen)
-        assertTrue("P2P 传输失败" in androidSendScreen)
+        assertTrue("SuperDialog(" in androidSendScreen)
+        assertTrue("P2P direct 失败" in androidSendScreen)
         assertTrue("LocalContext.current" in androidSendScreen)
         assertTrue("context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager" in androidSendScreen)
-        assertTrue("clipboardManager.setPrimaryClip(ClipData.newPlainText(\"P2P 传输失败\", message))" in androidSendScreen)
-        assertTrue("Text(text = \"复制\")" in androidSendScreen)
+        assertTrue("clipboardManager.setPrimaryClip(ClipData.newPlainText(\"P2P direct 失败\", message))" in androidSendScreen)
+        assertTrue("text = \"复制诊断\"" in androidSendScreen)
         assertTrue("p2pFailureMessage(target = target, transferId = transferId, cause = error)" in androidSendActions)
         assertTrue("class P2PTransferFailure(" in androidP2P)
         assertTrue("private func p2pError(" in iosP2P)
@@ -425,7 +429,7 @@ class IosAndroidUiParityTest {
             "if (event is SendTransferEvent.TransportNotice)",
             "onTransferNotice(event.message)",
         ).forEach { marker ->
-            assertTrue(marker in androidSharedApp, "Android shared send entry must forward transport notice marker $marker")
+            assertTrue(marker in androidSendStarter, "Android shared send entry must forward transport notice marker $marker")
         }
         assertTrue(
             "Toast.makeText(appContext, message, Toast.LENGTH_SHORT).show()" in androidApp,
@@ -613,11 +617,11 @@ class IosAndroidUiParityTest {
             assertTrue(marker in iosModel, "iOS model must publish transport notice marker $marker")
         }
         listOf(
-            "if let message = model.transferToastMessage",
-            "NativeTransferToast(message: message)",
+            ".alert(\"传输状态\"",
+            "model.transferToastMessage != nil",
             "model.transferToastMessage = nil",
         ).forEach { marker ->
-            assertTrue(marker in iosSendView, "iOS send view must show transient transport toast marker $marker")
+            assertTrue(marker in iosSendView, "iOS send view must show transport notice marker $marker")
         }
         assertTrue("let ipv6Sockaddr = address.withMemoryRebound(to: sockaddr_in6.self" in iosP2P)
         assertTrue("var mutableSockaddr = ipv6Sockaddr" in iosP2P)
@@ -903,8 +907,8 @@ class IosAndroidUiParityTest {
         assertFalse("friendsRepository.heartbeat()" in androidApp)
         assertTrue("refreshFriendsPresence()" in androidApp)
         assertTrue("AppLifecycleForegroundObserver" in androidApp)
-        assertTrue("selectedTab == PikoTab.Send" in androidApp)
-        assertTrue("settingsDestination == SettingsDestination.Friends" in androidApp)
+        assertTrue("destination == PikoDestination.Send" in androidApp)
+        assertTrue("destination == PikoDestination.Friends" in androidApp)
         assertTrue("friendsRepository.refreshAll()" in androidApp)
         assertInOrder(
             iosModel,
@@ -938,70 +942,61 @@ class IosAndroidUiParityTest {
     }
 
     @Test
-    fun androidUsesFixedIosPaletteInsteadOfDynamicSystemColors() {
-        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/PikoTheme.kt").readText()
+    fun androidUsesMiuixPaletteInsteadOfMaterialOrIosNamedColors() {
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/design/PikoMiuixTheme.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
-        val sharedApp = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/App.kt").readText()
-        val bottomTabs = File(rootDir, "android/src/main/kotlin/com/piko/app/glass/LiquidBottomTabs.kt").readText()
-        val iosStyle = readIos("PikoStyle.swift")
+        val appShell = File(rootDir, "android/src/main/kotlin/com/piko/app/app/PikoAndroidAppShell.kt").readText()
 
-        assertTrue("UIColor.systemBackground" in iosStyle)
-        assertTrue("UIColor.secondarySystemBackground" in iosStyle)
-        assertTrue("UIColor.systemBlue" in iosStyle)
-        assertTrue("IOS_SYSTEM_BLUE_LIGHT = Color(0xFF007AFF)" in androidTheme)
-        assertTrue("IOS_SYSTEM_BLUE_DARK = Color(0xFF0A84FF)" in androidTheme)
-        assertTrue("IOS_SECONDARY_SYSTEM_BACKGROUND_LIGHT = Color(0xFFF2F2F7)" in androidTheme)
-        assertTrue("IOS_SECONDARY_SYSTEM_BACKGROUND_DARK = Color(0xFF1C1C1E)" in androidTheme)
-        assertTrue("PikoTheme {" in androidApp)
-        assertTrue("PikoTheme {" in sharedApp)
-        assertTrue("PikoColors.accent" in bottomTabs)
-        assertFalse("dynamicLightColorScheme" in androidTheme + androidApp + sharedApp)
-        assertFalse("dynamicDarkColorScheme" in androidTheme + androidApp + sharedApp)
-        assertFalse("Color(0xFF0088FF)" in bottomTabs)
-        assertFalse("Color(0xFF0091FF)" in bottomTabs)
+        assertTrue("PikoMiuixTheme" in androidTheme)
+        assertTrue("MiuixTheme(" in androidTheme)
+        assertTrue("ThemeController(" in androidTheme)
+        assertTrue("lightColorScheme(" in androidTheme)
+        assertTrue("darkColorScheme(" in androidTheme)
+        assertTrue("PikoAndroidAppShell(" in androidApp)
+        assertTrue("PikoMiuixTheme {" in appShell)
+        assertTrue("NavigationBar(" in appShell)
+        assertTrue("NavigationBarItem(" in appShell)
+        assertFalse("InstallerXFloatingBottomBar(" in appShell)
+        assertFalse("PikoGlassNavigationItem(" in appShell)
+        assertFalse("PikoGlassSendAction(" in appShell)
+        assertFalse("floatingActionButton =" in appShell)
+        assertFalse("ExtendedFloatingActionButton(" in appShell)
+        assertFalse("dynamicLightColorScheme" in androidTheme + androidApp + appShell)
+        assertFalse("dynamicDarkColorScheme" in androidTheme + androidApp + appShell)
+        assertFalse("IOS_SYSTEM_BLUE" in androidTheme)
+        assertFalse("IOS_SYSTEM_BACKGROUND" in androidTheme)
     }
 
     @Test
-    fun iosContentIconsStayLucideSourcedLikeAndroid() {
-        val style = readIos("PikoStyle.swift")
+    fun iosContentUsesSfSymbolsForSystemLevelNativePages() {
         val receiveView = readIos("NativeReceiveView.swift")
-        val sendItemSection = readIos("NativeSendItemSection.swift")
-        val sendDeviceSection = readIos("NativeSendDeviceSection.swift")
-        val transferSection = readIos("NativeSendTransferSection.swift")
+        val sendView = readIos("NativeSendView.swift")
+        val rootView = readIos("PikoRootView.swift")
+        val iosContent = receiveView + sendView + rootView
 
-        assertTrue("case inbox" in style)
-        assertTrue("M22,12H16l-2,3H10l-2,-3H2" in style)
-        assertTrue("case file" in style)
-        assertTrue("case image" in style)
-        assertTrue("case plus" in style)
-        assertTrue("case x" in style)
-        assertTrue("case check" in style)
-        assertTrue("case smartphone" in style)
-        assertTrue("case refreshCw" in style)
-        assertTrue("M7,2h10a2,2 0,0 1,2 2v16a2,2 0,0 1,-2 2H7a2,2 0,0 1,-2 -2V4a2,2 0,0 1,2 -2z" in style)
-        assertTrue("M3,12a9,9 0,0 1,9 -9 9.75,9.75 0,0 1,6.74 2.74L21,8" in style)
-
-        val iosContent = receiveView + sendItemSection + sendDeviceSection + transferSection
-        listOf("inbox", "file", "image", "plus", "x", "check", "smartphone", "refreshCw").forEach { name ->
-            assertTrue("LucideTabIcon.$name.image" in iosContent)
+        listOf(
+            "tray.and.arrow.down",
+            "iphone",
+            "doc",
+            "photo",
+            "paperplane",
+            "gearshape",
+            "checkmark.circle.fill",
+        ).forEach { name ->
+            assertTrue("systemName: \"$name\"" in iosContent || "systemImage: \"$name\"" in iosContent)
         }
-        assertFalse("Image(systemName: \"tray" in iosContent)
-        assertFalse("Image(systemName: \"doc" in iosContent)
-        assertFalse("Image(systemName: \"photo" in iosContent)
-        assertFalse("Image(systemName: \"plus" in iosContent)
-        assertFalse("Image(systemName: \"xmark" in iosContent)
-        assertFalse("Image(systemName: \"checkmark" in iosContent)
+        assertFalse("LucideTabIcon." in receiveView + sendView)
     }
 
     @Test
     fun iosSendDeviceSubtitleKeepsAndroidOptionalContract() {
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/SendPageState.kt").readText()
         val iosModel = readIos("NativePikoModel.swift")
-        val iosDeviceSection = readIos("NativeSendDeviceSection.swift")
+        val iosSendView = readIos("NativeSendView.swift")
 
         assertTrue("val subtitle: String? = null" in androidState)
         assertTrue("let subtitle: String?" in iosModel)
-        assertTrue("if let subtitle = device.subtitle" in iosDeviceSection)
+        assertTrue("if let subtitle = device.subtitle" in iosSendView)
     }
 
     @Test
@@ -1048,7 +1043,7 @@ class IosAndroidUiParityTest {
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/SendPageState.kt").readText()
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
         val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidSendPlatformActions.kt").readText()
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+        val androidReceive = readAndroid("feature/receive/ReceiveRoute.kt")
         val iosModel = readIos("NativePikoModel.swift")
         val iosLanDiscovery = readIos("NativeLanDiscoveryService.swift")
         val iosReceive = readIos("NativeReceiveView.swift")
@@ -1070,18 +1065,19 @@ class IosAndroidUiParityTest {
         assertFalse("CODE_SIGN_ENTITLEMENTS = Piko.entitlements;" in iosProject)
         assertFalse("Settings.Global.DEVICE_NAME" in androidApp)
         assertFalse("Build.MODEL" in androidApp)
-        assertTrue("LucideSmartphoneIcon" in androidReceive)
-        assertTrue("LucideRefreshCwIcon" in androidReceive)
-        assertTrue("text = nickname" in androidReceive)
-        assertTrue("text = \"本设备名称\"" in androidReceive)
-        assertTrue("换个昵称" in androidReceive)
-        assertTrue("LucideTabIcon.smartphone.image" in iosReceive)
-        assertTrue("LucideTabIcon.refreshCw.image" in iosReceive)
-        assertTrue("Text(nickname)" in iosReceive)
+        assertTrue("MiuixIcons.Download" in androidReceive)
+        assertTrue("title = deviceName" in androidReceive)
+        assertTrue("可接收 · \$historyCount 条历史记录" in androidReceive)
+        assertTrue("text = \"更换\"" in androidReceive)
+        assertTrue("Image(systemName: \"iphone\")" in iosReceive)
+        assertTrue("ReceiveStatusSummary(model: model)" in iosReceive)
+        assertTrue("Button(\"更换\", action: model.resetDeviceNickname)" in iosReceive)
+        assertFalse("Label(\"更换\", systemImage: \"arrow.clockwise\")" in iosReceive)
+        assertFalse("Button(\"更换\", systemImage: \"arrow.clockwise\", action: model.resetDeviceNickname)" in iosReceive)
+        assertTrue("Text(model.currentDeviceName)" in iosReceive)
         assertTrue("Text(\"本设备名称\")" in iosReceive)
-        assertFalse("Image(uiImage: LucideTabIcon.inbox.image)" in iosReceive.substringBefore("private struct NativeReceiveEmptyState"))
-        assertFalse("Image(systemName:" in iosReceive)
-        assertTrue("换个昵称" in iosReceive)
+        assertFalse("Image(uiImage: LucideTabIcon.inbox.image)" in iosReceive)
+        assertFalse("UIDevice.current.name" in iosReceive)
         assertTrue("subtitle = nickname.code" in androidDiscovery)
         assertFalse("subtitle = resolvedService.host?.hostAddress" in androidDiscovery)
         assertTrue("registerServiceInfoCallback" in androidDiscovery)
@@ -1092,7 +1088,7 @@ class IosAndroidUiParityTest {
 
     @Test
     fun receivePagesUseCompactActiveProgressAndMediaPreview() {
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+        val androidReceive = readAndroid("feature/receive/ReceiveRoute.kt")
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
         val androidDiscovery = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidSendPlatformActions.kt").readText()
         val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/transport/LocalSendHttpServer.kt").readText()
@@ -1104,94 +1100,56 @@ class IosAndroidUiParityTest {
         assertFalse("PikoPill(text: \"最近接收\"" in iosReceive)
         assertFalse("CircularProgressIndicator" in androidReceive)
         assertFalse("Circle()\n                .trim" in iosReceive)
-        assertTrue("RoundedRectProgressIndicator" in androidReceive)
-        assertTrue("RoundedRectangle(cornerRadius: 18, style: .continuous)\n                .trim" in iosReceive)
-        assertTrue("style = MaterialTheme.typography.bodyLarge" in androidReceive)
-        assertTrue(".font(PikoFont.compactTitle)" in iosReceive)
-        assertTrue(".offset(x = (-8).dp)" in androidReceive)
-        assertTrue(".offset(x: -8)" in iosReceive)
+        assertTrue("LinearProgressIndicator(progress = transfer.progress)" in androidReceive)
+        assertTrue("ProgressView(value: transfer.progress)" in iosReceive)
+        assertTrue("BasicComponent(" in androidReceive)
+        assertTrue(".font(.headline)" in iosReceive)
+        assertFalse(".offset(x = (-8).dp)" in androidReceive)
+        assertFalse(".offset(x: -8)" in iosReceive)
         assertTrue("mediaPreviewDescription" in androidState)
         assertTrue("isMediaPreview" in androidState)
-        assertTrue("MediaThumbnailPreview" in androidReceive)
+        assertTrue("item.files.take(3)" in androidReceive)
         assertTrue("mediaPreviewData" in iosReceiveFileStore)
-        assertTrue("NativeMediaPreview" in iosReceive)
+        assertTrue("NativeReceiveHistoryPreview" in iosReceive)
+        assertTrue("UIImage(data: data)" in iosReceive)
         assertTrue("AVAssetImageGenerator" in iosReceiveFileStore)
         assertTrue("mediaPreviewImageData(" in iosReceiveFileStore)
         assertTrue("UIGraphicsImageRenderer" in iosReceiveFileStore)
         assertTrue("jpegData(compressionQuality: 0.82)" in iosReceiveFileStore)
         assertFalse("case .image:\n            return fallbackData" in iosReceiveFileStore.replace("\r\n", "\n"))
         assertFalse("UIImage(data: $0)?.receiveListPixelDescription" in iosReceive)
-        assertTrue("mediaPreview(bytes:" in iosReceive)
-        assertTrue("receiveListImageDescription" in iosReceive)
+        assertTrue("mediaPreviewData" in iosReceive)
+        assertFalse("receiveListImageDescription" in iosReceive)
         assertTrue("file.fileType.isMediaPreview" in androidDiscovery)
         assertTrue("file.fileType.isMediaPreview" in androidLocalSendServer)
     }
 
     @Test
-    fun iosReceiveFileListUsesNativeTableAndKeepsRequiredControls() {
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+    fun iosReceiveFileListUsesSwiftUiListAndKeepsRequiredControls() {
+        val androidReceive = readAndroid("feature/receive/ReceiveRoute.kt")
         val iosReceive = readIos("NativeReceiveView.swift")
 
-        assertTrue("modifier = Modifier.weight(1f)" in androidReceive)
-        assertInOrder(iosReceive, "NativeReceiveTable(", "model: model")
-        assertTrue("private struct NativeReceiveTable: UIViewControllerRepresentable" in iosReceive)
-        assertTrue("final class NativeReceiveTableViewController: UITableViewController" in iosReceive)
-        assertTrue("UIContextualAction(style: .destructive, title: \"删除\")" in iosReceive)
-        assertTrue("deleteAction.backgroundColor = UIColor.systemRed" in iosReceive)
-        assertTrue("UISwipeActionsConfiguration(actions: [deleteAction])" in iosReceive)
-        assertFalse("private final class NativeReceiveSpacerCell: UITableViewCell" in iosReceive)
-        assertFalse("return NativeReceiveSpacerCell(" in iosReceive)
-        assertFalse("case .spacer:\n            return AnyView(" in iosReceive.replace("\r\n", "\n"))
-        assertTrue("visibleCells=" in iosReceive)
-        assertTrue("swiftUILayout event=" in iosReceive)
-        assertTrue("global:" in iosReceive)
-        assertTrue("hostingCell layout item=" in iosReceive)
-        assertFalse("spacerCell layout expected=" in iosReceive)
-        assertFalse("tableView.cellForRow(at:" in iosReceive)
-        assertTrue("tableView.visibleCells" in iosReceive)
-        val didEndDisplayingBlock = Regex("""override func tableView\(_ tableView: UITableView, didEndDisplaying[\s\S]*?\n    }\n""")
-            .find(iosReceive)
-            ?.value
-            ?: error("didEndDisplaying must remain inspectable")
-        assertTrue("detachHost()" in didEndDisplayingBlock)
-        val willDisplayBlock = Regex("""override func tableView\(_ tableView: UITableView, willDisplay[\s\S]*?\n    }\n""")
-            .find(iosReceive)
-            ?.value
-            ?: error("willDisplay must remain inspectable")
-        assertFalse("logTableGeometry(" in willDisplayBlock)
-        assertTrue("scrollViewDidScroll" in iosReceive)
-        assertTrue("postReloadAsync" in iosReceive)
-        assertTrue("receiveListInsetsDescription" in iosReceive)
-        assertTrue("NSLog(\"%@\", message)" in iosReceive)
-        assertTrue("configuration.performsFirstActionWithFullSwipe = false" in iosReceive)
-        assertTrue("UIAlertController(title: item.deleteConfirmationTitle" in iosReceive)
-        assertTrue("swipeCompletion(false)" in iosReceive)
-        assertTrue("swipeCompletion(true)" in iosReceive)
-        assertTrue("tableView.deleteRows(at: [indexPath], with: .automatic)" in iosReceive)
-        assertTrue("private var isApplyingAnimatedDelete = false" in iosReceive)
-        assertTrue("static let fileRowTrailingInset: CGFloat = 24" in iosReceive)
+        assertTrue("LazyColumn(" in androidReceive)
+        assertTrue("Card(modifier = Modifier.fillMaxWidth())" in androidReceive)
+        assertTrue("List {" in iosReceive)
+        assertTrue(".listStyle(.insetGrouped)" in iosReceive)
+        assertTrue(".scrollContentBackground(.visible)" in iosReceive)
+        assertTrue(".swipeActions(edge: .trailing, allowsFullSwipe: false)" in iosReceive)
+        assertTrue(".confirmationDialog(" in iosReceive)
         assertTrue("NativeReceiveHistoryRow(item: item)" in iosReceive)
         assertTrue("NativeReceiveHistoryPreview(item: item)" in iosReceive)
-        assertTrue("historyPreviewFrame(" in iosReceive)
-        assertTrue("historyPreviewBranch(kind:media" in iosReceive)
-        assertTrue("historyTextColumn(" in iosReceive)
-        assertTrue("historyTitle(" in iosReceive)
-        assertTrue("historySubtitle(" in iosReceive)
         assertTrue("NativeActiveReceiveRow(" in iosReceive)
-        assertTrue("NativeActiveReceiveProgressIcon(transfer: transfer)" in iosReceive)
-        assertFalse("ProgressView(value: transfer.progress)" in iosReceive)
-        assertTrue("Button(action: onCancel)" in iosReceive)
+        assertTrue("ProgressView(value: transfer.progress)" in iosReceive)
+        assertTrue("Button(\"接收\", systemImage: \"checkmark.circle\"" in iosReceive)
         assertTrue("Text(transfer.title)" in iosReceive)
         assertTrue("Text(transfer.subtitle)" in iosReceive)
         assertTrue("Text(item.title)" in iosReceive)
         assertTrue("Text(item.subtitle)" in iosReceive)
-        assertTrue("private struct NativeReceiveTextColumn<Content: View>: View" in iosReceive)
-        assertTrue(".frame(maxWidth: .infinity, alignment: .leading)" in iosReceive)
-        assertTrue(".layoutPriority(1)" in iosReceive)
-        assertFalse("List {" in iosReceive)
+        assertFalse("UIViewControllerRepresentable" in iosReceive)
+        assertFalse("UITableViewController" in iosReceive)
+        assertFalse("UIContextualAction" in iosReceive)
+        assertFalse("UIAlertController" in iosReceive)
         assertFalse(".listStyle(.plain)" in iosReceive)
-        assertFalse(".swipeActions(edge: .trailing" in iosReceive)
-        assertFalse("Button(\"删除\", role: .destructive)" in iosReceive)
         assertFalse("trailing: 16" in iosReceive)
         assertFalse("static let contentTrailingInset: CGFloat = 0" in iosReceive)
         assertFalse("ScrollView(showsIndicators: false)" in iosReceive)
@@ -1334,20 +1292,15 @@ class IosAndroidUiParityTest {
             "transport/AndroidLocalSendMulticast.kt" to "package com.piko.app.transport",
             "transport/LocalSendHttpUploadClient.kt" to "package com.piko.app.transport",
             "transport/LocalSendHttpServer.kt" to "package com.piko.app.transport",
-            "ui/App.kt" to "package com.piko.app.ui",
-            "ui/PikoTheme.kt" to "package com.piko.app.ui",
-            "ui/PikoIcons.kt" to "package com.piko.app.ui",
-            "ui/PikoUiChrome.kt" to "package com.piko.app.ui",
-            "ui/ReceiveScreen.kt" to "package com.piko.app.ui",
-            "ui/SendDeviceComponents.kt" to "package com.piko.app.ui",
-            "ui/SendFileComponents.kt" to "package com.piko.app.ui",
-            "ui/SendImageComponents.kt" to "package com.piko.app.ui",
-            "ui/SendPlatformImageThumbnail.kt" to "package com.piko.app.ui",
-            "ui/SendScreen.kt" to "package com.piko.app.ui",
-            "ui/SendSelectionComponents.kt" to "package com.piko.app.ui",
-            "ui/SendTransferComponents.kt" to "package com.piko.app.ui",
-            "ui/SettingsScreen.kt" to "package com.piko.app.ui",
-            "ui/UiLabels.kt" to "package com.piko.app.ui",
+            "app/AuthModels.kt" to "package com.piko.app.app",
+            "app/PikoAndroidAppShell.kt" to "package com.piko.app.app",
+            "app/SendTransferStarter.kt" to "package com.piko.app.app",
+            "design/PikoMiuixTheme.kt" to "package com.piko.app.design",
+            "design/PikoMiuixComponents.kt" to "package com.piko.app.design",
+            "feature/receive/ReceiveRoute.kt" to "package com.piko.app.feature.receive",
+            "feature/send/SendRoute.kt" to "package com.piko.app.feature.send",
+            "feature/settings/SettingsRoute.kt" to "package com.piko.app.feature.settings",
+            "feature/friends/FriendsRoute.kt" to "package com.piko.app.feature.friends",
             "platform/DeviceNickname.kt" to "package com.piko.app.platform",
             "platform/SendPlatformActions.kt" to "package com.piko.app.platform",
             "platform/AndroidReceivePreferences.kt" to "package com.piko.app.platform",
@@ -1362,12 +1315,14 @@ class IosAndroidUiParityTest {
 
         val mainActivity = File(rootDir, "android/src/main/kotlin/com/piko/app/MainActivity.kt").readText()
         assertTrue("import com.piko.app.platform.AndroidPikoApp" in mainActivity)
+        val legacyUiDir = File(rootDir, "android/src/main/kotlin/com/piko/app/ui")
+        assertFalse(legacyUiDir.exists() && legacyUiDir.walkTopDown().any { it.isFile })
     }
 
     @Test
     fun receiveHistoryDeletionUsesSwipeConfirmationAndSavedFileReferencesOnBothPlatforms() {
         val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
-        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/ReceiveScreen.kt").readText()
+        val androidReceive = readAndroid("feature/receive/ReceiveRoute.kt")
         val androidState = File(rootDir, "android/src/main/kotlin/com/piko/app/domain/PikoHomeState.kt").readText()
         val androidStore = File(rootDir, "android/src/main/kotlin/com/piko/app/data/ReceiveHistoryStore.kt").readText()
         val androidLocalSendServer = File(rootDir, "android/src/main/kotlin/com/piko/app/transport/LocalSendHttpServer.kt").readText()
@@ -1378,27 +1333,25 @@ class IosAndroidUiParityTest {
         val iosTransferModels = readIos("NativeTransferModels.swift")
         val iosReceiveFileStore = readIos("NativeReceiveFileStore.swift")
 
-        assertTrue("detectHorizontalDragGestures" in androidReceive)
-        assertTrue("val deleteWidth = 96.dp" in androidReceive)
-        assertTrue("val deleteButtonOffset" in androidReceive)
-        assertTrue(".width(deleteWidth)" in androidReceive)
-        assertTrue(".clip(RoundedCornerShape(20.dp))" in androidReceive)
-        assertTrue("copy(alpha = revealFraction)" in androidReceive)
+        assertTrue("ReceiveHistoryRow(" in androidReceive)
+        assertTrue("TextButton(" in androidReceive)
+        assertTrue("onClick = onDelete" in androidReceive)
+        assertTrue("SuperDialog(" in androidReceive)
+        assertTrue("summary = item.deleteConfirmationBody" in androidReceive)
+        assertTrue("ButtonDefaults.buttonColorsPrimary()" in androidReceive)
         assertFalse("targetOffset" in androidReceive)
         assertFalse("val revealedWidth" in androidReceive)
         assertFalse(".background(MaterialTheme.colorScheme.error.copy(alpha = 0.28f" in androidReceive)
         assertTrue("DeleteReceiveHistoryDialog" in androidReceive)
-        assertTrue("AlertDialog(" in androidReceive)
-        assertTrue("onDeleteReceiveHistory(history, false)" in androidReceive)
-        assertTrue("onDeleteReceiveHistory(history, true)" in androidReceive)
-        assertTrue("仅删除记录" in androidReceive)
+        assertFalse("AlertDialog(" in androidReceive)
+        assertTrue("onDeleteReceiveHistory(item, false)" in androidReceive)
+        assertTrue("onDeleteReceiveHistory(item, true)" in androidReceive)
+        assertTrue("只删记录" in androidReceive)
         assertTrue("删除记录与文件" in androidReceive)
-        assertTrue("Column(horizontalAlignment = Alignment.End)" in androidReceive)
-        assertInOrder(androidReceive, "Text(text = \"算了\")", "Text(text = \"仅删除记录\")", "text = \"删除记录与文件\"")
+        assertInOrder(androidReceive, "text = \"只删记录\"", "onClick = onDeleteRecord", "onClick = onDeleteRecordAndFiles")
         assertFalse("Checkbox(" in androidReceive)
         assertFalse("Dialog(onDismissRequest = onDismiss)" in androidReceive)
         assertFalse("同时删除文件" in androidReceive)
-        assertTrue("算了" in androidReceive)
         assertTrue("删除" in androidReceive)
         assertTrue("真的要删除" in androidState)
         assertTrue("将会删除：" in androidState)
@@ -1408,20 +1361,15 @@ class IosAndroidUiParityTest {
         assertTrue("savedUri = uri.toString()" in androidLegacyReceiver)
         assertTrue("contentResolver.delete(Uri.parse(savedUri), null, null)" in androidApp)
 
-        assertTrue("static let pageHorizontalInset: CGFloat = 24" in iosReceive)
-        assertTrue("static let contentTrailingInset: CGFloat = 24" in iosReceive)
-        assertTrue("static let bottomSpacerHeight: CGFloat = 32" in iosReceive)
-        assertTrue("static let bottomReadableClearance: CGFloat = 56" in iosReceive)
-        assertTrue("static func readableBottomInset(for safeAreaBottom: CGFloat) -> CGFloat" in iosReceive)
-        assertTrue("applyReadableContentInsets(reason: \"viewDidLoad\")" in iosReceive)
-        assertTrue("applyReadableContentInsets(reason: \"viewDidLayoutSubviews\")" in iosReceive)
-        assertTrue("tableView.contentInset = nextInset" in iosReceive)
-        assertTrue("tableView.scrollIndicatorInsets = nextInset" in iosReceive)
-        assertTrue("readableInsets reason=" in iosReceive)
-        assertFalse("tableView.contentInset = .zero" in iosReceive)
-        assertFalse("tableView.scrollIndicatorInsets = .zero" in iosReceive)
-        assertTrue("case history(NativeReceiveHistoryItem)" in iosReceive)
+        assertTrue("List {" in iosReceive)
+        assertTrue(".listStyle(.insetGrouped)" in iosReceive)
+        assertTrue(".swipeActions(edge: .trailing" in iosReceive)
+        assertTrue(".confirmationDialog(" in iosReceive)
+        assertTrue("Button(\"只删除记录\"" in iosReceive)
+        assertTrue("Button(\"删除记录和文件\"" in iosReceive)
         assertTrue("NativeReceiveHistoryRow(item: item)" in iosReceive)
+        assertFalse("UITableView" in iosReceive)
+        assertFalse("tableView." in iosReceive)
         assertFalse("swipeEditingIndexPath" in iosReceive)
         assertFalse("NativeSwipeToDeleteReceiveHistoryCard" in iosReceive)
         assertFalse("NativeReceiveHistoryCard" in iosReceive)
@@ -1429,17 +1377,9 @@ class IosAndroidUiParityTest {
         assertFalse("static let historyRowSpacing" in iosReceive)
         assertFalse("let deleteWidth: CGFloat = 96" in iosReceive)
         assertFalse("DragGesture(minimumDistance: 12)" in iosReceive)
-        assertFalse(".swipeActions(edge: .trailing" in iosReceive)
-        assertFalse("Button(\"删除\", role: .destructive)" in iosReceive)
         assertFalse("pendingDeleteHistory = item" in iosReceive)
-        assertTrue("delete(item, deleteFiles: false, swipeCompletion: swipeCompletion)" in iosReceive)
-        assertTrue("delete(item, deleteFiles: true, swipeCompletion: swipeCompletion)" in iosReceive)
-        assertTrue("animateDelete(item, at: indexPath)" in iosReceive)
-        assertInOrder(iosReceive, "model.deleteReceiveHistory(item, deleteFiles: deleteFiles)", "animateDelete(item, at: indexPath)", "swipeCompletion(true)")
-        assertTrue("仅删除记录" in iosReceive)
-        assertTrue("删除记录与文件" in iosReceive)
-        assertInOrder(iosReceive, "UIAlertAction(title: \"算了\"", "UIAlertAction(title: \"仅删除记录\"", "UIAlertAction(title: \"删除记录与文件\"")
-        assertInOrder(iosReceive, "NativeReceiveTable(", "model: model")
+        assertTrue("delete(item, deleteFiles: false)" in iosReceive)
+        assertTrue("delete(item, deleteFiles: true)" in iosReceive)
         assertFalse("NativeReceiveSwipeRow" in iosReceive)
         assertFalse("pendingDeleteItem" in iosReceive)
         assertFalse("UIImage(systemName:" in iosReceive)
@@ -1460,90 +1400,57 @@ class IosAndroidUiParityTest {
     fun iosReceiveRootUsesPageBackgroundThroughSystemBars() {
         val iosRoot = readIos("PikoRootView.swift")
         val iosReceive = readIos("NativeReceiveView.swift")
-        val iosStyle = readIos("PikoStyle.swift")
 
-        assertTrue("static let pageBackgroundUIColor = surfaceUIColor" in iosStyle)
-        assertTrue("PikoPalette.pageBackgroundUIColor" in iosRoot)
-        assertTrue("view.window?.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosRoot)
-        assertTrue("view.superview?.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosRoot)
-        assertTrue("applyImmersiveConfiguration()" in iosRoot)
-        assertTrue(".ignoresSafeArea(.container, edges: .bottom)" in iosReceive)
-        assertTrue("PikoPalette.pageBackground.ignoresSafeArea()" in iosRoot)
-        assertInOrder(iosReceive, "NativeReceiveTable(", "model: model")
-        assertTrue("tableView.backgroundColor = PikoPalette.pageBackgroundUIColor" in iosReceive)
-        assertTrue("tableView.contentInsetAdjustmentBehavior = .automatic" in iosReceive)
-        assertTrue("static let deviceNicknameBottomSpacing: CGFloat = 8" in iosReceive)
-        assertTrue("static let deviceNicknameVerticalPadding: CGFloat = 9" in iosReceive)
-        assertTrue("static let emptyStateTopSpacing: CGFloat = 24" in iosReceive)
-        assertTrue("static let emptyStateBottomSpacing: CGFloat = 112" in iosReceive)
-        assertTrue("static let emptyStateMinimumContentHeight: CGFloat = 164" in iosReceive)
-        assertTrue("emptyStateCardView(" in iosReceive)
-        assertTrue("private struct NativeReceiveEmptyStateContent: View" in iosReceive)
-        assertTrue(".background(PikoPalette.pageBackground)" in iosReceive)
-        assertFalse("static func emptyStateRowHeight(for tableHeight: CGFloat)" in iosReceive)
-        assertFalse("emptyStateHeightCacheKeyPrefix" in iosReceive)
-        assertFalse("let emptyStateShape = RoundedRectangle(cornerRadius: 24, style: .continuous)" in iosReceive)
-        assertFalse(".fill(Color.secondary.opacity(0.08))" in iosReceive)
-        assertFalse(".clipShape(emptyStateShape)" in iosReceive)
-        assertTrue(".frame(maxWidth: .infinity)" in iosReceive)
-        assertTrue(".frame(minHeight: NativeReceiveLayout.emptyStateMinimumContentHeight)" in iosReceive)
-        assertFalse("static let emptyStateRowHeight: CGFloat = 300" in iosReceive)
-        assertFalse("emptyStateEstimatedHeight" in iosReceive)
-        assertFalse("PikoEmptyPlane(text: \"还没有接收过文件\")" in iosReceive)
-        assertFalse(".frame(maxWidth: .infinity, height: height, alignment: .top)" in iosReceive)
-        assertFalse("rowView(bottom: 136)" in iosReceive)
-        assertFalse("return 156" in iosReceive)
-        assertFalse("return 82" in iosReceive)
-        assertTrue(".strokeBorder(Color.secondary.opacity(0.16), lineWidth: 1)" in iosReceive)
-        assertFalse(".stroke(Color.secondary.opacity(0.16), lineWidth: 1)" in iosReceive)
+        assertTrue("TabView(selection:" in iosRoot)
+        assertTrue("NavigationStack" in iosRoot)
+        assertTrue("Label(\"接收\", systemImage: \"tray.and.arrow.down\")" in iosRoot)
+        assertFalse("applyImmersiveConfiguration()" in iosRoot)
+        assertFalse("PikoPalette.pageBackground.ignoresSafeArea()" in iosRoot)
+        assertTrue("List {" in iosReceive)
+        assertTrue(".scrollContentBackground(.visible)" in iosReceive)
+        assertTrue(".navigationTitle(\"Piko\")" in iosReceive)
+        assertTrue("NativeUnavailableRow(" in iosReceive)
+        assertFalse("NativeReceiveTable(" in iosReceive)
+        assertFalse("tableView." in iosReceive)
+        assertFalse(".background(PikoPalette.pageBackground)" in iosReceive)
     }
 
     @Test
     fun appTextUsesAdaptiveTypographyForSmallAndLargeScreens() {
-        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/PikoTheme.kt").readText()
-        val androidApp = File(rootDir, "android/src/main/kotlin/com/piko/app/platform/AndroidPikoApp.kt").readText()
-        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/ui/SettingsScreen.kt").readText()
-        val iosStyle = readIos("PikoStyle.swift")
+        val androidTheme = File(rootDir, "android/src/main/kotlin/com/piko/app/design/PikoMiuixTheme.kt").readText()
+        val androidShell = File(rootDir, "android/src/main/kotlin/com/piko/app/app/PikoAndroidAppShell.kt").readText()
+        val androidReceive = File(rootDir, "android/src/main/kotlin/com/piko/app/feature/receive/ReceiveRoute.kt").readText()
+        val androidSend = File(rootDir, "android/src/main/kotlin/com/piko/app/feature/send/SendRoute.kt").readText()
+        val androidSettings = File(rootDir, "android/src/main/kotlin/com/piko/app/feature/settings/SettingsRoute.kt").readText()
         val iosRoot = readIos("PikoRootView.swift")
         val iosReceive = readIos("NativeReceiveView.swift")
-        val iosSendTransfer = readIos("NativeSendTransferSection.swift")
-        val iosSendDevice = readIos("NativeSendDeviceSection.swift")
-        val iosSendItem = readIos("NativeSendItemSection.swift")
+        val iosSend = readIos("NativeSendView.swift")
         val iosSettings = readIos("NativeSettingsView.swift")
-        val iosAppText = iosRoot + iosReceive + iosSendTransfer + iosSendDevice + iosSendItem + iosSettings
+        val iosLogin = readIos("NativeLoginView.swift")
+        val iosRegister = readIos("NativeRegisterView.swift")
+        val iosFriends = readIos("NativeFriendsView.swift")
+        val iosRequests = readIos("NativeFriendRequestsView.swift")
+        val iosAppText = iosRoot + iosReceive + iosSend + iosSettings + iosLogin + iosRegister + iosFriends + iosRequests
 
-        assertTrue("internal object PikoTypography" in androidTheme)
-        assertTrue("LocalConfiguration.current.screenWidthDp" in androidTheme)
-        assertTrue("widthDp <= 375 -> PikoScreenTextScale.Compact" in androidTheme)
-        assertTrue("widthDp >= 430 -> PikoScreenTextScale.Expanded" in androidTheme)
-        assertTrue("Compact(0.92f)" in androidTheme)
-        assertTrue("Expanded(1.06f)" in androidTheme)
-        assertTrue("typography = PikoTypography.current()" in androidTheme)
-        assertFalse("typography = MaterialTheme.typography" in androidTheme)
-        assertTrue("maxLines = 1" in androidApp)
-        assertTrue("overflow = TextOverflow.Ellipsis" in androidApp)
-        assertTrue("maxLines = 1" in androidSettings)
-        assertTrue("overflow = TextOverflow.Ellipsis" in androidSettings)
+        assertTrue("PikoMiuixTheme" in androidTheme)
+        assertFalse("LocalConfiguration.current.screenWidthDp" in androidTheme)
+        assertTrue("TopAppBar(" in androidShell)
+        assertTrue("maxLines = 1" in androidReceive + androidSend)
+        assertTrue("overflow = TextOverflow.Ellipsis" in androidReceive + androidSend)
+        assertTrue("BasicComponent(" in androidSettings)
 
-        assertTrue("enum PikoFont" in iosStyle)
-        assertTrue("UIScreen.main.bounds" in iosStyle)
-        assertTrue("case compact" in iosStyle)
-        assertTrue("case regular" in iosStyle)
-        assertTrue("case expanded" in iosStyle)
-        assertTrue("compact: return 0.92" in iosStyle)
-        assertTrue("expanded: return 1.06" in iosStyle)
-        assertTrue("static var pageTitle" in iosStyle)
-        assertTrue("static var rowTitle" in iosStyle)
-        assertTrue("static var pill" in iosStyle)
-        assertTrue("static var tabLabel" in iosStyle)
-        assertFalse("textStyle: .caption," in iosStyle)
-        assertTrue("textStyle: .caption1" in iosStyle)
-        assertFalse(".font(.largeTitle" in iosStyle)
-        assertFalse(".font(.title3" in iosAppText)
-        assertTrue(".font(PikoFont.tabLabel)" in iosRoot)
-        assertTrue(".font(PikoFont.rowTitle)" in iosReceive)
-        assertTrue(".minimumScaleFactor(0.88)" in iosAppText)
-        assertTrue(".truncationMode(.tail)" in iosAppText)
+        assertTrue("List {" in iosReceive)
+        assertTrue("List {" in iosSend)
+        assertTrue("Form {" in iosSettings)
+        assertTrue("Form {" in iosLogin)
+        assertTrue("Form {" in iosRegister)
+        assertTrue("List {" in iosFriends)
+        assertTrue("List {" in iosRequests)
+        assertTrue(".font(.headline)" in iosReceive + iosSend)
+        assertTrue(".font(.subheadline)" in iosReceive + iosSend)
+        assertTrue(".lineLimit(1)" in iosAppText)
+        assertFalse("PikoCollapsingPageHeroHeader" in iosAppText)
+        assertFalse(".font(PikoFont." in iosAppText)
     }
 
     private fun readIos(name: String): String =

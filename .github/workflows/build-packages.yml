@@ -23,6 +23,8 @@ jobs:
       ios_enabled: ${{ steps.config.outputs.ios_enabled }}
       release_enabled: ${{ steps.config.outputs.release_enabled }}
       release_type: ${{ steps.config.outputs.release_type }}
+      version_name: ${{ steps.config.outputs.version_name }}
+      version_code: ${{ steps.config.outputs.version_code }}
       release_tag: ${{ steps.config.outputs.release_tag }}
       release_title: ${{ steps.config.outputs.release_title }}
     steps:
@@ -49,13 +51,32 @@ jobs:
           if ($versionCode -notmatch '^\d+$') {
             throw "piko.versionCode 必须是整数，当前值：$versionCode"
           }
+          $effectiveVersionName = $versionName
+          $effectiveVersionCode = [int]$versionCode
+          if (
+            $config.githubRelease.type -eq "prerelease" -and
+            $versionName -match '^(?<prefix>.+-beta\.)\d+$' -and
+            $null -ne $config.githubRelease.betaRunNumberOffset
+          ) {
+            if ([string]::IsNullOrWhiteSpace($env:GITHUB_RUN_NUMBER)) {
+              throw "缺少 GITHUB_RUN_NUMBER，无法派生 beta 版本号"
+            }
+            $derivedBetaNumber = [int]$env:GITHUB_RUN_NUMBER - [int]$config.githubRelease.betaRunNumberOffset
+            if ($derivedBetaNumber -le 0) {
+              throw "派生 beta 版本号无效：run_number=$env:GITHUB_RUN_NUMBER offset=$($config.githubRelease.betaRunNumberOffset)"
+            }
+            $effectiveVersionName = "$($Matches.prefix)$derivedBetaNumber"
+            $effectiveVersionCode = $derivedBetaNumber
+          }
           "build_enabled=$($config.build.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "android_enabled=$($config.android.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "ios_enabled=$($config.ios.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "release_enabled=$($config.githubRelease.enabled.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "release_type=$($config.githubRelease.type)" >> $env:GITHUB_OUTPUT
-          "release_tag=v$versionName" >> $env:GITHUB_OUTPUT
-          "release_title=Piko v$versionName" >> $env:GITHUB_OUTPUT
+          "version_name=$effectiveVersionName" >> $env:GITHUB_OUTPUT
+          "version_code=$effectiveVersionCode" >> $env:GITHUB_OUTPUT
+          "release_tag=v$effectiveVersionName" >> $env:GITHUB_OUTPUT
+          "release_title=Piko v$effectiveVersionName" >> $env:GITHUB_OUTPUT
 
   backend-test:
     name: Backend tests
@@ -94,6 +115,8 @@ jobs:
       ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
       ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      PIKO_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+      PIKO_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -158,6 +181,9 @@ jobs:
     timeout-minutes: 20
     needs: prepare
     if: needs.prepare.outputs.build_enabled == 'true' && needs.prepare.outputs.ios_enabled == 'true'
+    env:
+      PIKO_VERSION_NAME: ${{ needs.prepare.outputs.version_name }}
+      PIKO_VERSION_CODE: ${{ needs.prepare.outputs.version_code }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6

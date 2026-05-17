@@ -5,7 +5,7 @@ import com.piko.app.domain.SendDeviceGroup
 import com.piko.app.domain.SendFileItem
 import com.piko.app.domain.SendFileType
 import com.piko.app.domain.FriendDevice
-import com.piko.app.domain.SendImageItem
+import com.piko.app.domain.SendMediaItem
 import com.piko.app.domain.SendPageState
 import com.piko.app.domain.SendTransferEvent
 import com.piko.app.domain.SendTransferStatus
@@ -130,28 +130,25 @@ class SendPageStateTest {
     }
 
     @Test
-    fun collapsedImageRowShowsSelectedImagesFirst() {
-        val first = SendImageItem(id = "image-1", displayName = "IMG_1.jpg", uri = "content://image/1")
-        val second = SendImageItem(id = "image-2", displayName = "IMG_2.jpg", uri = "content://image/2")
+    fun addSelectedMediaDeduplicatesAndRemoveMediaUpdatesWaitingArea() {
+        val first = SendMediaItem(
+            id = "content://media/1",
+            displayName = "IMG_1.jpg",
+            uri = "content://media/1",
+            fileType = SendFileType.Image,
+        )
+        val second = SendMediaItem(
+            id = "content://media/2",
+            displayName = "VID_2.mov",
+            uri = "content://media/2",
+            fileType = SendFileType.Video,
+        )
 
         val state = SendPageState.initial(currentDeviceName = "Pixel")
-            .copy(recentImages = listOf(first, second))
-            .toggleImageSelection(second.id)
+            .addSelectedMedia(listOf(first, second, first))
 
-        assertEquals(listOf(second), state.visibleImages)
-    }
-
-    @Test
-    fun expandedImageRowShowsRecentImagesEvenWhenSelectionExists() {
-        val first = SendImageItem(id = "image-1", displayName = "IMG_1.jpg", uri = "content://image/1")
-        val second = SendImageItem(id = "image-2", displayName = "IMG_2.jpg", uri = "content://image/2")
-
-        val state = SendPageState.initial(currentDeviceName = "Pixel")
-            .copy(recentImages = listOf(first, second))
-            .toggleImageSelection(second.id)
-            .toggleImageSectionExpanded()
-
-        assertEquals(listOf(first, second), state.visibleImages)
+        assertEquals(listOf(first, second), state.selectedMediaItems)
+        assertEquals(listOf(second), state.removeSelectedMedia(first.id).selectedMediaItems)
     }
 
     @Test
@@ -198,11 +195,12 @@ class SendPageStateTest {
 
     @Test
     fun transferSummaryUsesFirstFileNameCountAndTotalSize() {
-        val image = SendImageItem(
+        val image = SendMediaItem(
             id = "content://image/1",
             displayName = "IMG_1.jpg",
             uri = "content://image/1",
             sizeBytes = 2048,
+            fileType = SendFileType.Image,
         )
         val file = SendFileItem(
             id = "content://file/report.pdf",
@@ -212,12 +210,41 @@ class SendPageStateTest {
             sourceUri = "content://file/report.pdf",
         )
         val state = SendPageState.initial(currentDeviceName = "Pixel")
-            .copy(recentImages = listOf(image))
-            .toggleImageSelection(image.id)
+            .addSelectedMedia(listOf(image))
             .addSelectedFiles(listOf(file))
 
         assertEquals("IMG_1.jpg + 1 个文件", state.transferSummaryTitle)
         assertEquals(3072, state.transferTotalBytes)
+    }
+
+    @Test
+    fun clearSelectedItemsEmptiesMediaAndFilesButKeepsTargets() {
+        val device = SendDevice(id = "device-a", name = "A", group = SendDeviceGroup.Lan, host = "192.168.1.2", port = 42001)
+        val media = SendMediaItem(
+            id = "content://media/1",
+            displayName = "VID_1.mov",
+            uri = "content://media/1",
+            sizeBytes = 10,
+            fileType = SendFileType.Video,
+        )
+        val file = SendFileItem(
+            id = "content://file/a.txt",
+            displayName = "a.txt",
+            sizeBytes = 20,
+            fileType = SendFileType.Other,
+            sourceUri = "content://file/a.txt",
+        )
+
+        val state = SendPageState.initial(currentDeviceName = "Pixel")
+            .copy(lanDevices = listOf(device))
+            .toggleDeviceSelection(device.id)
+            .addSelectedMedia(listOf(media))
+            .addSelectedFiles(listOf(file))
+            .clearSelectedItems()
+
+        assertEquals(emptyList(), state.selectedMediaItems)
+        assertEquals(emptyList(), state.selectedFiles)
+        assertEquals(setOf(device.id), state.selectedDeviceIds)
     }
 
     @Test
