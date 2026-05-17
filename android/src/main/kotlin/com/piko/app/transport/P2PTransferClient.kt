@@ -647,6 +647,9 @@ class P2PTransferClient(
         val channel = selectedChannel.channel
         val peerHandshake = selectedChannel.handshake
         val sessionKey = selectedChannel.sessionKey
+        if (selectedChannel.transportName == "WebRTC 通道") {
+            peer.recordDirectAttempt(result = "not_selected", error = "WebRTC 通道先完成连接")
+        }
         selectedTransportName.set(selectedChannel.transportName)
         logTiming("race_winner", "transport=${selectedChannel.transportName}")
         callback(SendTransferEvent.TransportNotice(transferId, "已连接${selectedChannel.transportName}，开始传输文件"))
@@ -662,42 +665,48 @@ class P2PTransferClient(
                 senderName = senderName,
             )
         }.getOrElse { error ->
+            val reason = error.message ?: "传输清单编码失败"
+            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "send_manifest",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = error.message ?: "传输清单编码失败",
-                diagnostic = peer.diagnosticSnapshot(),
+                originalReason = reason,
+                diagnostic = diagnostic,
                 cause = error,
             )
         }
         runCatching {
             sendBinary(channel, manifestFrame)
         }.getOrElse { error ->
+            val reason = error.message ?: "传输清单发送失败"
+            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "send_manifest",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = error.message ?: "传输清单发送失败",
-                diagnostic = peer.diagnosticSnapshot(),
+                originalReason = reason,
+                diagnostic = diagnostic,
                 cause = error,
             )
         }
         logTiming("manifest_sent", "chunk_size_bytes=${TransferProtocolV3.chunkSize} in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS")
         if (!receiverReadyLatch.await(120, TimeUnit.SECONDS) || peer.isAborted) {
             val abortedByPeer = peer.isAborted
+            val reason = if (abortedByPeer) "对方已取消接收" else "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时"
+            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "receiver_ready",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时",
-                diagnostic = peer.diagnosticSnapshot(),
+                originalReason = reason,
+                diagnostic = diagnostic,
             )
         }
         val buffer = ByteArray(TransferProtocolV3.chunkSize)
@@ -739,33 +748,39 @@ class P2PTransferClient(
                                 plain = buffer.copyOf(read),
                             )
                         }.getOrElse { error ->
+                            val reason = error.message ?: "文件分片编码失败"
+                            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
                             peer.close()
                             peers.remove(session.sessionId)
                             throw P2PTransferFailure(
                                 stage = "send_chunk",
                                 transferId = transferId,
                                 sessionId = session.sessionId,
-                                originalReason = error.message ?: "文件分片编码失败",
-                                diagnostic = peer.diagnosticSnapshot(),
+                                originalReason = reason,
+                                diagnostic = diagnostic,
                                 cause = error,
                             )
                         }
                         sentFrames[chunkKey] = chunkFrame
                         if (!inFlightPermits.tryAcquire(30, TimeUnit.SECONDS) || peer.isAborted) {
                             val abortedByPeer = peer.isAborted
+                            val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
+                            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
                             peer.close()
                             peers.remove(session.sessionId)
                             throw P2PTransferFailure(
                                 stage = "ack",
                                 transferId = transferId,
                                 sessionId = session.sessionId,
-                                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时",
-                                diagnostic = peer.diagnosticSnapshot(),
+                                originalReason = reason,
+                                diagnostic = diagnostic,
                             )
                         }
                         runCatching {
                             sendBinary(channel, chunkFrame)
                         }.getOrElse { error ->
+                            val reason = error.message ?: "文件分片发送失败"
+                            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
                             inFlightPermits.release()
                             peer.close()
                             peers.remove(session.sessionId)
@@ -773,8 +788,8 @@ class P2PTransferClient(
                                 stage = "send_chunk",
                                 transferId = transferId,
                                 sessionId = session.sessionId,
-                                originalReason = error.message ?: "文件分片发送失败",
-                                diagnostic = peer.diagnosticSnapshot(),
+                                originalReason = reason,
+                                diagnostic = diagnostic,
                                 cause = error,
                             )
                         }
@@ -788,28 +803,32 @@ class P2PTransferClient(
                 }
             }.getOrElse { error ->
                 if (error is P2PTransferFailure) throw error
+                val reason = error.message ?: "文件分片读取失败"
+                val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
                 peer.close()
                 peers.remove(session.sessionId)
                 throw P2PTransferFailure(
                     stage = "send_chunk",
                     transferId = transferId,
                     sessionId = session.sessionId,
-                    originalReason = error.message ?: "文件分片读取失败",
-                    diagnostic = peer.diagnosticSnapshot(),
+                    originalReason = reason,
+                    diagnostic = diagnostic,
                     cause = error,
                 )
             }
         }
         if (totalChunks > 0 && (!ackLatch.await(30, TimeUnit.SECONDS) || peer.isAborted)) {
             val abortedByPeer = peer.isAborted
+            val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
+            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
                 stage = "ack",
                 transferId = transferId,
                 sessionId = session.sessionId,
-                originalReason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时",
-                diagnostic = peer.diagnosticSnapshot(),
+                originalReason = reason,
+                diagnostic = diagnostic,
             )
         }
         logThroughput(confirmedBytes.get(), force = true)

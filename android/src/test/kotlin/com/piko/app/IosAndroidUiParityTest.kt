@@ -449,6 +449,7 @@ class IosAndroidUiParityTest {
             "channel = webRtcChannel",
             "transportName = if (endpoint.name == \"quic_ipv6_direct\") \"QUIC 直连通道\" else \"TCP 直连通道\"",
             "transportName = \"WebRTC 通道\"",
+            "peer.recordDirectAttempt(result = \"not_selected\", error = \"WebRTC 通道先完成连接\")",
             "SendTransferEvent.TransportNotice(transferId, \"正在同时尝试直连通道和 WebRTC 通道\")",
             "SendTransferEvent.TransportNotice(transferId, \"已连接\${selectedChannel.transportName}，开始传输文件\")",
             "XQuicDirectTransport",
@@ -503,9 +504,22 @@ class IosAndroidUiParityTest {
             "selectedCandidatePair = selectedCandidatePair",
             "iceCandidatePairStats = selectedCandidatePair",
             "iceCandidatePairStats = iceCandidatePairStats",
+            "val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)",
         ).forEach { marker ->
             assertTrue(marker in androidP2P, "Android P2P must record WebRTC diagnostic marker $marker")
         }
+        assertTrue(
+            "send_failure：\${diagnostic?.sendFailure?.ifBlank { null } ?: originalReason}" in androidSendActions,
+            "Android P2P failure dialog must show diagnostic sendFailure before falling back to original reason",
+        )
+        assertInOrder(
+            androidP2P,
+            "val reason = error.message ?: \"文件分片发送失败\"",
+            "val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)",
+            "peer.close()",
+            "stage = \"send_chunk\"",
+            "diagnostic = diagnostic",
+        )
         assertInOrder(
             androidP2P,
             "completion.submit { openDirectRaceChannel() }",
@@ -576,6 +590,10 @@ class IosAndroidUiParityTest {
             "transportNotice(\"已连接\\(selectedChannel.transportName)，开始传输文件\")",
             "transportName: endpoint.name == \"quic_ipv6_direct\" ? \"QUIC 直连通道\" : \"TCP 直连通道\"",
             "transportName: \"WebRTC 通道\"",
+            "directTracker.recordAttempt(result: \"not_selected\", error: \"WebRTC 通道先完成连接\")",
+            "func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic",
+            "if diagnostic.sendFailure.isEmpty",
+            "diagnostic.sendFailure = message",
             "nativeP2PTimingLog(stage: \"webrtc_offer_sent\"",
             "nativeP2PTimingLog(stage: \"webrtc_early_ice_restart\"",
             "nativeP2PTimingLog(stage: \"webrtc_opened\"",
@@ -600,6 +618,16 @@ class IosAndroidUiParityTest {
         ).forEach { marker ->
             assertTrue(marker in iosP2P, "iOS P2P must record WebRTC timing marker $marker")
         }
+        assertInOrder(
+            iosP2P,
+            "let message = \"文件分片发送失败\"",
+            "let diagnostic = await failureDiagnostic(message)",
+            "closeSession(config.sessionId)",
+            "selectedChannel.closeAfterSelectedUse()",
+            "p2pError(stage: \"send_chunk\"",
+            "message: message",
+            "diagnostic: diagnostic",
+        )
         assertInOrder(
             iosP2P,
             "let race = NativeP2PConnectionRace(expectedCount: 2)",

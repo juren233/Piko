@@ -233,6 +233,13 @@ final class NativeP2PTransferClient {
                 diagnostic.applyDirect(directTracker.diagnostic)
                 return diagnostic
             }
+            func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic {
+                var diagnostic = await diagnosticSnapshot()
+                if diagnostic.sendFailure.isEmpty {
+                    diagnostic.sendFailure = message
+                }
+                return diagnostic
+            }
             func recordRaceFailure(stage: String, code: String, message: String) {
                 raceFailureStage = stage
                 raceFailureCode = code
@@ -497,6 +504,9 @@ final class NativeP2PTransferClient {
             sendBatch = selectedChannel.sendBatch
             let sessionKey = selectedChannel.sessionKey
             selectedTransportName = selectedChannel.transportName
+            if selectedChannel.transportName == "WebRTC 通道" {
+                directTracker.recordAttempt(result: "not_selected", error: "WebRTC 通道先完成连接")
+            }
             nativeP2PTimingLog(stage: "race_winner", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
             transportNotice("已连接\(selectedChannel.transportName)，开始传输文件")
             let peerCompletedChunks = NativeTransferProgressStore.decodeCompletedBitmap(selectedChannel.completedBitmapB64)
@@ -509,20 +519,22 @@ final class NativeP2PTransferClient {
                 senderName: senderName
             ),
             await sendFrame?(manifestFrame) == true else {
-                let diagnostic = await diagnosticSnapshot()
+                let message = "传输清单发送失败"
+                let diagnostic = await failureDiagnostic(message)
                 closeSession(config.sessionId)
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
-                return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: "传输清单发送失败", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: message, diagnostic: diagnostic))
             }
             nativeP2PTimingLog(stage: "manifest_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "chunk_size_bytes=\(NativeTransferProtocolV3.chunkSize) in_flight_window=\(maxInFlightChunks)")
             guard await receiverReadyTracker.wait(seconds: 120) else {
-                let diagnostic = await diagnosticSnapshot()
                 let abortedByPeer = receiverReadyTracker.isAborted
+                let message = abortedByPeer ? "对方已取消接收" : "等待接收端确认超时"
+                let diagnostic = await failureDiagnostic(message)
                 closeSession(config.sessionId)
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
-                return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "等待接收端确认超时", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: message, diagnostic: diagnostic))
             }
 
             var pendingChunkBatch: [Data] = []
@@ -548,11 +560,12 @@ final class NativeP2PTransferClient {
 
             for (fileIndex, item) in items.enumerated() {
                 guard let stream = InputStream(url: item.fileURL) else {
-                    let diagnostic = await diagnosticSnapshot()
+                    let message = "无法读取待发送文件"
+                    let diagnostic = await failureDiagnostic(message)
                     closeSession(config.sessionId)
                     selectedChannel.closeAfterSelectedUse()
                     directEndpointTrackers.removeValue(forKey: config.sessionId)
-                    return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "OPEN_FILE_FAILED", message: "无法读取待发送文件", diagnostic: diagnostic))
+                    return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "OPEN_FILE_FAILED", message: message, diagnostic: diagnostic))
                 }
                 stream.open()
                 defer {
@@ -562,19 +575,21 @@ final class NativeP2PTransferClient {
                 var chunkIndex = 0
                 while stream.hasBytesAvailable {
                     if Task.isCancelled {
-                        let diagnostic = await diagnosticSnapshot()
+                        let message = "传输已取消"
+                        let diagnostic = await failureDiagnostic(message)
                         closeSession(config.sessionId)
                         selectedChannel.closeAfterSelectedUse()
                         directEndpointTrackers.removeValue(forKey: config.sessionId)
-                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "TRANSFER_CANCELLED", message: "传输已取消", diagnostic: diagnostic))
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "TRANSFER_CANCELLED", message: message, diagnostic: diagnostic))
                     }
                     let read = stream.read(&buffer, maxLength: buffer.count)
                     guard read >= 0 else {
-                        let diagnostic = await diagnosticSnapshot()
+                        let message = "文件分片读取失败"
+                        let diagnostic = await failureDiagnostic(message)
                         closeSession(config.sessionId)
                         selectedChannel.closeAfterSelectedUse()
                         directEndpointTrackers.removeValue(forKey: config.sessionId)
-                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "READ_FILE_FAILED", message: "文件分片读取失败", diagnostic: diagnostic))
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "READ_FILE_FAILED", message: message, diagnostic: diagnostic))
                     }
                     if read == 0 {
                         break
@@ -597,11 +612,12 @@ final class NativeP2PTransferClient {
                         chunkIndex: chunkIndex,
                         plain: Data(buffer.prefix(read))
                     ) else {
-                        let diagnostic = await diagnosticSnapshot()
+                        let message = "文件分片编码失败"
+                        let diagnostic = await failureDiagnostic(message)
                         closeSession(config.sessionId)
                         selectedChannel.closeAfterSelectedUse()
                         directEndpointTrackers.removeValue(forKey: config.sessionId)
-                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                        return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: message, diagnostic: diagnostic))
                     }
                     pendingChunkBatch.append(chunkFrame)
                     pendingChunkBatchBytes += chunkFrame.count
@@ -610,11 +626,12 @@ final class NativeP2PTransferClient {
                     chunkIndex += 1
                     if pendingChunkBatch.count >= nativeP2PWebRtcChunkBatchLimit || pendingChunkBatchBytes >= nativeP2PWebRtcChunkBatchBytes {
                         guard await flushChunkBatch() else {
-                            let diagnostic = await diagnosticSnapshot()
+                            let message = "文件分片发送失败"
+                            let diagnostic = await failureDiagnostic(message)
                             closeSession(config.sessionId)
                             selectedChannel.closeAfterSelectedUse()
                             directEndpointTrackers.removeValue(forKey: config.sessionId)
-                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: message, diagnostic: diagnostic))
                         }
                         if !firstChunkLogged {
                             transferDataStartedAt = Date()
@@ -625,11 +642,12 @@ final class NativeP2PTransferClient {
                     let ackTarget = queuedChunks - maxInFlightChunks + 1
                     if ackTarget > 0, !Task.isCancelled {
                         guard await flushChunkBatch() else {
-                            let diagnostic = await diagnosticSnapshot()
+                            let message = "文件分片发送失败"
+                            let diagnostic = await failureDiagnostic(message)
                             closeSession(config.sessionId)
                             selectedChannel.closeAfterSelectedUse()
                             directEndpointTrackers.removeValue(forKey: config.sessionId)
-                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: message, diagnostic: diagnostic))
                         }
                         if !firstChunkLogged {
                             transferDataStartedAt = Date()
@@ -637,23 +655,25 @@ final class NativeP2PTransferClient {
                             firstChunkLogged = true
                         }
                         guard await ackTracker.waitForAckedCount(ackTarget, seconds: 30) else {
-                            let diagnostic = await diagnosticSnapshot()
                             let abortedByPeer = ackTracker.isAborted
+                            let message = abortedByPeer ? "对方已取消接收" : "跨网传输确认超时"
+                            let diagnostic = await failureDiagnostic(message)
                             closeSession(config.sessionId)
                             selectedChannel.closeAfterSelectedUse()
                             directEndpointTrackers.removeValue(forKey: config.sessionId)
-                            return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
+                            return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: message, diagnostic: diagnostic))
                         }
                     }
                 }
             }
 
             guard await flushChunkBatch() else {
-                let diagnostic = await diagnosticSnapshot()
+                let message = "文件分片发送失败"
+                let diagnostic = await failureDiagnostic(message)
                 closeSession(config.sessionId)
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
-                return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: message, diagnostic: diagnostic))
             }
             if !firstChunkLogged, queuedChunks > 0 {
                 transferDataStartedAt = Date()
@@ -661,12 +681,13 @@ final class NativeP2PTransferClient {
                 firstChunkLogged = true
             }
             guard await ackTracker.waitForAll(seconds: 30) else {
-                let diagnostic = await diagnosticSnapshot()
                 let abortedByPeer = ackTracker.isAborted
+                let message = abortedByPeer ? "对方已取消接收" : "跨网传输确认超时"
+                let diagnostic = await failureDiagnostic(message)
                 closeSession(config.sessionId)
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
-                return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
+                return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: message, diagnostic: diagnostic))
             }
             logThroughput(completed: confirmedBytes, force: true)
             closeSession(config.sessionId)
