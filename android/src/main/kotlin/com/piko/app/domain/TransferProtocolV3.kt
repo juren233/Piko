@@ -22,7 +22,7 @@ import javax.crypto.spec.SecretKeySpec
 import org.bouncycastle.jce.provider.BouncyCastleProvider
 
 object TransferProtocolV3 {
-    const val chunkSize: Int = 64 * 1024
+    const val chunkSize: Int = 256 * 1024
     private val magic = byteArrayOf(0x50, 0x49, 0x4B, 0x33)
     private const val frameManifest = 0x01
     private const val frameReady = 0x02

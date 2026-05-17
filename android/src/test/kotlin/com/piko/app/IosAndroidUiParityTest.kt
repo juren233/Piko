@@ -289,7 +289,7 @@ class IosAndroidUiParityTest {
         assertTrue("NativeTransferProtocolV3.generateEphemeralKeyPair()" in iosP2P)
         assertTrue("private var readySent = false" in iosP2P)
         assertTrue("sendReadyAndDrainPending()" in iosP2P)
-        assertTrue("private let maxInFlightChunks = 8" in iosP2P)
+        assertTrue("private let maxInFlightChunks = 16" in iosP2P)
         assertTrue("waitForAckedCount(ackTarget, seconds: 30)" in iosP2P)
         assertTrue("confirmedBytes += chunkByteCounts[key] ?? 0" in iosP2P)
         assertTrue("receiver_x25519_eph_pub_b64" in iosP2P)
@@ -327,7 +327,7 @@ class IosAndroidUiParityTest {
         assertTrue("private var completedChunks: [Int: Set<Int>] = [:]" in iosP2P)
         assertTrue("func acceptReceiveTransfer(_ transferId: String)" in iosP2P)
         assertTrue("NativeTransferProtocolV3.encodeRetry(fileIndex: fileIndex, chunkIndex: chunkIndex)" in iosP2P)
-        assertTrue("SHA256.hashData(payload) == file.fileHash" in iosP2P)
+        assertTrue("SHA256.hashFile(fileURL) == file.fileHash" in iosP2P)
         assertTrue("extension SHA256" in iosTransferV3)
         assertFalse("private extension SHA256" in iosTransferV3)
         assertTrue("Curve25519.KeyAgreement.PrivateKey()" in iosTransferV3)
@@ -822,6 +822,125 @@ class IosAndroidUiParityTest {
             assertTrue(field in androidP2P, "Android P2PTransferDiagnostic must declare $field")
             assertTrue(field in iosWebRTC, "iOS NativeWebRTCDiagnostic must declare $field")
         }
+    }
+
+    @Test
+    fun transferProtocolChunkSizeIsAlignedOnAndroidAndIos() {
+        val androidProtocol = readAndroid("domain/TransferProtocolV3.kt")
+        val iosProtocol = readIos("NativeTransferProtocolV3.swift")
+
+        assertTrue("const val chunkSize: Int =" in androidProtocol)
+        assertTrue("static let chunkSize =" in iosProtocol)
+        assertTrue("const val chunkSize: Int = 256 * 1024" in androidProtocol)
+        assertTrue("static let chunkSize = 256 * 1024" in iosProtocol)
+    }
+
+    @Test
+    fun p2pInFlightWindowIsAlignedOnAndroidAndIos() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("private const val P2P_MAX_IN_FLIGHT_CHUNKS = 16" in androidClient)
+        assertTrue("private let maxInFlightChunks = 16" in iosClient)
+    }
+
+    @Test
+    fun p2pProgressPersistenceIsThrottledOnBothPlatforms() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("persistProgressIfNeeded(force: Boolean = false)" in androidClient)
+        assertTrue("private func persistProgressIfNeeded(force: Bool = false)" in iosClient)
+        assertTrue("chunksSinceProgressPersist >= 16" in androidClient)
+        assertTrue("chunksSinceProgressPersist >= 16" in iosClient)
+        assertTrue("elapsedMillis >= 500L" in androidClient)
+        assertTrue("elapsedMillis >= 500" in iosClient)
+    }
+
+    @Test
+    fun iosP2PReceiverWritesChunksToTemporaryFiles() {
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+        val iosReceiveFileStore = readIos("NativeReceiveFileStore.swift")
+
+        assertFalse("private var fileChunks: [Int: [Int: Data]]" in iosClient)
+        assertFalse("payload.append(chunk)" in iosClient)
+        assertFalse("payloadData: payload" in iosClient)
+        assertTrue("private var outputFiles: [Int: URL] = [:]" in iosClient)
+        assertTrue("private var outputHandles: [Int: FileHandle] = [:]" in iosClient)
+        assertTrue("handle.seek(toOffset: offset)" in iosClient)
+        assertTrue("handle.write(contentsOf: bytes)" in iosClient)
+        assertTrue("SHA256.hashFile(fileURL) == file.fileHash" in iosClient)
+        assertTrue("savePreparedFiles(" in iosClient)
+        assertTrue("func savePreparedFiles(" in iosReceiveFileStore)
+    }
+
+    @Test
+    fun androidWebRtcDataChannelUsesBackpressureBeforeSending() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+
+        assertTrue("P2P_WEBRTC_BUFFER_HIGH_WATERMARK_BYTES" in androidClient)
+        assertTrue("P2P_WEBRTC_BUFFER_LOW_WATERMARK_BYTES" in androidClient)
+        assertTrue("P2P_WEBRTC_BUFFER_WAIT_TIMEOUT_MS" in androidClient)
+        assertTrue("channel.bufferedAmount()" in androidClient)
+        assertTrue("notifyBufferedAmountChanged()" in androidClient)
+        assertTrue("onBufferedAmountChange(previousAmount: Long)" in androidClient)
+    }
+
+    @Test
+    fun iosP2PSenderCanBatchWebRtcControlAndChunkFrames() {
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+        val iosWebRtc = readIos("NativeWebRTCEngine.swift")
+
+        assertTrue("func sendBatch(_ items: [Data]) async -> Bool" in iosWebRtc)
+        assertTrue("let sendBatch: (([Data]) async -> Bool)?" in iosClient)
+        assertTrue("sendBatch: { items in await session.sendBatch(items) }" in iosClient)
+        assertTrue("private let nativeP2PWebRtcChunkBatchLimit = 4" in iosClient)
+        assertTrue("private let nativeP2PWebRtcChunkBatchBytes = 1 * 1024 * 1024" in iosClient)
+        assertTrue("flushChunkBatch()" in iosClient)
+    }
+
+    @Test
+    fun p2pConnectionRaceCanShortCircuitWhenEndpointArrives() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+        val iosWebRtc = readIos("NativeWebRTCEngine.swift")
+
+        assertTrue("directEndpointLatch" in androidClient)
+        assertTrue("waitForEndpoints(seconds:" in iosClient)
+        assertTrue("shouldContinueWaitingForIce" in androidClient)
+        assertTrue("shouldContinueWaitingForIce" in iosClient)
+        assertTrue("shouldContinueWaitingForIce" in iosWebRtc)
+    }
+
+    @Test
+    fun p2pTimingAndThroughputLogsAreAlignedOnBothPlatforms() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+        val docs = File(rootDir, "docs/cross-network-transfer.md").readText()
+        val requiredStages = listOf(
+            "manifest_sent",
+            "receiver_ready",
+            "first_chunk_sent",
+            "first_ack_received",
+            "transfer_done",
+        )
+
+        requiredStages.forEach { stage ->
+            assertTrue(stage in androidClient, "Android P2P timing log must include $stage")
+            assertTrue(stage in iosClient, "iOS P2P timing log must include $stage")
+            assertTrue(stage in docs, "cross-network transfer docs must include $stage")
+        }
+        listOf("throughput", "completed_bytes", "elapsed_ms", "retry_count").forEach { field ->
+            assertTrue(field in androidClient, "Android P2P throughput log must include $field")
+            assertTrue(field in iosClient, "iOS P2P throughput log must include $field")
+            assertTrue(field in docs, "cross-network transfer docs must include $field")
+        }
+        assertTrue("in_flight_window=${'$'}P2P_MAX_IN_FLIGHT_CHUNKS" in androidClient)
+        assertTrue("in_flight_window=\\(maxInFlightChunks)" in iosClient)
+        assertTrue("256 KiB" in docs)
+        assertTrue("in-flight window 16" in docs)
+        assertFalse("chunk_size=1MiB" in docs)
+        assertFalse("\"chunk_size\": 1048576" in docs)
     }
 
     @Test

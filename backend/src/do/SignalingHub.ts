@@ -317,12 +317,23 @@ export class SignalingHub {
   }
 
   private findSockets(deviceId: string): WebSocket[] {
+    const tagged = this.findTaggedSockets(deviceId);
+    if (tagged.length > 0) return tagged;
+    return this.findFallbackSockets(deviceId);
+  }
+
+  private findTaggedSockets(deviceId: string): WebSocket[] {
     const sockets = new Set<WebSocket>();
     const cached = this.liveWs.get(deviceId);
     if (cached) sockets.add(cached);
     for (const ws of this.state.getWebSockets(deviceId)) {
       sockets.add(ws);
     }
+    return [...sockets];
+  }
+
+  private findFallbackSockets(deviceId: string): WebSocket[] {
+    const sockets = new Set<WebSocket>();
     for (const ws of this.state.getWebSockets()) {
       if (this.findDeviceId(ws) === deviceId) sockets.add(ws);
     }

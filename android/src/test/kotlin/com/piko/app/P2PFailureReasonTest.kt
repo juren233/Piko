@@ -9,6 +9,7 @@ import com.piko.app.transport.detectRemoteOnlyMdns
 import com.piko.app.transport.detectSymmetricNatSuspect
 import com.piko.app.transport.isGatheringIncomplete
 import com.piko.app.transport.prioritizeP2PIceCandidateForSignaling
+import com.piko.app.transport.shouldContinueWaitingForIce
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -36,6 +37,23 @@ class P2PFailureReasonTest {
     fun detectsLocalNoCandidate() {
         val diag = baseDiagnostic().copy(localCandidateTypes = "none")
         assertEquals(P2PFailureReason.LOCAL_NO_CANDIDATE, crossNetworkDiagnosis(diag))
+    }
+
+    @Test
+    fun noLocalAndRemoteCandidatesFailsBeforeFullRestartWindow() {
+        val diag = baseDiagnostic().copy(
+            localIceCount = 0,
+            remoteIceCount = 0,
+            localCandidateTypes = "none",
+            remoteCandidateTypes = "none",
+            selectedCandidatePair = "none",
+            iceConnectionState = "FAILED",
+            iceGatheringState = "COMPLETE",
+            gatheringIncomplete = false,
+        )
+
+        assertEquals(P2PFailureReason.LOCAL_NO_CANDIDATE, crossNetworkDiagnosis(diag))
+        assertFalse(shouldContinueWaitingForIce(diag))
     }
 
     @Test

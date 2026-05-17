@@ -8,6 +8,13 @@ struct NativeReceiveTemporaryFile {
     let temporaryURL: URL
 }
 
+struct NativeReceivedPreparedFile {
+    let displayName: String
+    let fileType: NativeFileType
+    let sizeBytes: Int
+    let temporaryURL: URL
+}
+
 final class NativeReceiveFileStore {
     func prepareTemporaryFile(fileName: String) -> NativeReceiveTemporaryFile? {
         let directory = receivedDirectory()
@@ -37,6 +44,65 @@ final class NativeReceiveFileStore {
                   (try? file.payloadData.write(to: preparedFile.temporaryURL, options: .atomic)) != nil else {
                 continue
             }
+            let saveDestination = destinationFor(file.fileType)
+            group.enter()
+            saveUploadedFile(
+                preparedFile,
+                displayName: file.displayName,
+                fileType: file.fileType,
+                sizeBytes: file.sizeBytes,
+                destination: saveDestination
+            ) { savedFile in
+                if let savedFile {
+                    lock.lock()
+                    savedFiles.append(savedFile)
+                    lock.unlock()
+                }
+                group.leave()
+            }
+        }
+
+        group.notify(queue: .main) {
+            guard let firstFile = savedFiles.first else {
+                completion(nil)
+                return
+            }
+            let names = savedFiles.map(\.displayName)
+            completion(
+                NativeReceiveHistoryItem(
+                    title: names.count == 1 ? names[0] : "\(names[0]) + \(names.count - 1) 个文件",
+                    subtitle: ByteCountFormatter.string(
+                        fromByteCount: Int64(savedFiles.reduce(0) { $0 + $1.sizeBytes }),
+                        countStyle: .file
+                    ),
+                    fileCount: savedFiles.count,
+                    primaryFileType: firstFile.fileType,
+                    mediaPreviewData: firstFile.mediaPreviewData,
+                    files: savedFiles.map(NativeReceiveHistoryFile.init(file:))
+                )
+            )
+        }
+    }
+
+    func savePreparedFiles(
+        senderName: String,
+        files: [NativeReceivedPreparedFile],
+        destinationFor: @escaping (NativeFileType) -> NativeReceiveSaveDestination,
+        completion: @escaping (NativeReceiveHistoryItem?) -> Void
+    ) {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var savedFiles: [NativeReceivedFile] = []
+
+        for file in files {
+            let directory = receivedDirectory()
+            guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+                continue
+            }
+            let preparedFile = NativeReceiveTemporaryFile(
+                finalURL: directory.appendingPathComponent(file.displayName.sanitizedFileName),
+                temporaryURL: file.temporaryURL
+            )
             let saveDestination = destinationFor(file.fileType)
             group.enter()
             saveUploadedFile(

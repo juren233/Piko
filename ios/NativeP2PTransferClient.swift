@@ -11,7 +11,10 @@ private enum NativeP2PTiming {
     static let restartOpenWaitSeconds: TimeInterval = 45
 }
 
+private let nativeP2PWebRtcChunkBatchLimit = 4
+private let nativeP2PWebRtcChunkBatchBytes = 1 * 1024 * 1024
 private let nativeP2PMaxDirectFrameBytes = 8 * 1024 * 1024
+private let nativeP2PThroughputLogIntervalBytes = 32 * 1024 * 1024
 private let nativeP2PLogger = Logger(subsystem: "com.juren233.piko", category: "p2p")
 
 private struct NativeP2PTransportAttempt {
@@ -57,7 +60,7 @@ final class NativeP2PTransferClient {
     private var pendingSignals: [String: [[String: Any]]] = [:]
     private var senderAbortCallbacks: [String: () -> Void] = [:]
     private let progressStore = NativeTransferProgressStore()
-    private let maxInFlightChunks = 8
+    private let maxInFlightChunks = 16
 
     init(
         authStore: NativeAuthStore,
@@ -209,8 +212,15 @@ final class NativeP2PTransferClient {
             var chunkByteCounts: [String: Int] = [:]
             var confirmedBytes = 0
             var queuedChunks = 0
+            var transferDataStartedAt: Date?
+            var receiverReadyLogged = false
+            var firstAckLogged = false
+            var retryCount = 0
+            var lastThroughputLogBytes = 0
+            var selectedTransportName = ""
             var negotiatedSessionKey: Data?
             var sendFrame: ((Data) async -> Bool)?
+            var sendBatch: (([Data]) async -> Bool)?
             var diagnosticSnapshot: () async -> NativeWebRTCDiagnostic = { .empty }
             var raceFailureStage = "data_channel_open"
             var raceFailureCode = "DATA_CHANNEL_TIMEOUT"
@@ -225,6 +235,24 @@ final class NativeP2PTransferClient {
                 raceFailureStage = stage
                 raceFailureCode = code
                 raceFailureMessage = message
+            }
+            func logThroughput(completed: Int, force: Bool = false) {
+                guard completed > 0, let startedAt = transferDataStartedAt else {
+                    return
+                }
+                if !force, completed - lastThroughputLogBytes < nativeP2PThroughputLogIntervalBytes {
+                    return
+                }
+                lastThroughputLogBytes = completed
+                let elapsedMs = max(Int(Date().timeIntervalSince(startedAt) * 1000), 1)
+                let throughputBps = (completed * 1000) / elapsedMs
+                nativeP2PTimingLog(
+                    stage: force ? "transfer_done" : "throughput",
+                    sessionId: config.sessionId,
+                    transferId: transferId,
+                    startedAt: timingStartedAt,
+                    detail: "transport=\(selectedTransportName) completed_bytes=\(completed) elapsed_ms=\(elapsedMs) throughput_bps=\(throughputBps) in_flight_window=\(maxInFlightChunks) retry_count=\(retryCount)"
+                )
             }
             diagnosticSnapshot = { diagnosticWithDirect(.empty) }
             directEndpointTrackers[config.sessionId] = directTracker
@@ -244,13 +272,23 @@ final class NativeP2PTransferClient {
                 switch frame {
                 case .ready:
                     receiverReadyTracker.markReady()
+                    if !receiverReadyLogged {
+                        nativeP2PTimingLog(stage: "receiver_ready", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
+                        receiverReadyLogged = true
+                    }
                 case .ack(let fileIndex, let chunkIndex):
                     let key = chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)
                     if ackTracker.markAck(fileIndex: fileIndex, chunkIndex: chunkIndex) {
                         confirmedBytes += chunkByteCounts[key] ?? 0
+                        if !firstAckLogged {
+                            nativeP2PTimingLog(stage: "first_ack_received", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "completed_bytes=\(confirmedBytes)")
+                            firstAckLogged = true
+                        }
+                        logThroughput(completed: confirmedBytes)
                         progressUpdate(Double(min(totalCompletedBeforeTarget + confirmedBytes, totalBytes)) / Double(max(totalBytes, 1)))
                     }
                 case .retry(let fileIndex, let chunkIndex):
+                    retryCount += 1
                     if let frame = sentFrames[chunkKey(fileIndex: fileIndex, chunkIndex: chunkIndex)] {
                         Task { @MainActor in
                             _ = await sendFrame?(frame)
@@ -351,6 +389,7 @@ final class NativeP2PTransferClient {
                                     transportName: endpoint.name == "quic_ipv6_direct" ? "QUIC 直连通道" : "TCP 直连通道",
                                     completedBitmapB64: directHandshake.peerCompletedBitmapB64,
                                     send: { data in await channel.send(data) },
+                                    sendBatch: nil,
                                     closeUnused: { channel.close() },
                                     closeSelected: { channel.close() }
                                 )
@@ -390,6 +429,12 @@ final class NativeP2PTransferClient {
                 nativeP2PTimingLog(stage: "webrtc_offer_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
                 var opened = await session.waitUntilOpen(seconds: NativeP2PTiming.initialOpenWaitSeconds)
                 if !opened && !receiverReadyTracker.isAborted {
+                    let initialDiagnostic = await session.diagnosticSnapshotWithStats()
+                    if !NativeP2PDiagnostics.shouldContinueWaitingForIce(initialDiagnostic) {
+                        recordRaceFailure(stage: "data_channel_open", code: "DATA_CHANNEL_TIMEOUT", message: Self.crossNetworkDiagnosis(initialDiagnostic).body)
+                        closeWebRTCSessionIfStored()
+                        return nil
+                    }
                     nativeP2PTimingLog(stage: "webrtc_early_ice_restart", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "wait_seconds=\(Int(NativeP2PTiming.initialOpenWaitSeconds))")
                     _ = await session.restartIce()
                     opened = await session.waitUntilOpen(seconds: NativeP2PTiming.restartOpenWaitSeconds)
@@ -414,6 +459,7 @@ final class NativeP2PTransferClient {
                     transportName: "WebRTC 通道",
                     completedBitmapB64: session.peerCompletedBitmapB64,
                     send: { data in await session.send(data) },
+                    sendBatch: { items in await session.sendBatch(items) },
                     closeUnused: { closeWebRTCSessionIfStored() },
                     closeSelected: {}
                 )
@@ -446,7 +492,9 @@ final class NativeP2PTransferClient {
             negotiatedSessionKey = selectedChannel.sessionKey
             sessionContext.sessionKey = selectedChannel.sessionKey
             sendFrame = selectedChannel.send
+            sendBatch = selectedChannel.sendBatch
             let sessionKey = selectedChannel.sessionKey
+            selectedTransportName = selectedChannel.transportName
             nativeP2PTimingLog(stage: "race_winner", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
             transportNotice("已连接\(selectedChannel.transportName)，开始传输文件")
             let peerCompletedChunks = NativeTransferProgressStore.decodeCompletedBitmap(selectedChannel.completedBitmapB64)
@@ -465,6 +513,7 @@ final class NativeP2PTransferClient {
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
                 return .failure(p2pError(stage: "send_manifest", sessionId: config.sessionId, code: "SEND_MANIFEST_FAILED", message: "传输清单发送失败", diagnostic: diagnostic))
             }
+            nativeP2PTimingLog(stage: "manifest_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "chunk_size_bytes=\(NativeTransferProtocolV3.chunkSize) in_flight_window=\(maxInFlightChunks)")
             guard await receiverReadyTracker.wait(seconds: 120) else {
                 let diagnostic = await diagnosticSnapshot()
                 let abortedByPeer = receiverReadyTracker.isAborted
@@ -472,6 +521,27 @@ final class NativeP2PTransferClient {
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
                 return .failure(p2pError(stage: "receiver_ready", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_RECEIVER_READY_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "等待接收端确认超时", diagnostic: diagnostic))
+            }
+
+            var pendingChunkBatch: [Data] = []
+            var pendingChunkBatchBytes = 0
+            var firstChunkLogged = false
+            func flushChunkBatch() async -> Bool {
+                guard !pendingChunkBatch.isEmpty else {
+                    return true
+                }
+                let batch = pendingChunkBatch
+                pendingChunkBatch.removeAll(keepingCapacity: true)
+                pendingChunkBatchBytes = 0
+                if let sendBatch {
+                    return await sendBatch(batch)
+                }
+                for frame in batch {
+                    guard await sendFrame?(frame) == true else {
+                        return false
+                    }
+                }
+                return true
             }
 
             for (fileIndex, item) in items.enumerated() {
@@ -524,19 +594,46 @@ final class NativeP2PTransferClient {
                         fileIndex: fileIndex,
                         chunkIndex: chunkIndex,
                         plain: Data(buffer.prefix(read))
-                    ),
-                    await sendFrame?(chunkFrame) == true else {
+                    ) else {
                         let diagnostic = await diagnosticSnapshot()
                         closeSession(config.sessionId)
                         selectedChannel.closeAfterSelectedUse()
                         directEndpointTrackers.removeValue(forKey: config.sessionId)
                         return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
                     }
+                    pendingChunkBatch.append(chunkFrame)
+                    pendingChunkBatchBytes += chunkFrame.count
                     sentFrames[key] = chunkFrame
                     queuedChunks += 1
                     chunkIndex += 1
+                    if pendingChunkBatch.count >= nativeP2PWebRtcChunkBatchLimit || pendingChunkBatchBytes >= nativeP2PWebRtcChunkBatchBytes {
+                        guard await flushChunkBatch() else {
+                            let diagnostic = await diagnosticSnapshot()
+                            closeSession(config.sessionId)
+                            selectedChannel.closeAfterSelectedUse()
+                            directEndpointTrackers.removeValue(forKey: config.sessionId)
+                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                        }
+                        if !firstChunkLogged {
+                            transferDataStartedAt = Date()
+                            nativeP2PTimingLog(stage: "first_chunk_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
+                            firstChunkLogged = true
+                        }
+                    }
                     let ackTarget = queuedChunks - maxInFlightChunks + 1
                     if ackTarget > 0, !Task.isCancelled {
+                        guard await flushChunkBatch() else {
+                            let diagnostic = await diagnosticSnapshot()
+                            closeSession(config.sessionId)
+                            selectedChannel.closeAfterSelectedUse()
+                            directEndpointTrackers.removeValue(forKey: config.sessionId)
+                            return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+                        }
+                        if !firstChunkLogged {
+                            transferDataStartedAt = Date()
+                            nativeP2PTimingLog(stage: "first_chunk_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
+                            firstChunkLogged = true
+                        }
                         guard await ackTracker.waitForAckedCount(ackTarget, seconds: 30) else {
                             let diagnostic = await diagnosticSnapshot()
                             let abortedByPeer = ackTracker.isAborted
@@ -549,6 +646,18 @@ final class NativeP2PTransferClient {
                 }
             }
 
+            guard await flushChunkBatch() else {
+                let diagnostic = await diagnosticSnapshot()
+                closeSession(config.sessionId)
+                selectedChannel.closeAfterSelectedUse()
+                directEndpointTrackers.removeValue(forKey: config.sessionId)
+                return .failure(p2pError(stage: "send_chunk", sessionId: config.sessionId, code: "SEND_CHUNK_FAILED", message: "文件分片发送失败", diagnostic: diagnostic))
+            }
+            if !firstChunkLogged, queuedChunks > 0 {
+                transferDataStartedAt = Date()
+                nativeP2PTimingLog(stage: "first_chunk_sent", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "transport=\(selectedChannel.transportName)")
+                firstChunkLogged = true
+            }
             guard await ackTracker.waitForAll(seconds: 30) else {
                 let diagnostic = await diagnosticSnapshot()
                 let abortedByPeer = ackTracker.isAborted
@@ -557,6 +666,7 @@ final class NativeP2PTransferClient {
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
                 return .failure(p2pError(stage: "ack", sessionId: config.sessionId, code: abortedByPeer ? "P2P_RECEIVER_CANCELED" : "P2P_ACK_TIMEOUT", message: abortedByPeer ? "对方已取消接收" : "跨网传输确认超时", diagnostic: diagnostic))
             }
+            logThroughput(completed: confirmedBytes, force: true)
             closeSession(config.sessionId)
             selectedChannel.closeAfterSelectedUse()
             directEndpointTrackers.removeValue(forKey: config.sessionId)
@@ -857,7 +967,8 @@ private final class NativeP2PReceiver {
     var sendControlBatch: (([Data]) -> Void)?
     private var senderName = "跨网设备"
     private var files: [NativeTransferV3File] = []
-    private var fileChunks: [Int: [Int: Data]] = [:]
+    private var outputFiles: [Int: URL] = [:]
+    private var outputHandles: [Int: FileHandle] = [:]
     private var completedChunks: [Int: Set<Int>] = [:]
     private var hashRetryCount: [Int: Int] = [:]
     private var pendingChunkFrames: [Data] = []
@@ -868,6 +979,8 @@ private final class NativeP2PReceiver {
     private var readySent = false
     private var totalBytes = 0
     private var receivedBytes = 0
+    private var lastProgressPersistAt = 0.0
+    private var chunksSinceProgressPersist = 0
 
     init(
         sessionId: String,
@@ -941,20 +1054,23 @@ private final class NativeP2PReceiver {
             files = manifest.files
             totalBytes = files.reduce(0) { $0 + $1.sizeBytes }
             let restored = progressStore.completedChunks(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files)
-            fileChunks = Dictionary(uniqueKeysWithValues: files.map { ($0.index, [:]) })
+            outputFiles.removeAll(keepingCapacity: true)
+            closeOutputHandles()
             for file in files {
+                guard let fileURL = progressStore.outputFileURL(transferId: transferId, fileIndex: file.index),
+                      let handle = openOutputHandle(fileURL: fileURL, sizeBytes: file.sizeBytes) else {
+                    sendRetry(fileIndex: file.index, chunkIndex: 0)
+                    continue
+                }
+                outputFiles[file.index] = fileURL
+                outputHandles[file.index] = handle
                 let restoredSet = restored[file.index] ?? []
                 completedChunks[file.index] = restoredSet
-                for chunkIndex in restoredSet {
-                    if let data = progressStore.chunkData(transferId: transferId, fileIndex: file.index, chunkIndex: chunkIndex) {
-                        fileChunks[file.index, default: [:]][chunkIndex] = data
-                    }
-                }
             }
             receivedBytes = files.reduce(0) { total, file in
                 total + (completedChunks[file.index] ?? []).reduce(0) { $0 + expectedChunkLength(file: file, chunkIndex: $1) }
             }
-            progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
+            persistProgressIfNeeded(force: true)
             let wasAlreadyConfirmed = confirmed
             confirmed = confirmed || autoAccept
             if wasAlreadyConfirmed {
@@ -973,16 +1089,24 @@ private final class NativeP2PReceiver {
             guard let file = files.first(where: { $0.index == fileIndex }),
                   chunkIndex >= 0,
                   chunkIndex < file.chunkCount,
-                  bytes.count == expectedChunkLength(file: file, chunkIndex: chunkIndex) else {
+                  bytes.count == expectedChunkLength(file: file, chunkIndex: chunkIndex),
+                  let handle = outputHandles[fileIndex] else {
                 sendRetry(fileIndex: fileIndex, chunkIndex: chunkIndex)
                 return
             }
             if completedChunks[fileIndex]?.contains(chunkIndex) != true {
-                fileChunks[fileIndex, default: [:]][chunkIndex] = bytes
+                let offset = UInt64(chunkIndex * file.chunkSize)
+                do {
+                    try handle.seek(toOffset: offset)
+                    try handle.write(contentsOf: bytes)
+                } catch {
+                    sendRetry(fileIndex: fileIndex, chunkIndex: chunkIndex)
+                    return
+                }
                 completedChunks[fileIndex, default: []].insert(chunkIndex)
                 receivedBytes += bytes.count
                 progressStore.saveChunk(transferId: transferId, fileIndex: fileIndex, chunkIndex: chunkIndex, data: bytes)
-                progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
+                persistProgressIfNeeded()
             }
             sendAck(fileIndex: fileIndex, chunkIndex: chunkIndex)
             publishReceiveState()
@@ -1018,7 +1142,8 @@ private final class NativeP2PReceiver {
         canceled = true
         pendingChunkFrames.removeAll(keepingCapacity: false)
         pendingAckFrames.removeAll(keepingCapacity: false)
-        fileChunks.removeAll(keepingCapacity: false)
+        closeOutputHandles()
+        outputFiles.removeAll(keepingCapacity: false)
         completedChunks.removeAll(keepingCapacity: false)
         progressStore.clear(transferId: transferId)
         onReceiveState(nil)
@@ -1044,40 +1169,36 @@ private final class NativeP2PReceiver {
         guard files.allSatisfy({ completedChunks[$0.index]?.count == $0.chunkCount }) else {
             return
         }
-        let payloadFiles = files.compactMap { file -> NativeReceivedPayloadFile? in
-            guard let chunks = fileChunks[file.index] else {
-                return nil
-            }
-            var payload = Data()
-            for chunkIndex in 0..<file.chunkCount {
-                guard let chunk = chunks[chunkIndex] else {
-                    return nil
-                }
-                payload.append(chunk)
-            }
-            guard payload.count == file.sizeBytes, SHA256.hashData(payload) == file.fileHash else {
+        persistProgressIfNeeded(force: true)
+        outputHandles.values.forEach { handle in
+            try? handle.synchronize()
+        }
+        let preparedFiles = files.compactMap { file -> NativeReceivedPreparedFile? in
+            guard let fileURL = outputFiles[file.index],
+                  fileURL.fileSize == file.sizeBytes,
+                  SHA256.hashFile(fileURL) == file.fileHash else {
                 resetFileForRetry(file)
                 return nil
             }
-            return NativeReceivedPayloadFile(
+            return NativeReceivedPreparedFile(
                 displayName: file.displayName,
                 fileType: file.fileType,
                 sizeBytes: file.sizeBytes,
-                payloadData: payload
+                temporaryURL: fileURL
             )
         }
-        guard payloadFiles.count == files.count else {
+        guard preparedFiles.count == files.count else {
             return
         }
-        let transfer = NativeReceivedTransfer(senderName: senderName, files: payloadFiles)
-        receiveFileStore.save(transfer, destinationFor: destinationFor) { [weak self] item in
+        closeOutputHandles()
+        receiveFileStore.savePreparedFiles(senderName: senderName, files: preparedFiles, destinationFor: destinationFor) { [weak self] item in
             guard let self, let item else {
                 self?.onReceiveState(nil)
                 return
             }
             self.onReceiveCompleted(item)
             self.onReceiveState(nil)
-            self.fileChunks.removeAll(keepingCapacity: false)
+            self.outputFiles.removeAll(keepingCapacity: false)
             self.progressStore.clear(transferId: self.transferId)
         }
     }
@@ -1093,10 +1214,67 @@ private final class NativeP2PReceiver {
             receivedBytes -= completed.reduce(0) { $0 + expectedChunkLength(file: file, chunkIndex: $1) }
         }
         completedChunks[file.index] = []
-        fileChunks[file.index] = [:]
-        progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
+        resetOutputFile(file)
+        persistProgressIfNeeded(force: true)
         for chunkIndex in 0..<file.chunkCount {
             sendRetry(fileIndex: file.index, chunkIndex: chunkIndex)
+        }
+    }
+
+    private func openOutputHandle(fileURL: URL, sizeBytes: Int) -> FileHandle? {
+        let directory = fileURL.deletingLastPathComponent()
+        guard (try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        if !FileManager.default.fileExists(atPath: fileURL.path) {
+            guard FileManager.default.createFile(atPath: fileURL.path, contents: nil) else {
+                return nil
+            }
+        }
+        guard let handle = try? FileHandle(forWritingTo: fileURL) else {
+            return nil
+        }
+        do {
+            try handle.truncate(atOffset: UInt64(sizeBytes))
+            return handle
+        } catch {
+            try? handle.close()
+            return nil
+        }
+    }
+
+    private func resetOutputFile(_ file: NativeTransferV3File) {
+        if let handle = outputHandles.removeValue(forKey: file.index) {
+            try? handle.close()
+        }
+        guard let fileURL = outputFiles[file.index] ?? progressStore.outputFileURL(transferId: transferId, fileIndex: file.index),
+              let handle = openOutputHandle(fileURL: fileURL, sizeBytes: file.sizeBytes) else {
+            return
+        }
+        outputFiles[file.index] = fileURL
+        outputHandles[file.index] = handle
+    }
+
+    private func closeOutputHandles() {
+        outputHandles.values.forEach { handle in
+            try? handle.close()
+        }
+        outputHandles.removeAll(keepingCapacity: true)
+    }
+
+    private func persistProgressIfNeeded(force: Bool = false) {
+        guard !files.isEmpty else {
+            return
+        }
+        if !force {
+            chunksSinceProgressPersist += 1
+        }
+        let now = Date().timeIntervalSince1970
+        let elapsedMillis = lastProgressPersistAt == 0 ? Double.greatestFiniteMagnitude : (now - lastProgressPersistAt) * 1000
+        if force || chunksSinceProgressPersist >= 16 || elapsedMillis >= 500 {
+            progressStore.save(transferId: transferId, manifestHashB64: manifestHashB64, manifest: files, completedChunks: completedChunks)
+            lastProgressPersistAt = now
+            chunksSinceProgressPersist = 0
         }
     }
 
@@ -1202,6 +1380,7 @@ private final class NativePreparedP2PChannel {
     let transportName: String
     let completedBitmapB64: String?
     let send: (Data) async -> Bool
+    let sendBatch: (([Data]) async -> Bool)?
     private let closeUnused: @MainActor () -> Void
     private let closeSelected: @MainActor () -> Void
 
@@ -1210,6 +1389,7 @@ private final class NativePreparedP2PChannel {
         transportName: String,
         completedBitmapB64: String?,
         send: @escaping (Data) async -> Bool,
+        sendBatch: (([Data]) async -> Bool)?,
         closeUnused: @escaping @MainActor () -> Void,
         closeSelected: @escaping @MainActor () -> Void
     ) {
@@ -1217,6 +1397,7 @@ private final class NativePreparedP2PChannel {
         self.transportName = transportName
         self.completedBitmapB64 = completedBitmapB64
         self.send = send
+        self.sendBatch = sendBatch
         self.closeUnused = closeUnused
         self.closeSelected = closeSelected
     }
@@ -2040,6 +2221,14 @@ private final class NativeTransferProgressStore {
         try? Data(contentsOf: transferDir(transferId: transferId).appendingPathComponent("chunks/\(fileIndex)-\(chunkIndex).part"))
     }
 
+    func outputFileURL(transferId: String, fileIndex: Int) -> URL? {
+        let dir = transferDir(transferId: transferId)
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        return dir.appendingPathComponent("\(fileIndex).part")
+    }
+
     func clear(transferId: String) {
         try? FileManager.default.removeItem(at: transferDir(transferId: transferId))
     }
@@ -2290,6 +2479,15 @@ private final class NativeChunkAckTracker {
 
 private func chunkKey(fileIndex: Int, chunkIndex: Int) -> String {
     "\(fileIndex):\(chunkIndex)"
+}
+
+private extension URL {
+    var fileSize: Int? {
+        guard let values = try? resourceValues(forKeys: [.fileSizeKey]) else {
+            return nil
+        }
+        return values.fileSize
+    }
 }
 
 private extension Array {

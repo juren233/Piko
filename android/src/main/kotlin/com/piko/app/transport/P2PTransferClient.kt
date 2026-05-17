@@ -61,9 +61,14 @@ import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.locks.ReentrantLock
 
-private const val P2P_MAX_IN_FLIGHT_CHUNKS = 8
+private const val P2P_MAX_IN_FLIGHT_CHUNKS = 16
 private const val P2P_MAX_DIRECT_FRAME_BYTES = 8 * 1024 * 1024
+private const val P2P_WEBRTC_BUFFER_HIGH_WATERMARK_BYTES = 1 * 1024 * 1024L
+private const val P2P_WEBRTC_BUFFER_LOW_WATERMARK_BYTES = 512 * 1024L
+private const val P2P_WEBRTC_BUFFER_WAIT_TIMEOUT_MS = 15_000L
+private const val P2P_THROUGHPUT_LOG_INTERVAL_BYTES = 32 * 1024 * 1024L
 private const val P2P_DIRECT_ENDPOINT_WAIT_SECONDS = 5L
 private const val P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS = 5L
 private const val P2P_XQUIC_ALPN = "piko-v3"
@@ -267,6 +272,30 @@ class P2PTransferClient(
                 },
             )
         }
+        val selectedTransportName = java.util.concurrent.atomic.AtomicReference("")
+        val transferDataStartedAt = AtomicLong(0L)
+        val receiverReadyLogged = AtomicBoolean(false)
+        val firstAckLogged = AtomicBoolean(false)
+        val retryCount = AtomicLong(0L)
+        val lastThroughputLogBytes = AtomicLong(0L)
+        fun logThroughput(completed: Long, force: Boolean = false) {
+            if (completed <= 0L) return
+            val startedAt = transferDataStartedAt.get()
+            if (startedAt <= 0L) return
+            if (!force) {
+                val previous = lastThroughputLogBytes.get()
+                if (completed - previous < P2P_THROUGHPUT_LOG_INTERVAL_BYTES) return
+                if (!lastThroughputLogBytes.compareAndSet(previous, completed)) return
+            } else {
+                lastThroughputLogBytes.set(completed)
+            }
+            val elapsedMs = (SystemClock.elapsedRealtime() - startedAt).coerceAtLeast(1L)
+            val throughputBps = (completed * 1000L) / elapsedMs
+            logTiming(
+                if (force) "transfer_done" else "throughput",
+                "transport=${selectedTransportName.get()} completed_bytes=$completed elapsed_ms=$elapsedMs throughput_bps=$throughputBps in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS retry_count=${retryCount.get()}",
+            )
+        }
         logTiming("create_session_done")
         val sentFrames = ConcurrentHashMap<ChunkKey, ByteArray>()
         val ackedChunks = ConcurrentHashMap.newKeySet<ChunkKey>()
@@ -298,6 +327,18 @@ class P2PTransferClient(
                     totalCompletedBeforeTarget = totalCompletedBeforeTarget,
                     totalBytes = totalBytes,
                     callback = callback,
+                    onReady = {
+                        if (receiverReadyLogged.compareAndSet(false, true)) {
+                            logTiming("receiver_ready")
+                        }
+                    },
+                    onAckProgress = { completed ->
+                        if (firstAckLogged.compareAndSet(false, true)) {
+                            logTiming("first_ack_received", "completed_bytes=$completed")
+                        }
+                        logThroughput(completed)
+                    },
+                    onRetry = { retryCount.incrementAndGet() },
                 )
             },
         )
@@ -344,6 +385,18 @@ class P2PTransferClient(
                 totalCompletedBeforeTarget = totalCompletedBeforeTarget,
                 totalBytes = totalBytes,
                 callback = callback,
+                onReady = {
+                    if (receiverReadyLogged.compareAndSet(false, true)) {
+                        logTiming("receiver_ready")
+                    }
+                },
+                onAckProgress = { completed ->
+                    if (firstAckLogged.compareAndSet(false, true)) {
+                        logTiming("first_ack_received", "completed_bytes=$completed")
+                    }
+                    logThroughput(completed)
+                },
+                onRetry = { retryCount.incrementAndGet() },
             )
         }
         fun attemptDirectEndpoint(endpoint: P2PDirectEndpoint, key: ByteArray): P2PBinaryChannel? {
@@ -474,6 +527,17 @@ class P2PTransferClient(
                         diagnostic = peer.diagnosticSnapshot(),
                     )
                 }
+                val initialDiag = peer.diagnosticSnapshot()
+                if (!shouldContinueWaitingForIce(initialDiag)) {
+                    val reason = crossNetworkDiagnosis(initialDiag)
+                    throw P2PTransferFailure(
+                        stage = "data_channel_open",
+                        transferId = transferId,
+                        sessionId = session.sessionId,
+                        originalReason = reason.body,
+                        diagnostic = initialDiag.copy(failureReason = reason),
+                    )
+                }
                 logTiming("webrtc_early_ice_restart", "wait_seconds=$P2P_INITIAL_OPEN_TIMEOUT_SECONDS")
                 peer.triggerIceRestart()
                 if (!peer.awaitOpen(P2P_RESTART_OPEN_TIMEOUT_SECONDS)) {
@@ -573,6 +637,7 @@ class P2PTransferClient(
         val channel = selectedChannel.channel
         val peerHandshake = selectedChannel.handshake
         val sessionKey = selectedChannel.sessionKey
+        selectedTransportName.set(selectedChannel.transportName)
         logTiming("race_winner", "transport=${selectedChannel.transportName}")
         callback(SendTransferEvent.TransportNotice(transferId, "已连接${selectedChannel.transportName}，开始传输文件"))
         sessionContext.sessionKey = sessionKey
@@ -612,6 +677,7 @@ class P2PTransferClient(
                 cause = error,
             )
         }
+        logTiming("manifest_sent", "chunk_size_bytes=${TransferProtocolV3.chunkSize} in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS")
         if (!receiverReadyLatch.await(120, TimeUnit.SECONDS) || peer.isAborted) {
             val abortedByPeer = peer.isAborted
             peer.close()
@@ -625,6 +691,7 @@ class P2PTransferClient(
             )
         }
         val buffer = ByteArray(TransferProtocolV3.chunkSize)
+        var firstChunkLogged = false
         items.forEachIndexed { fileIndex, item ->
             runCatching {
                 ensureActive()
@@ -701,6 +768,11 @@ class P2PTransferClient(
                                 cause = error,
                             )
                         }
+                        if (!firstChunkLogged) {
+                            transferDataStartedAt.compareAndSet(0L, SystemClock.elapsedRealtime())
+                            logTiming("first_chunk_sent", "transport=${selectedChannel.transportName}")
+                            firstChunkLogged = true
+                        }
                         chunkIndex += 1
                     }
                 }
@@ -730,6 +802,7 @@ class P2PTransferClient(
                 diagnostic = peer.diagnosticSnapshot(),
             )
         }
+        logThroughput(confirmedBytes.get(), force = true)
         channel.close()
         peer.close()
         peers.remove(session.sessionId)
@@ -1129,9 +1202,12 @@ class P2PTransferClient(
                         val binaryChannel = WebRtcBinaryChannel(channel)
                         receiver?.attach(sessionId, binaryChannel)
                         channel.registerObserver(object : DataChannel.Observer {
-                            override fun onBufferedAmountChange(previousAmount: Long) = Unit
+                            override fun onBufferedAmountChange(previousAmount: Long) {
+                                binaryChannel.notifyBufferedAmountChanged()
+                            }
                             override fun onStateChange() {
                                 dataChannelState = channel.state().name
+                                binaryChannel.notifyBufferedAmountChanged()
                                 if (channel.state() == DataChannel.State.OPEN) {
                                     receiver?.attach(sessionId, binaryChannel)
                                 }
@@ -1153,9 +1229,12 @@ class P2PTransferClient(
             }
             val binaryChannel = WebRtcBinaryChannel(channel)
             channel.registerObserver(object : DataChannel.Observer {
-                override fun onBufferedAmountChange(previousAmount: Long) = Unit
+                override fun onBufferedAmountChange(previousAmount: Long) {
+                    binaryChannel.notifyBufferedAmountChanged()
+                }
                 override fun onStateChange() {
                     dataChannelState = channel.state().name
+                    binaryChannel.notifyBufferedAmountChanged()
                     if (channel.state() == DataChannel.State.OPEN) openLatch.countDown()
                 }
                 override fun onMessage(buffer: DataChannel.Buffer) {
@@ -1428,6 +1507,8 @@ private class P2PReceiver(
     private var readySent = false
     private var didComplete = false
     private var didTerminalCleanup = false
+    private var lastProgressPersistAt = 0L
+    private var chunksSinceProgressPersist = 0
 
     fun attach(sessionId: String, channel: P2PBinaryChannel) {
         activeChannel = channel
@@ -1467,7 +1548,7 @@ private class P2PReceiver(
                     }
                     completedChunks[file.index] = restoredChunks[file.index] ?: BooleanArray(file.chunkCount)
                 }
-                progressStore.save(transferId, manifestHashB64, manifest, completedChunks)
+                persistProgressIfNeeded(force = true)
                 confirmed = confirmed || autoAccept
                 onReceiveTransferEvent(
                     ReceiveTransferEvent.Started(
@@ -1502,7 +1583,7 @@ private class P2PReceiver(
                     output.write(frame.bytes)
                     bitmap[frame.chunkIndex] = true
                     completedBytes += frame.bytes.size
-                    progressStore.save(transferId, manifestHashB64, manifest, completedChunks)
+                    persistProgressIfNeeded()
                 }
                 sendAck(channel, frame.fileIndex, frame.chunkIndex)
                 onReceiveTransferEvent(ReceiveTransferEvent.Progress(transferId, completedBytes, totalBytes))
@@ -1546,6 +1627,7 @@ private class P2PReceiver(
         if (didComplete || manifest.isEmpty() || completedBytes < totalBytes) return
         if (completedChunks.values.any { bitmap -> bitmap.any { completed -> !completed } }) return
 
+        persistProgressIfNeeded(force = true)
         manifest.forEach { file ->
             val tempFile = outputFiles[file.index] ?: return
             outputs[file.index]?.fd?.sync()
@@ -1598,9 +1680,21 @@ private class P2PReceiver(
         }
         bitmap.fill(false)
         outputs[file.index]?.setLength(file.sizeBytes)
-        progressStore.save(transferId, manifestHashB64, manifest, completedChunks)
+        persistProgressIfNeeded(force = true)
         repeat(file.chunkCount) { chunkIndex ->
             sendRetry(channel, file.index, chunkIndex)
+        }
+    }
+
+    private fun persistProgressIfNeeded(force: Boolean = false) {
+        if (manifest.isEmpty()) return
+        if (!force) chunksSinceProgressPersist += 1
+        val now = System.currentTimeMillis()
+        val elapsedMillis = if (lastProgressPersistAt == 0L) Long.MAX_VALUE else now - lastProgressPersistAt
+        if (force || chunksSinceProgressPersist >= 16 || elapsedMillis >= 500L) {
+            progressStore.save(transferId, manifestHashB64, manifest, completedChunks)
+            lastProgressPersistAt = now
+            chunksSinceProgressPersist = 0
         }
     }
 
@@ -1702,17 +1796,48 @@ private interface P2PBinaryChannel {
 }
 
 private class WebRtcBinaryChannel(private val channel: DataChannel) : P2PBinaryChannel {
+    private val bufferLock = ReentrantLock()
+    private val bufferDrained = bufferLock.newCondition()
+
     override val isOpen: Boolean
         get() = channel.state() == DataChannel.State.OPEN
 
     override fun send(bytes: ByteArray) {
+        awaitWritableBuffer()
         require(channel.send(DataChannel.Buffer(ByteBuffer.wrap(bytes), true))) {
             "P2P 二进制通道发送失败"
         }
     }
 
+    fun notifyBufferedAmountChanged() {
+        bufferLock.lock()
+        try {
+            bufferDrained.signalAll()
+        } finally {
+            bufferLock.unlock()
+        }
+    }
+
     override fun close() {
         channel.close()
+        notifyBufferedAmountChanged()
+    }
+
+    private fun awaitWritableBuffer() {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(P2P_WEBRTC_BUFFER_WAIT_TIMEOUT_MS)
+        bufferLock.lock()
+        try {
+            while (isOpen && channel.bufferedAmount() >= P2P_WEBRTC_BUFFER_HIGH_WATERMARK_BYTES) {
+                val remainingNanos = deadline - System.nanoTime()
+                require(remainingNanos > 0) { "P2P WebRTC 发送缓冲区等待超时" }
+                bufferDrained.await(remainingNanos, TimeUnit.NANOSECONDS)
+                if (channel.bufferedAmount() <= P2P_WEBRTC_BUFFER_LOW_WATERMARK_BYTES) {
+                    return
+                }
+            }
+        } finally {
+            bufferLock.unlock()
+        }
     }
 }
 
@@ -2089,19 +2214,26 @@ private fun handleSenderControlFrame(
     totalCompletedBeforeTarget: Long,
     totalBytes: Long,
     callback: (SendTransferEvent) -> Unit,
+    onReady: () -> Unit = {},
+    onAckProgress: (Long) -> Unit = {},
+    onRetry: () -> Unit = {},
 ) {
     when (
         val frame = runCatching {
             TransferProtocolV3.decodeFrame(sessionKey, sessionId, transferId, bytes)
         }.getOrNull()
     ) {
-        is TransferV3Frame.Ready -> receiverReadyLatch.countDown()
+        is TransferV3Frame.Ready -> {
+            receiverReadyLatch.countDown()
+            onReady()
+        }
         is TransferV3Frame.Ack -> {
             val chunkKey = ChunkKey(frame.fileIndex, frame.chunkIndex)
             if (ackedChunks.add(chunkKey)) {
                 ackLatch.countDown()
                 inFlightPermits.release()
                 val completed = confirmedBytes.addAndGet(chunkByteCounts[chunkKey] ?: 0L)
+                onAckProgress(completed)
                 callback(
                     SendTransferEvent.Progress(
                         transferId = transferId,
@@ -2112,6 +2244,7 @@ private fun handleSenderControlFrame(
             }
         }
         is TransferV3Frame.Retry -> {
+            onRetry()
             sentFrames[ChunkKey(frame.fileIndex, frame.chunkIndex)]?.let { chunkFrame ->
                 channel.send(chunkFrame)
             }
@@ -2260,6 +2393,18 @@ internal fun crossNetworkDiagnosis(diag: P2PTransferDiagnostic): P2PFailureReaso
         onlySrflxAndHost -> P2PFailureReason.NAT_INCOMPATIBLE
         else -> P2PFailureReason.GENERIC_TIMEOUT
     }
+}
+
+internal fun shouldContinueWaitingForIce(diag: P2PTransferDiagnostic): Boolean {
+    if (diag.dataChannelState.equals("OPEN", ignoreCase = true)) return false
+    if (diag.iceConnectionState.equals("CONNECTED", ignoreCase = true)) return false
+    if (diag.iceConnectionState.equals("COMPLETED", ignoreCase = true)) return false
+    val gatheringComplete = diag.iceGatheringState.equals("COMPLETE", ignoreCase = true)
+    if (gatheringComplete && diag.localIceCount == 0) return false
+    if (gatheringComplete && diag.remoteIceCount == 0) return false
+    if (gatheringComplete && diag.localCandidateTypes == "none") return false
+    if (gatheringComplete && diag.remoteCandidateTypes == "none") return false
+    return true
 }
 
 internal fun computeStunErrorRate(iceServerUrls: String, iceCandidateErrors: String): Double {

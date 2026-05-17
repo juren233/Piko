@@ -56,14 +56,44 @@ class TransferProgressStoreTest {
         }
     }
 
-    private fun testFile(): TransferV3File =
+    @Test
+    fun saveProgressCanBeCalledAfterMultipleChunksWithoutLosingBitmap() {
+        val directory = createTempDirectory("piko-transfer-progress-batched-bitmap").toFile()
+        try {
+            val store = TransferProgressStore(directory)
+            val manifest = listOf(testFile(chunkSize = 4, chunkCount = 16, sizeBytes = 64))
+            val completed = BooleanArray(16) { index -> index % 3 == 0 || index == 15 }
+            val partFile = File(store.transferDir("transfer-3"), "0.part")
+            partFile.parentFile?.mkdirs()
+            partFile.writeBytes(ByteArray(64) { it.toByte() })
+
+            store.save(
+                transferId = "transfer-3",
+                manifestHashB64 = "manifest-hash",
+                manifest = manifest,
+                completedChunks = mapOf(0 to completed),
+            )
+
+            val restored = store.completedChunks("transfer-3", "manifest-hash", manifest)
+            val decoded = TransferProgressStore.decodeCompletedBitmap(
+                store.completedBitmapB64("transfer-3", "manifest-hash"),
+            )
+
+            assertContentEquals(completed, restored.getValue(0))
+            assertEquals(setOf(0, 3, 6, 9, 12, 15), decoded[0])
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    private fun testFile(chunkSize: Int = 4, chunkCount: Int = 2, sizeBytes: Long = 6): TransferV3File =
         TransferV3File(
             index = 0,
             displayName = "demo.bin",
             fileType = SendFileType.Other,
-            sizeBytes = 6,
-            chunkSize = 4,
-            chunkCount = 2,
+            sizeBytes = sizeBytes,
+            chunkSize = chunkSize,
+            chunkCount = chunkCount,
             fileHash = ByteArray(32) { 7 },
         )
 }

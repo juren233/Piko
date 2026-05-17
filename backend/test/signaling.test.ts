@@ -134,17 +134,29 @@ function attachDevice(ws: RecordingSocket, deviceId: string): RecordingSocket {
   return ws;
 }
 
-function hubStateRecorder(webSockets: RecordingSocket[] = []): DurableObjectState & { alarmCalls: number } {
+function hubStateRecorder(webSockets: RecordingSocket[] = []): DurableObjectState & {
+  alarmCalls: number;
+  taggedSocketScans: number;
+  allSocketScans: number;
+} {
   const stored = new Map<string, unknown>();
   const state = {
     alarmCalls: 0,
+    taggedSocketScans: 0,
+    allSocketScans: 0,
     acceptWebSocket: (ws: WebSocket, tags: string[]) => {
       const recording = ws as unknown as RecordingSocket;
       recording.tags = tags;
       webSockets.push(recording);
     },
-    getWebSockets: (tag?: string) =>
-      (tag ? webSockets.filter((ws) => ws.tags.includes(tag)) : webSockets) as unknown as WebSocket[],
+    getWebSockets: (tag?: string) => {
+      if (tag) {
+        state.taggedSocketScans += 1;
+        return webSockets.filter((ws) => ws.tags.includes(tag)) as unknown as WebSocket[];
+      }
+      state.allSocketScans += 1;
+      return webSockets as unknown as WebSocket[];
+    },
     storage: {
       setAlarm: () => {
         state.alarmCalls += 1;
@@ -468,6 +480,59 @@ describe("cross-network signaling control plane", () => {
       }),
     );
     expect(senderWs.sent.at(-1)).toMatchObject({ type: "bye", session_id: created.json.session_id });
+  });
+
+  it("dispatches peer messages through tagged sockets before fallback scanning", async () => {
+    const alice = await register("signaltaggedalice");
+    const bob = await register("signaltaggedbob");
+    await makeFriends(alice, bob);
+    await registerDevice(alice, "01HR0A9S9Y1N2Z3X4W5V6T7S9C", "Alice Phone");
+    await registerDevice(bob, "01HR0A9S9Y1N2Z3X4W5V6T7S9D", "Bob Phone");
+
+    const senderWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S9C");
+    const receiverWs = attachDevice(new RecordingSocket(), "01HR0A9S9Y1N2Z3X4W5V6T7S9D");
+    const senderState = hubStateRecorder([senderWs]);
+    const receiverState = hubStateRecorder([receiverWs]);
+    const hubs = new Map<string, SignalingHub>();
+    const testEnv = {
+      ...env,
+      SIGNALING_HUB: signalingNamespace(hubs),
+    };
+    const senderHub = new SignalingHub(senderState, testEnv as unknown as Env);
+    const receiverHub = new SignalingHub(receiverState, testEnv as unknown as Env);
+    hubs.set(alice.user.id, senderHub);
+    hubs.set(bob.user.id, receiverHub);
+
+    const created = await appCall<SessionEnvelope>(testEnv as unknown as Env, "POST", "/v1/transfers/sessions", {
+      bearer: alice.token,
+      body: transferSessionBody(bob.user.id, "01HR0A9S9Y1N2Z3X4W5V6T7S9D", "01HR0A9S9Y1N2Z3X4W5V6T7S9C"),
+    });
+    expect(created.status).toBe(201);
+    senderState.taggedSocketScans = 0;
+    senderState.allSocketScans = 0;
+
+    await receiverHub.webSocketMessage(
+      receiverWs as unknown as WebSocket,
+      JSON.stringify({ type: "answer", session_id: created.json.session_id, sdp: "tagged-answer" }),
+    );
+
+    expect(senderWs.sent.at(-1)).toMatchObject({
+      type: "answer",
+      session_id: created.json.session_id,
+      sdp: "tagged-answer",
+    });
+    expect(senderState.taggedSocketScans).toBeGreaterThan(0);
+    expect(senderState.allSocketScans).toBe(0);
+
+    const presence = await senderHub.fetch(
+      new Request("https://signaling.local/presence", {
+        method: "POST",
+        body: JSON.stringify({ device_ids: ["01HR0A9S9Y1N2Z3X4W5V6T7S9C"] }),
+      }),
+    );
+    await expect(presence.json()).resolves.toMatchObject({
+      devices: [{ device_id: "01HR0A9S9Y1N2Z3X4W5V6T7S9C", online: true }],
+    });
   });
 
   it("keeps signaling sessions alive when an older duplicate device websocket closes", async () => {

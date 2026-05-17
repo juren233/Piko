@@ -870,6 +870,18 @@ enum NativeP2PDiagnostics {
         iceGatheringState.lowercased() != "complete"
     }
 
+    static func shouldContinueWaitingForIce(_ diag: NativeWebRTCDiagnostic) -> Bool {
+        if diag.dataChannelState.lowercased() == "open" { return false }
+        if diag.iceConnectionState.lowercased() == "connected" { return false }
+        if diag.iceConnectionState.lowercased() == "completed" { return false }
+        let gatheringComplete = diag.iceGatheringState.lowercased() == "complete"
+        if gatheringComplete && diag.localIceCount == 0 { return false }
+        if gatheringComplete && diag.remoteIceCount == 0 { return false }
+        if gatheringComplete && diag.localCandidateTypes == "none" { return false }
+        if gatheringComplete && diag.remoteCandidateTypes == "none" { return false }
+        return true
+    }
+
     static func detectSymmetricNatSuspect(details: String) -> Bool {
         guard !details.isEmpty, details != "none" else { return false }
         let addrRegex = try? NSRegularExpression(pattern: "(?:^|/)addr=([^/]+)")
