@@ -992,6 +992,39 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun iosP2PReceiverSendsAckImmediatelyLikeAndroid() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("channel.send(TransferProtocolV3.encodeAck(fileIndex, chunkIndex))" in androidClient)
+        assertTrue("sendControl(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))" in iosClient)
+        assertTrue("Task(priority: .high) { @MainActor in" in iosClient)
+        assertFalse("pendingAckFrames" in iosClient)
+        assertFalse("ackFlushScheduled" in iosClient)
+        assertFalse("flushPendingAcks()" in iosClient)
+        assertFalse("receiver.sendControlBatch" in iosClient)
+    }
+
+    @Test
+    fun p2pAckTimeoutDiagnosticsExposeAckProgressOnBothPlatforms() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosClient = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("ackTimeoutSendFailure(" in androidClient)
+        assertTrue("attachAckTimeoutDiagnostic(" in iosClient)
+        listOf(
+            "acked_chunks=",
+            "total_chunks=",
+            "in_flight_chunks=",
+            "confirmed_bytes=",
+            "in_flight_window=",
+        ).forEach { marker ->
+            assertTrue(marker in androidClient, "Android ACK timeout diagnostic must include $marker")
+            assertTrue(marker in iosClient, "iOS ACK timeout diagnostic must include $marker")
+        }
+    }
+
+    @Test
     fun p2pConnectionRaceCanShortCircuitWhenEndpointArrives() {
         val androidClient = readAndroid("transport/P2PTransferClient.kt")
         val iosClient = readIos("NativeP2PTransferClient.swift")

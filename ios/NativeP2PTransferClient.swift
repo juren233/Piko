@@ -209,7 +209,8 @@ final class NativeP2PTransferClient {
             let timingStartedAt = Date()
             nativeP2PTimingLog(stage: "create_session_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt)
             let receiverReadyTracker = NativeReceiverReadyTracker()
-            let ackTracker = NativeChunkAckTracker(totalChunks: manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) })
+            let totalChunks = manifestFiles.reduce(0) { $0 + NativeTransferProtocolV3.chunkCount(sizeBytes: $1.sizeBytes) }
+            let ackTracker = NativeChunkAckTracker(totalChunks: totalChunks)
             var sentFrames: [String: Data] = [:]
             var chunkByteCounts: [String: Int] = [:]
             var confirmedBytes = 0
@@ -239,6 +240,14 @@ final class NativeP2PTransferClient {
                     diagnostic.sendFailure = message
                 }
                 return diagnostic
+            }
+            func attachAckTimeoutDiagnostic(_ diagnostic: inout NativeWebRTCDiagnostic, message: String) {
+                let ackDetail = "\(message)|acked_chunks=\(ackTracker.ackedCount)|total_chunks=\(totalChunks)|in_flight_chunks=\(max(queuedChunks - ackTracker.ackedCount, 0))|confirmed_bytes=\(confirmedBytes)|in_flight_window=\(maxInFlightChunks)"
+                if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == "none" || diagnostic.sendFailure == message {
+                    diagnostic.sendFailure = ackDetail
+                } else {
+                    diagnostic.sendFailure = "\(diagnostic.sendFailure)|\(ackDetail)"
+                }
             }
             func recordRaceFailure(stage: String, code: String, message: String) {
                 raceFailureStage = stage
@@ -657,7 +666,10 @@ final class NativeP2PTransferClient {
                         guard await ackTracker.waitForAckedCount(ackTarget, seconds: 30) else {
                             let abortedByPeer = ackTracker.isAborted
                             let message = abortedByPeer ? "对方已取消接收" : "跨网传输确认超时"
-                            let diagnostic = await failureDiagnostic(message)
+                            var diagnostic = await failureDiagnostic(message)
+                            if !abortedByPeer {
+                                attachAckTimeoutDiagnostic(&diagnostic, message: message)
+                            }
                             closeSession(config.sessionId)
                             selectedChannel.closeAfterSelectedUse()
                             directEndpointTrackers.removeValue(forKey: config.sessionId)
@@ -683,7 +695,10 @@ final class NativeP2PTransferClient {
             guard await ackTracker.waitForAll(seconds: 30) else {
                 let abortedByPeer = ackTracker.isAborted
                 let message = abortedByPeer ? "对方已取消接收" : "跨网传输确认超时"
-                let diagnostic = await failureDiagnostic(message)
+                var diagnostic = await failureDiagnostic(message)
+                if !abortedByPeer {
+                    attachAckTimeoutDiagnostic(&diagnostic, message: message)
+                }
                 closeSession(config.sessionId)
                 selectedChannel.closeAfterSelectedUse()
                 directEndpointTrackers.removeValue(forKey: config.sessionId)
@@ -821,13 +836,8 @@ final class NativeP2PTransferClient {
     private func makeReceiverSession(sessionId: String, receiver: NativeP2PReceiver) -> NativeWebRTCSession {
         var sessionRef: NativeWebRTCSession?
         receiver.sendControl = { data in
-            Task { @MainActor in
+            Task(priority: .high) { @MainActor in
                 _ = await sessionRef?.send(data)
-            }
-        }
-        receiver.sendControlBatch = { items in
-            Task { @MainActor in
-                _ = await sessionRef?.sendBatch(items)
             }
         }
         let session = NativeWebRTCSession(
@@ -987,7 +997,6 @@ private final class NativeP2PReceiver {
     private let onReceiveCompleted: (NativeReceiveHistoryItem) -> Void
     private let sessionKey: Data
     var sendControl: (Data) -> Void = { _ in }
-    var sendControlBatch: (([Data]) -> Void)?
     private var senderName = "跨网设备"
     private var files: [NativeTransferV3File] = []
     private var outputFiles: [Int: URL] = [:]
@@ -995,8 +1004,6 @@ private final class NativeP2PReceiver {
     private var completedChunks: [Int: Set<Int>] = [:]
     private var hashRetryCount: [Int: Int] = [:]
     private var pendingChunkFrames: [Data] = []
-    private var pendingAckFrames: [Data] = []
-    private var ackFlushScheduled = false
     private var confirmed = false
     private var canceled = false
     private var readySent = false
@@ -1039,17 +1046,8 @@ private final class NativeP2PReceiver {
 
     func attach(channel: NativeP2PDirectChannel) {
         sendControl = { data in
-            Task { @MainActor in
+            Task(priority: .high) { @MainActor in
                 _ = await channel.send(data)
-            }
-        }
-        sendControlBatch = { items in
-            Task { @MainActor in
-                for item in items {
-                    guard await channel.send(item) else {
-                        return
-                    }
-                }
             }
         }
         sendReadyAndDrainPending()
@@ -1164,7 +1162,6 @@ private final class NativeP2PReceiver {
     func cancel() {
         canceled = true
         pendingChunkFrames.removeAll(keepingCapacity: false)
-        pendingAckFrames.removeAll(keepingCapacity: false)
         closeOutputHandles()
         outputFiles.removeAll(keepingCapacity: false)
         completedChunks.removeAll(keepingCapacity: false)
@@ -1307,24 +1304,7 @@ private final class NativeP2PReceiver {
     }
 
     private func sendAck(fileIndex: Int, chunkIndex: Int) {
-        pendingAckFrames.append(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))
-        guard !ackFlushScheduled else { return }
-        ackFlushScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            self?.flushPendingAcks()
-        }
-    }
-
-    private func flushPendingAcks() {
-        ackFlushScheduled = false
-        guard !pendingAckFrames.isEmpty, !canceled else { return }
-        let batch = pendingAckFrames
-        pendingAckFrames.removeAll(keepingCapacity: true)
-        if let sendBatch = sendControlBatch {
-            sendBatch(batch)
-        } else {
-            batch.forEach { sendControl($0) }
-        }
+        sendControl(NativeTransferProtocolV3.encodeAck(fileIndex: fileIndex, chunkIndex: chunkIndex))
     }
 
     private func sendReady() {

@@ -765,7 +765,21 @@ class P2PTransferClient(
                         if (!inFlightPermits.tryAcquire(30, TimeUnit.SECONDS) || peer.isAborted) {
                             val abortedByPeer = peer.isAborted
                             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
-                            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
+                            val baseDiagnostic = peer.diagnosticSnapshot()
+                            val diagnostic = baseDiagnostic.copy(
+                                sendFailure = if (abortedByPeer) {
+                                    reason
+                                } else {
+                                    ackTimeoutSendFailure(
+                                        baseReason = reason,
+                                        existingSendFailure = baseDiagnostic.sendFailure,
+                                        ackedChunks = ackedChunks,
+                                        totalChunks = totalChunks,
+                                        inFlightPermits = inFlightPermits,
+                                        confirmedBytes = confirmedBytes,
+                                    )
+                                },
+                            )
                             peer.close()
                             peers.remove(session.sessionId)
                             throw P2PTransferFailure(
@@ -820,7 +834,21 @@ class P2PTransferClient(
         if (totalChunks > 0 && (!ackLatch.await(30, TimeUnit.SECONDS) || peer.isAborted)) {
             val abortedByPeer = peer.isAborted
             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
-            val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
+            val baseDiagnostic = peer.diagnosticSnapshot()
+            val diagnostic = baseDiagnostic.copy(
+                sendFailure = if (abortedByPeer) {
+                    reason
+                } else {
+                    ackTimeoutSendFailure(
+                        baseReason = reason,
+                        existingSendFailure = baseDiagnostic.sendFailure,
+                        ackedChunks = ackedChunks,
+                        totalChunks = totalChunks,
+                        inFlightPermits = inFlightPermits,
+                        confirmedBytes = confirmedBytes,
+                    )
+                },
+            )
             peer.close()
             peers.remove(session.sessionId)
             throw P2PTransferFailure(
@@ -1821,6 +1849,22 @@ private class BlockingSdpObserver : SdpObserver {
 }
 
 private data class ChunkKey(val fileIndex: Int, val chunkIndex: Int)
+
+private fun ackTimeoutSendFailure(
+    baseReason: String,
+    existingSendFailure: String,
+    ackedChunks: Set<ChunkKey>,
+    totalChunks: Int,
+    inFlightPermits: Semaphore,
+    confirmedBytes: AtomicLong,
+): String {
+    val detail = "$baseReason|acked_chunks=${ackedChunks.size}|total_chunks=$totalChunks|in_flight_chunks=${P2P_MAX_IN_FLIGHT_CHUNKS - inFlightPermits.availablePermits()}|confirmed_bytes=${confirmedBytes.get()}|in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS"
+    return if (existingSendFailure.isBlank() || existingSendFailure == "none" || existingSendFailure == baseReason) {
+        detail
+    } else {
+        "$existingSendFailure|$detail"
+    }
+}
 
 private interface P2PBinaryChannel {
     val isOpen: Boolean
