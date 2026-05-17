@@ -535,6 +535,7 @@ class IosAndroidUiParityTest {
         )
         listOf(
             "struct NativeWebRTCDiagnostic",
+            "var sendFailure: String",
             "NativeWebRTCTiming.sendOpenWaitSeconds",
             "var diagnosticSnapshot",
             "localIceCount += 1",
@@ -592,7 +593,7 @@ class IosAndroidUiParityTest {
             "transportName: \"WebRTC 通道\"",
             "directTracker.recordAttempt(result: \"not_selected\", error: \"WebRTC 通道先完成连接\")",
             "func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic",
-            "if diagnostic.sendFailure.isEmpty",
+            "if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == \"none\"",
             "diagnostic.sendFailure = message",
             "nativeP2PTimingLog(stage: \"webrtc_offer_sent\"",
             "nativeP2PTimingLog(stage: \"webrtc_early_ice_restart\"",

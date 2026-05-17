@@ -98,7 +98,7 @@ struct NativeWebRTCDiagnostic {
     let iceGatheringState: String
     let signalingState: String
     let dataChannelState: String
-    let sendFailure: String
+    var sendFailure: String
     let iceCandidateErrors: String
     let selectedCandidatePair: String
     let iceCandidatePairStats: String

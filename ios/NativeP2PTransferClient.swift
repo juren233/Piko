@@ -235,7 +235,7 @@ final class NativeP2PTransferClient {
             }
             func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic {
                 var diagnostic = await diagnosticSnapshot()
-                if diagnostic.sendFailure.isEmpty {
+                if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == "none" {
                     diagnostic.sendFailure = message
                 }
                 return diagnostic
