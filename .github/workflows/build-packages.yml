@@ -146,11 +146,28 @@ jobs:
             & $apksigner verify --verbose --print-certs $apk.FullName
           }
 
+      - name: Validate Android upload payload
+        shell: pwsh
+        run: |
+          $apks = Get-ChildItem -LiteralPath "scripts\artifacts\android\release" -Filter "*.apk" | Sort-Object Name
+          if ($apks.Count -eq 0) {
+            throw "未找到可上传的 Android release APK"
+          }
+          foreach ($apk in $apks) {
+            $hash = Get-FileHash -LiteralPath $apk.FullName -Algorithm SHA256
+            Write-Host "Android 上传产物：$($apk.FullName)"
+            Write-Host "大小：$($apk.Length) bytes"
+            Write-Host "SHA256：$($hash.Hash)"
+          }
+
       - name: Upload Android artifacts
         uses: actions/upload-artifact@v7
         with:
           name: android-packages
-          path: scripts/artifacts/android
+          path: scripts/artifacts/android/release/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          overwrite: true
 
   ios-unsigned:
     name: iOS unsigned artifacts
@@ -305,8 +322,8 @@ jobs:
           version="${tag#v}"
           mkdir -p release-assets
 
-          if [[ -d release-input/android/release ]]; then
-            find release-input/android/release -type f -name "piko-${version}-android-*.apk" -exec cp {} release-assets/ \;
+          if [[ -d release-input/android ]]; then
+            find release-input/android -type f -name "piko-${version}-android-*.apk" -exec cp {} release-assets/ \;
           fi
           if [[ -d release-input/ios ]]; then
             find release-input/ios -type f -name "piko-${version}-ios-unsigned.ipa" -exec cp {} release-assets/ \;
