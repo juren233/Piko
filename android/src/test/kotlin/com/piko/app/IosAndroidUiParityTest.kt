@@ -381,6 +381,8 @@ class IosAndroidUiParityTest {
             "direct_attempt_plan：",
             "direct_endpoint_count：",
             "direct_endpoints：",
+            "direct_candidates：",
+            "direct_nat_diagnostic：",
             "direct_selected：",
             "direct_attempt_result：",
             "direct_last_error：",
@@ -448,17 +450,19 @@ class IosAndroidUiParityTest {
             "val webRtcFuture = completion.submit { openWebRtcRaceChannel() }",
             "directCandidate ?: webRtcCandidate",
             "channel = webRtcChannel",
-            "transportName = if (endpoint.name == \"quic_ipv6_direct\") \"QUIC 直连通道\" else \"TCP 直连通道\"",
+            "P2P_QUIC_UDP_PUNCH_ENDPOINT -> \"QUIC UDP 打洞通道\"",
             "transportName = \"WebRTC 通道\"",
             "SendTransferEvent.TransportNotice(transferId, \"正在同时尝试直连通道和 WebRTC 通道\")",
             "SendTransferEvent.TransportNotice(transferId, \"已连接\${selectedChannel.transportName}，开始传输文件\")",
             "XQuicDirectTransport",
             "System.loadLibrary(\"piko_xquic\")",
             "external fun openServer",
+            "external fun mappedEndpoint",
             "external fun openClient",
             "XQuicNativeBinaryChannel",
             "p2pDirectTransportAttemptPlan()",
             "\"quic_ipv6_direct\"",
+            "\"quic_udp_punch\"",
             "\"tcp_ipv6_direct\"",
             "\"webrtc_ipv6_host\"",
             "\"webrtc_stun\"",
@@ -589,7 +593,8 @@ class IosAndroidUiParityTest {
             "candidate.closeIfUnused()",
             "transportNotice(\"正在同时尝试直连通道和 WebRTC 通道\")",
             "transportNotice(\"已连接\\(selectedChannel.transportName)，开始传输文件\")",
-            "transportName: endpoint.name == \"quic_ipv6_direct\" ? \"QUIC 直连通道\" : \"TCP 直连通道\"",
+            "case nativeP2PQuicUdpPunchEndpoint:",
+            "transportName = \"QUIC UDP 打洞通道\"",
             "transportName: \"WebRTC 通道\"",
             "func failureDiagnostic(_ message: String) async -> NativeWebRTCDiagnostic",
             "if diagnostic.sendFailure.isEmpty || diagnostic.sendFailure == \"none\"",
@@ -609,9 +614,11 @@ class IosAndroidUiParityTest {
             "NativeXQuicDirectChannel",
             "PIKO_XQUIC_NATIVE",
             "piko_xquic_open_server",
+            "piko_xquic_mapped_endpoint",
             "piko_xquic_open_client",
             "\"direct_endpoint\"",
             "\"quic_ipv6_direct\"",
+            "\"quic_udp_punch\"",
             "\"tcp_ipv6_direct\"",
             "\"webrtc_ipv6_host\"",
             "\"webrtc_stun\"",
@@ -649,7 +656,7 @@ class IosAndroidUiParityTest {
             "NativeTransferToast(message: message)",
             "model.transferToastMessage = nil",
         ).forEach { marker ->
-            assertTrue(marker in iosSendView, "iOS send view must show transient transport toast marker $marker")
+            assertTrue(marker in iosRoot, "iOS root view must show transient transport toast marker $marker")
         }
         assertTrue("let ipv6Sockaddr = address.withMemoryRebound(to: sockaddr_in6.self" in iosP2P)
         assertTrue("var mutableSockaddr = ipv6Sockaddr" in iosP2P)
@@ -712,6 +719,9 @@ class IosAndroidUiParityTest {
             "transport.conn_update_cid_notify = connUpdateCidNotify",
             "transport.save_token = saveToken",
             "transport.cert_verify_cb = verifyCertificate",
+            "probeStunMappedEndpoint",
+            "mappedEndpoint",
+            "makeSocketAddress",
         ).forEach { marker ->
             assertTrue(marker in xquicJni, "JNI bridge must use real XQUIC API marker $marker")
         }
@@ -733,6 +743,7 @@ class IosAndroidUiParityTest {
         listOf(
             "int32_t piko_xquic_is_linked",
             "piko_xquic_open_server",
+            "piko_xquic_mapped_endpoint",
             "piko_xquic_open_client",
             "int32_t piko_xquic_send_frame",
             "PikoXQuicFrameCallback",
@@ -755,8 +766,70 @@ class IosAndroidUiParityTest {
             "transport.conn_update_cid_notify = connUpdateCidNotify",
             "transport.save_token = saveToken",
             "transport.cert_verify_cb = verifyCertificate",
+            "probeStunMappedEndpoint",
+            "piko_xquic_mapped_endpoint",
+            "makeSocketAddress",
         ).forEach { marker ->
             assertTrue(marker in iosXquicBridge, "iOS XQUIC bridge must use real XQUIC API marker $marker")
+        }
+
+        // Multi-STUN probe parity: both platforms must implement full multi-STUN aggregation.
+        listOf(
+            "StunProbeResult",
+            "XQuicMappedCandidate",
+            "mappingStable",
+            "stunSuccessCount",
+            "stunErrorCount",
+            "allStunUrls",
+            "\"nat_diagnostic\"",
+            "\"candidates\"",
+            "aggregateStunProbeResults",
+            "parseStunProbeResults",
+            "mappingBehavior",
+            "udpProbeResult",
+            "external fun stunProbeResults",
+        ).forEach { marker ->
+            assertTrue(marker in androidP2P, "Android P2P must implement multi-STUN aggregation marker $marker")
+        }
+        listOf(
+            "NativeStunProbeResult",
+            "NativeXQuicMappedCandidate",
+            "mappingStable",
+            "stunSuccessCount",
+            "stunErrorCount",
+            "allStunUrls",
+            "\"nat_diagnostic\"",
+            "\"candidates\"",
+            "aggregateNativeStunProbeResults",
+            "parseNativeStunProbeResults",
+            "mappingBehavior",
+            "udpProbeResult",
+            "piko_xquic_stun_probe_results",
+            "stunProbeResultsRaw",
+        ).forEach { marker ->
+            assertTrue(marker in iosP2P, "iOS P2P must implement multi-STUN aggregation marker $marker")
+        }
+        assertTrue("piko_xquic_stun_probe_results" in iosXquicHeader,
+            "iOS XQUIC header must expose piko_xquic_stun_probe_results")
+        assertTrue("extern \"C\" const char *piko_xquic_stun_probe_results" in iosXquicBridge,
+            "iOS XQUIC bridge must implement piko_xquic_stun_probe_results")
+        assertTrue("stunProbeResults" in xquicJni,
+            "Android JNI must register stunProbeResults native method")
+        listOf(
+            "directCandidates",
+            "directNatDiagnostic",
+            "message.optJSONArray(\"candidates\")",
+            "message.optJSONObject(\"nat_diagnostic\")",
+        ).forEach { marker ->
+            assertTrue(marker in androidP2P, "Android P2P must keep direct NAT diagnostic marker $marker")
+        }
+        listOf(
+            "directCandidates",
+            "directNatDiagnostic",
+            "message[\"candidates\"] as? [[String: Any]]",
+            "message[\"nat_diagnostic\"] as? [String: Any]",
+        ).forEach { marker ->
+            assertTrue(marker in iosP2P, "iOS P2P must keep direct NAT diagnostic marker $marker")
         }
         listOf(
             "transport/xqc_conn.h",
@@ -842,6 +915,8 @@ class IosAndroidUiParityTest {
             "directAttemptPlan",
             "directEndpointCount",
             "directEndpoints",
+            "directCandidates",
+            "directNatDiagnostic",
             "directSelected",
             "directAttemptResult",
             "directLastError",
@@ -1823,6 +1898,51 @@ class IosAndroidUiParityTest {
         assertTrue(".font(PikoFont.rowTitle)" in iosReceive)
         assertTrue(".minimumScaleFactor(0.88)" in iosAppText)
         assertTrue(".truncationMode(.tail)" in iosAppText)
+    }
+
+    @Test
+    fun receiverWatchdogAndNoticeSymmetryAcrossPlatforms() {
+        val androidP2P = readAndroid("transport/P2PTransferClient.kt")
+        val androidEvent = readAndroid("domain/PikoHomeState.kt")
+        val iosP2P = readIos("NativeP2PTransferClient.swift")
+
+        assertTrue("internal const val P2P_RECEIVER_WATCHDOG_SECONDS = 90L" in androidP2P)
+        assertTrue("static let receiverWatchdogSeconds: TimeInterval = 90" in iosP2P)
+
+        assertTrue("data class Notice(" in androidEvent)
+        assertTrue("override val transferId: String" in androidEvent)
+        assertTrue("val message: String," in androidEvent)
+        assertTrue("private let onReceiverNotice: (String) -> Void" in iosP2P)
+        assertTrue("onReceiverNotice: @escaping (String) -> Void" in iosP2P)
+
+        val sharedNotices = listOf(
+            "等待发送端建立连接，请稍候...",
+            "通道已就绪，等待数据...",
+            "等待发送端建立连接超时（请检查双方网络后重试）",
+        )
+        sharedNotices.forEach { notice ->
+            assertTrue(notice in androidP2P, "Android receiver notice missing: $notice")
+            assertTrue(notice in iosP2P, "iOS receiver notice missing: $notice")
+        }
+
+        assertTrue("private fun startWatchdogIfNeeded()" in androidP2P)
+        assertTrue("private fun cancelWatchdog()" in androidP2P)
+        assertTrue("private fun onWatchdogFired()" in androidP2P)
+        assertTrue("private func startWatchdogIfNeeded()" in iosP2P)
+        assertTrue("private func cancelWatchdog()" in iosP2P)
+        assertTrue("private func onWatchdogFired()" in iosP2P)
+
+        val sharedStages = listOf(
+            "stage=receiver_accept_clicked",
+            "stage=receiver_attach",
+            "stage=receiver_ready_drain_skip",
+            "stage=receiver_first_chunk",
+            "stage=receiver_watchdog_fired",
+        )
+        sharedStages.forEach { stage ->
+            assertTrue(stage in androidP2P, "Android receiver log stage missing: $stage")
+            assertTrue(stage in iosP2P, "iOS receiver log stage missing: $stage")
+        }
     }
 
     private fun readIos(name: String): String =

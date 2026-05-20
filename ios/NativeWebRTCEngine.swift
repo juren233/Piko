@@ -81,6 +81,8 @@ struct NativeWebRTCDiagnostic {
     var directAttemptPlan: String = "unknown"
     var directEndpointCount: Int = 0
     var directEndpoints: String = "none"
+    var directCandidates: String = "none"
+    var directNatDiagnostic: String = "none"
     var directSelected: String = "none"
     var directAttemptResult: String = "not_attempted"
     var directLastError: String = "none"

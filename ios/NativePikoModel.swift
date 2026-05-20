@@ -43,6 +43,8 @@ private struct NativeP2PFailureDiagnostic {
     let directAttemptPlan: String
     let directEndpointCount: String
     let directEndpoints: String
+    let directCandidates: String
+    let directNatDiagnostic: String
     let directSelected: String
     let directAttemptResult: String
     let directLastError: String
@@ -118,6 +120,9 @@ final class NativePikoModel: ObservableObject {
         },
         onReceiveCompleted: { [weak self] item in
             self?.prependReceiveHistory(item)
+        },
+        onReceiverNotice: { [weak self] message in
+            self?.transferToastMessage = message
         }
     )
     private let localSendSessionStore = NativeLocalSendSessionStore()
@@ -412,6 +417,8 @@ final class NativePikoModel: ObservableObject {
         lines.append("direct_attempt_plan：\(diagnostic.directAttemptPlan)")
         lines.append("direct_endpoint_count：\(diagnostic.directEndpointCount)")
         lines.append("direct_endpoints：\(diagnostic.directEndpoints)")
+        lines.append("direct_candidates：\(diagnostic.directCandidates)")
+        lines.append("direct_nat_diagnostic：\(diagnostic.directNatDiagnostic)")
         lines.append("direct_selected：\(diagnostic.directSelected)")
         lines.append("direct_attempt_result：\(diagnostic.directAttemptResult)")
         lines.append("direct_last_error：\(diagnostic.directLastError)")
@@ -458,6 +465,8 @@ final class NativePikoModel: ObservableObject {
                 directAttemptPlan: fields["direct_attempt_plan"]?.nilIfBlank ?? "unknown",
                 directEndpointCount: fields["direct_endpoint_count"]?.nilIfBlank ?? "0",
                 directEndpoints: fields["direct_endpoints"]?.nilIfBlank ?? "none",
+                directCandidates: fields["direct_candidates"]?.nilIfBlank ?? "none",
+                directNatDiagnostic: fields["direct_nat_diagnostic"]?.nilIfBlank ?? "none",
                 directSelected: fields["direct_selected"]?.nilIfBlank ?? "none",
                 directAttemptResult: fields["direct_attempt_result"]?.nilIfBlank ?? "not_attempted",
                 directLastError: fields["direct_last_error"]?.nilIfBlank ?? "none",
@@ -495,6 +504,8 @@ final class NativePikoModel: ObservableObject {
                 directAttemptPlan: "unknown",
                 directEndpointCount: "0",
                 directEndpoints: "none",
+                directCandidates: "none",
+                directNatDiagnostic: "none",
                 directSelected: "none",
                 directAttemptResult: "not_attempted",
                 directLastError: "none",

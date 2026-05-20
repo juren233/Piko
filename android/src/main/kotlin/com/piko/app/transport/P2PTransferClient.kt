@@ -24,6 +24,7 @@ import com.piko.app.domain.TransferV3File
 import com.piko.app.domain.TransferV3Frame
 import com.piko.app.domain.TransferV3KeyAgreementRole
 import com.piko.app.domain.TransferV3ManifestInput
+import org.json.JSONArray
 import org.json.JSONObject
 import org.webrtc.CandidatePairChangeEvent
 import org.webrtc.DataChannel
@@ -58,6 +59,8 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorCompletionService
 import java.util.concurrent.Executors
 import java.util.concurrent.ExecutorService
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.Semaphore
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -85,6 +88,10 @@ private const val P2P_XQUIC_ALPN = "piko-v3"
 private const val P2P_INITIAL_OPEN_TIMEOUT_SECONDS = 12L
 private const val P2P_RESTART_OPEN_TIMEOUT_SECONDS = 45L
 private const val P2P_IPV6_DIRECT_CANDIDATE_PRIORITY = 2_130_706_431L
+private const val P2P_QUIC_UDP_PUNCH_ENDPOINT = "quic_udp_punch"
+private const val P2P_QUIC_IPV6_DIRECT_ENDPOINT = "quic_ipv6_direct"
+private const val P2P_TCP_IPV6_DIRECT_ENDPOINT = "tcp_ipv6_direct"
+internal const val P2P_RECEIVER_WATCHDOG_SECONDS = 90L
 private const val P2P_LOG_TAG = "PikoP2P"
 
 data class P2PDirectTransportAttempt(
@@ -102,6 +109,8 @@ data class P2PTransferDiagnostic(
     val directAttemptPlan: String = "unknown",
     val directEndpointCount: Int = 0,
     val directEndpoints: String = "none",
+    val directCandidates: String = "none",
+    val directNatDiagnostic: String = "none",
     val directSelected: String = "none",
     val directAttemptResult: String = "not_attempted",
     val directLastError: String = "none",
@@ -136,9 +145,10 @@ fun p2pDirectTransportAttemptPlan(): List<P2PDirectTransportAttempt> =
 internal fun p2pDirectTransportAttemptPlan(xquicAvailable: Boolean): List<P2PDirectTransportAttempt> =
     buildList {
         if (xquicAvailable) {
-            add(P2PDirectTransportAttempt("quic_ipv6_direct", P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
+            add(P2PDirectTransportAttempt(P2P_QUIC_IPV6_DIRECT_ENDPOINT, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
+            add(P2PDirectTransportAttempt(P2P_QUIC_UDP_PUNCH_ENDPOINT, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
         }
-        add(P2PDirectTransportAttempt("tcp_ipv6_direct", P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
+        add(P2PDirectTransportAttempt(P2P_TCP_IPV6_DIRECT_ENDPOINT, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS))
         add(P2PDirectTransportAttempt("webrtc_ipv6_host", P2P_INITIAL_OPEN_TIMEOUT_SECONDS))
         add(P2PDirectTransportAttempt("webrtc_stun", P2P_RESTART_OPEN_TIMEOUT_SECONDS))
     }
@@ -151,6 +161,167 @@ private fun P2PDirectEndpoint.directEndpointSummary(): String =
 
 private fun List<P2PDirectEndpoint>.directEndpointsDescription(): String =
     joinToString(";") { it.directEndpointSummary() }.ifBlank { "none" }
+
+private fun JSONArray?.directCandidatesDescription(): String {
+    if (this == null || length() == 0) return "none"
+    return (0 until length()).mapNotNull { index ->
+        val item = optJSONObject(index) ?: return@mapNotNull null
+        val type = item.optString("type").ifBlank { "unknown" }
+        val protocol = item.optString("protocol").ifBlank { "unknown" }
+        val host = item.optString("host").ifBlank { "unknown" }
+        val port = item.optInt("port").takeIf { it in 1..65535 }?.toString() ?: "unknown"
+        val stable = item.optBoolean("mapping_stable", false)
+        val priority = item.optLong("priority", 0L)
+        "$type/$protocol@$host:$port|stable=$stable|priority=$priority"
+    }.take(12).joinToString(";").ifBlank { "none" }
+}
+
+private fun JSONObject?.directNatDiagnosticDescription(): String {
+    if (this == null) return "none"
+    val udpProbeResult = optString("udp_probe_result").ifBlank { "unknown" }
+    val mappingBehavior = optString("mapping_behavior").ifBlank { "unknown" }
+    val stunSuccessCount = optInt("stun_success_count", 0)
+    val stunErrorCount = optInt("stun_error_count", 0)
+    return "udp_probe_result=$udpProbeResult|mapping_behavior=$mappingBehavior|stun_success_count=$stunSuccessCount|stun_error_count=$stunErrorCount"
+}
+
+private data class StunProbeTarget(
+    val host: String,
+    val port: Int,
+)
+
+internal data class StunProbeResult(
+    val serverUrl: String,
+    val success: Boolean,
+    val mappedHost: String?,
+    val mappedPort: Int,
+    val error: String?,
+    val elapsedMs: Long,
+)
+
+internal data class XQuicMappedCandidate(
+    val id: String,
+    val host: String,
+    val port: Int,
+    val stunServer: String,
+    val mappingStable: Boolean,
+    val priority: Long,
+)
+
+private data class XQuicMappedEndpoint(
+    val host: String,
+    val port: Int,
+)
+
+private fun String.toXQuicMappedEndpointOrNull(): XQuicMappedEndpoint? {
+    val parts = split("|", limit = 2)
+    val host = parts.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return null
+    val port = parts.getOrNull(1)?.toIntOrNull() ?: return null
+    return XQuicMappedEndpoint(host, port).takeIf { it.port in 1..65535 }
+}
+
+internal fun String.toStunProbeResultOrNull(): StunProbeResult? {
+    val parts = split("|", limit = 6)
+    if (parts.size < 6) return null
+    val serverUrl = parts[0].ifBlank { return null }
+    val success = parts[1] == "true"
+    val mappedHost = parts[2].ifBlank { null }
+    val mappedPort = parts[3].toIntOrNull() ?: 0
+    val error = parts[4].ifBlank { null }
+    val elapsedMs = parts[5].toLongOrNull() ?: 0L
+    return StunProbeResult(serverUrl, success, mappedHost, mappedPort, error, elapsedMs)
+}
+
+internal fun String?.parseStunProbeResults(): List<StunProbeResult> {
+    if (isNullOrBlank()) return emptyList()
+    return split(";").mapNotNull { it.toStunProbeResultOrNull() }
+}
+
+internal data class StunAggregation(
+    val candidates: List<XQuicMappedCandidate>,
+    val udpProbeResult: String,
+    val mappingBehavior: String,
+    val stunSuccessCount: Int,
+    val stunErrorCount: Int,
+)
+
+internal fun List<StunProbeResult>.aggregateStunProbeResults(): StunAggregation {
+    val successProbes = filter { it.success && it.mappedHost != null && it.mappedPort in 1..65535 }
+    val stunSuccessCount = successProbes.size
+    val stunErrorCount = count { !it.success }
+    if (successProbes.isEmpty()) {
+        return StunAggregation(
+            candidates = emptyList(),
+            udpProbeResult = "failed",
+            mappingBehavior = "unknown",
+            stunSuccessCount = 0,
+            stunErrorCount = stunErrorCount,
+        )
+    }
+    val uniqueAddresses = successProbes.map { "${it.mappedHost}:${it.mappedPort}" }.toSet()
+    val uniqueHosts = successProbes.mapNotNull { it.mappedHost }.toSet()
+    val mappingBehavior = when {
+        successProbes.size == 1 -> "unknown"
+        uniqueAddresses.size == 1 -> "stable"
+        uniqueHosts.size == 1 -> "port_dependent"
+        else -> "address_and_port_dependent"
+    }
+    val isStable = mappingBehavior == "stable"
+    val candidatePriority = when (mappingBehavior) {
+        "stable" -> 2_130_000_000L
+        "unknown" -> 2_000_000_000L
+        else -> 1_845_493_760L
+    }
+    var candidateIndex = 0
+    val candidates = successProbes
+        .groupBy { "${it.mappedHost}:${it.mappedPort}" }
+        .values
+        .map { group ->
+            val probe = group.first()
+            XQuicMappedCandidate(
+                id = "r-srflx-${++candidateIndex}",
+                host = probe.mappedHost!!,
+                port = probe.mappedPort,
+                stunServer = probe.serverUrl,
+                mappingStable = isStable,
+                priority = candidatePriority,
+            )
+        }
+    return StunAggregation(
+        candidates = candidates,
+        udpProbeResult = "success",
+        mappingBehavior = mappingBehavior,
+        stunSuccessCount = stunSuccessCount,
+        stunErrorCount = stunErrorCount,
+    )
+}
+
+private fun List<IceServerConfig>.allStunUrls(): List<String> =
+    mapNotNull { config ->
+        val url = config.urls.trim()
+        if (url.startsWith("stun:", ignoreCase = true) && url.toStunProbeTargetOrNull() != null) url else null
+    }
+
+private fun List<IceServerConfig>.firstStunProbeTarget(): StunProbeTarget? =
+    firstNotNullOfOrNull { it.urls.toStunProbeTargetOrNull() }
+
+private fun String.toStunProbeTargetOrNull(): StunProbeTarget? {
+    val raw = trim()
+    if (!raw.startsWith("stun:", ignoreCase = true)) return null
+    val endpoint = raw.substringAfter(":").substringBefore("?").substringBefore("/")
+    if (endpoint.isBlank()) return null
+    if (endpoint.startsWith("[")) {
+        val end = endpoint.indexOf(']')
+        if (end <= 1) return null
+        val host = endpoint.substring(1, end)
+        val port = endpoint.substring(end + 1).removePrefix(":").toIntOrNull() ?: 3478
+        return StunProbeTarget(host, port).takeIf { it.port in 1..65535 }
+    }
+    val split = endpoint.split(":")
+    val host = split.firstOrNull()?.takeIf { it.isNotBlank() } ?: return null
+    val port = split.getOrNull(1)?.toIntOrNull() ?: 3478
+    return StunProbeTarget(host, port).takeIf { it.port in 1..65535 }
+}
 
 internal fun isXQuicDirectTransportAvailable(): Boolean = XQuicDirectTransport.isAvailable
 
@@ -232,6 +403,10 @@ class P2PTransferClient(
     private val signalExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "piko-p2p-signal").apply { isDaemon = true }
     }
+    private val receiverWatchdogExecutor: ScheduledExecutorService =
+        Executors.newSingleThreadScheduledExecutor { runnable ->
+            Thread(runnable, "piko-p2p-receiver-watchdog").apply { isDaemon = true }
+        }
 
     init {
         initializeFactory(context)
@@ -324,6 +499,9 @@ class P2PTransferClient(
             session.iceServers,
             signalingClient,
             receiver = null,
+            onConnectionStageNotice = { message ->
+                callback(SendTransferEvent.TransportNotice(transferId, message))
+            },
             onBinary = { bytes, channel ->
                 handleSenderControlFrame(
                     sessionKey = sessionContext.sessionKey,
@@ -418,7 +596,7 @@ class P2PTransferClient(
             logTiming("direct_open_start", "endpoint=${endpoint.name}")
             peer.recordDirectEndpointAttempt(endpoint, result = "attempting")
             val result = runCatching {
-                if (endpoint.name == "quic_ipv6_direct") {
+                if (endpoint.name == P2P_QUIC_IPV6_DIRECT_ENDPOINT || endpoint.name == P2P_QUIC_UDP_PUNCH_ENDPOINT) {
                     openQuicDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS, directFrameHandler(key))
                 } else {
                     openTcpDirectChannel(endpoint, P2P_DIRECT_TRANSPORT_TIMEOUT_SECONDS, directFrameHandler(key))
@@ -467,7 +645,11 @@ class P2PTransferClient(
                         channel = channel,
                         handshake = handshake,
                         sessionKey = key,
-                        transportName = if (endpoint.name == "quic_ipv6_direct") "QUIC 直连通道" else "TCP 直连通道",
+                        transportName = when (endpoint.name) {
+                            P2P_QUIC_UDP_PUNCH_ENDPOINT -> "QUIC UDP 打洞通道"
+                            P2P_QUIC_IPV6_DIRECT_ENDPOINT -> "QUIC 直连通道"
+                            else -> "TCP 直连通道"
+                        },
                     )
                 }
             }
@@ -485,9 +667,10 @@ class P2PTransferClient(
         fun openDirectRaceChannel(): P2PPreparedChannel? {
             val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)
             logTiming("direct_endpoint_wait_done", "count=${directEndpoints.size}")
-            val quicEndpoint = directEndpoints.firstOrNull { it.name == "quic_ipv6_direct" }
-            val tcpEndpoint = directEndpoints.firstOrNull { it.name == "tcp_ipv6_direct" }
-            if (quicEndpoint == null && tcpEndpoint == null) return null
+            val quicEndpoint = directEndpoints.firstOrNull { it.name == P2P_QUIC_IPV6_DIRECT_ENDPOINT }
+            val quicPunchEndpoint = directEndpoints.firstOrNull { it.name == P2P_QUIC_UDP_PUNCH_ENDPOINT }
+            val tcpEndpoint = directEndpoints.firstOrNull { it.name == P2P_TCP_IPV6_DIRECT_ENDPOINT }
+            if (quicEndpoint == null && quicPunchEndpoint == null && tcpEndpoint == null) return null
             val handshakeResult = runCatching { peer.awaitPeerHandshake() }
             val handshake = handshakeResult.getOrNull()
             if (handshake == null) {
@@ -514,7 +697,7 @@ class P2PTransferClient(
                 )
                 return null
             }
-            val endpoints = listOfNotNull(quicEndpoint, tcpEndpoint)
+            val endpoints = listOfNotNull(quicEndpoint, quicPunchEndpoint, tcpEndpoint)
             return openDirectChannelRace(endpoints, handshake, key)
         }
         fun openWebRtcRaceChannel(): P2PPreparedChannel? {
@@ -1050,6 +1233,8 @@ class P2PTransferClient(
             sessionKey = sessionKey,
             autoAccept = autoAccept,
             onReceiveTransferEvent = onReceiveTransferEvent,
+            watchdogExecutor = receiverWatchdogExecutor,
+            watchdogTimeoutSeconds = P2P_RECEIVER_WATCHDOG_SECONDS,
             onTerminal = { terminalSessionId, terminalTransferId ->
                 signalExecutor.execute { closeReceiveSession(terminalSessionId, terminalTransferId) }
             },
@@ -1072,6 +1257,7 @@ class P2PTransferClient(
                     sessionId = sessionId,
                     signalingClient = signalingClient,
                     receiver = receiver,
+                    iceServers = iceServers,
                     certificateDirectory = context.cacheDir.absolutePath,
                     receiverEphemeralPublicB64 = receiverEphemeral.publicKeyB64,
                     receiverAcceptSignatureB64 = acceptSignatureB64,
@@ -1134,12 +1320,23 @@ class P2PTransferClient(
         private val receiverAcceptSignatureB64: String? = null,
         private val receiverCompletedBitmapB64: String? = null,
         private val onBinary: ((ByteArray, P2PBinaryChannel) -> Unit)?,
+        private val onConnectionStageNotice: ((message: String) -> Unit)? = null,
     ) {
+        private val emittedConnectionNotices = ConcurrentHashMap.newKeySet<String>()
+        private fun notifyConnectionStageOnce(key: String, message: String) {
+            if (emittedConnectionNotices.add(key)) {
+                onConnectionStageNotice?.invoke(message)
+            }
+        }
         @Volatile
         private var openLatch = CountDownLatch(1)
         private val peerEphemeralLatch = CountDownLatch(1)
         private val directEndpointLatch = CountDownLatch(1)
         private val directEndpoints = ConcurrentLinkedQueue<P2PDirectEndpoint>()
+        @Volatile
+        private var directCandidates = "none"
+        @Volatile
+        private var directNatDiagnostic = "none"
         @Volatile
         private var peerEphemeralPublicB64: String? = null
         @Volatile
@@ -1207,14 +1404,36 @@ class P2PTransferClient(
 
                     override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {
                         iceConnectionState = state.name
+                        when (state) {
+                            PeerConnection.IceConnectionState.CHECKING ->
+                                notifyConnectionStageOnce("ice_checking", "WebRTC ICE 协商中...")
+                            PeerConnection.IceConnectionState.CONNECTED,
+                            PeerConnection.IceConnectionState.COMPLETED ->
+                                notifyConnectionStageOnce("ice_connected", "ICE 协商完成，准备建立数据通道")
+                            PeerConnection.IceConnectionState.FAILED ->
+                                notifyConnectionStageOnce("ice_failed", "ICE 协商失败，正在重试（请检查 STUN/网络）")
+                            PeerConnection.IceConnectionState.DISCONNECTED ->
+                                notifyConnectionStageOnce("ice_disconnected", "ICE 连接断开，等待恢复")
+                            else -> Unit
+                        }
                     }
 
                     override fun onConnectionChange(state: PeerConnection.PeerConnectionState) {
                         peerConnectionState = state.name
+                        when (state) {
+                            PeerConnection.PeerConnectionState.CONNECTED ->
+                                notifyConnectionStageOnce("peer_connected", "WebRTC 通道已连接")
+                            PeerConnection.PeerConnectionState.FAILED ->
+                                notifyConnectionStageOnce("peer_failed", "WebRTC 连接失败（请检查双方网络）")
+                            else -> Unit
+                        }
                     }
 
                     override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {
                         iceGatheringState = state.name
+                        if (state == PeerConnection.IceGatheringState.GATHERING) {
+                            notifyConnectionStageOnce("ice_gathering", "正在收集 ICE 候选地址...")
+                        }
                     }
 
                     override fun onIceCandidate(candidate: IceCandidate) {
@@ -1342,6 +1561,8 @@ class P2PTransferClient(
         fun acceptDirectEndpoint(message: JSONObject) {
             if (closed.get()) return
             acceptPeerHandshake(message)
+            directCandidates = message.optJSONArray("candidates").directCandidatesDescription()
+            directNatDiagnostic = message.optJSONObject("nat_diagnostic").directNatDiagnosticDescription()
             val endpoints = message.optJSONArray("endpoints") ?: return
             for (index in 0 until endpoints.length()) {
                 val item = endpoints.optJSONObject(index) ?: continue
@@ -1452,6 +1673,8 @@ class P2PTransferClient(
             directAttemptPlan = p2pDirectTransportAttemptPlan().directAttemptPlanDescription(),
             directEndpointCount = directEndpoints.size,
             directEndpoints = directEndpoints.toList().directEndpointsDescription(),
+            directCandidates = directCandidates,
+            directNatDiagnostic = directNatDiagnostic,
             directSelected = directSelected,
             directAttemptResult = directAttemptResult,
             directLastError = directLastError,
@@ -1550,6 +1773,8 @@ private class P2PReceiver(
     private val sessionKey: ByteArray,
     private val autoAccept: Boolean,
     private val onReceiveTransferEvent: (ReceiveTransferEvent) -> Unit,
+    private val watchdogExecutor: ScheduledExecutorService,
+    private val watchdogTimeoutSeconds: Long,
     private val onTerminal: (String, String) -> Unit,
 ) {
     private var senderName = "跨网设备"
@@ -1571,9 +1796,26 @@ private class P2PReceiver(
     private var didTerminalCleanup = false
     private var lastProgressPersistAt = 0L
     private var chunksSinceProgressPersist = 0
+    private var watchdogFuture: ScheduledFuture<*>? = null
+    private var watchdogStartedAtMillis = 0L
+    private var firstChunkReceived = false
+    private var channelReadyNoticeSent = false
 
     fun attach(sessionId: String, channel: P2PBinaryChannel) {
         activeChannel = channel
+        Log.d(
+            P2P_LOG_TAG,
+            "timing session=$sessionId transfer=$transferId stage=receiver_attach channel_open=${channel.isOpen}",
+        )
+        if (confirmed && !firstChunkReceived && !channelReadyNoticeSent) {
+            channelReadyNoticeSent = true
+            onReceiveTransferEvent(
+                ReceiveTransferEvent.Notice(
+                    transferId = transferId,
+                    message = "通道已就绪，等待数据...",
+                ),
+            )
+        }
         maybeSendReadyAndDrainPending()
     }
 
@@ -1621,6 +1863,9 @@ private class P2PReceiver(
                         requiresConfirmation = !confirmed,
                     ),
                 )
+                if (confirmed) {
+                    startWatchdogIfNeeded()
+                }
                 maybeSendReadyAndDrainPending()
             }
             is TransferV3Frame.Chunk -> {
@@ -1638,6 +1883,14 @@ private class P2PReceiver(
                 if (frame.bytes.size != expectedLength) {
                     sendRetry(channel, frame.fileIndex, frame.chunkIndex)
                     return
+                }
+                if (!firstChunkReceived) {
+                    firstChunkReceived = true
+                    cancelWatchdog()
+                    Log.d(
+                        P2P_LOG_TAG,
+                        "timing session=$sessionId transfer=$transferId stage=receiver_first_chunk file_index=${frame.fileIndex} chunk_index=${frame.chunkIndex}",
+                    )
                 }
                 if (!bitmap[frame.chunkIndex]) {
                     val output = outputs[frame.fileIndex] ?: return
@@ -1662,6 +1915,11 @@ private class P2PReceiver(
         if (confirmed || canceled) return
         confirmed = true
         val manifestReady = manifest.isNotEmpty()
+        val channelReady = activeChannel?.isOpen == true
+        Log.d(
+            P2P_LOG_TAG,
+            "timing session=$sessionId transfer=$transferId stage=receiver_accept_clicked manifest_ready=$manifestReady channel_open=$channelReady",
+        )
         onReceiveTransferEvent(
             ReceiveTransferEvent.Started(
                 transferId = transferId,
@@ -1671,11 +1929,62 @@ private class P2PReceiver(
                 requiresConfirmation = false,
             ),
         )
+        startWatchdogIfNeeded()
+        onReceiveTransferEvent(
+            ReceiveTransferEvent.Notice(
+                transferId = transferId,
+                message = "等待发送端建立连接，请稍候...",
+            ),
+        )
+        if (channelReady && !channelReadyNoticeSent) {
+            channelReadyNoticeSent = true
+            onReceiveTransferEvent(
+                ReceiveTransferEvent.Notice(
+                    transferId = transferId,
+                    message = "通道已就绪，等待数据...",
+                ),
+            )
+        }
         maybeSendReadyAndDrainPending()
+    }
+
+    private fun startWatchdogIfNeeded() {
+        if (firstChunkReceived || canceled) return
+        if (watchdogFuture != null) return
+        watchdogStartedAtMillis = SystemClock.elapsedRealtime()
+        watchdogFuture = watchdogExecutor.schedule(
+            { onWatchdogFired() },
+            watchdogTimeoutSeconds,
+            TimeUnit.SECONDS,
+        )
+    }
+
+    private fun cancelWatchdog() {
+        watchdogFuture?.cancel(false)
+        watchdogFuture = null
+    }
+
+    private fun onWatchdogFired() {
+        synchronized(this) {
+            if (firstChunkReceived || canceled || didComplete) return
+            val elapsedMs = if (watchdogStartedAtMillis == 0L) -1L else SystemClock.elapsedRealtime() - watchdogStartedAtMillis
+            Log.w(
+                P2P_LOG_TAG,
+                "timing session=$sessionId transfer=$transferId stage=receiver_watchdog_fired elapsed_ms=$elapsedMs manifest_ready=${manifest.isNotEmpty()} channel_attached=${activeChannel != null} ready_sent=$readySent",
+            )
+            onReceiveTransferEvent(
+                ReceiveTransferEvent.Failed(
+                    transferId = transferId,
+                    message = "等待发送端建立连接超时（请检查双方网络后重试）",
+                ),
+            )
+            cancel()
+        }
     }
 
     fun cancel() {
         canceled = true
+        cancelWatchdog()
         outputs.values.forEach { runCatching { it.close() } }
         outputs.clear()
         runCatching { activeChannel?.close() }
@@ -1763,6 +2072,7 @@ private class P2PReceiver(
     private fun cleanupTerminalSession() {
         if (didTerminalCleanup) return
         didTerminalCleanup = true
+        cancelWatchdog()
         runCatching { activeChannel?.close() }
         activeChannel = null
         onTerminal(sessionId, transferId)
@@ -1786,10 +2096,32 @@ private class P2PReceiver(
     }
 
     private fun maybeSendReadyAndDrainPending() {
-        val channel = activeChannel ?: return
-        if (!confirmed || manifest.isEmpty() || readySent || !channel.isOpen) return
+        val channel = activeChannel
+        if (channel == null) {
+            Log.d(
+                P2P_LOG_TAG,
+                "timing session=$sessionId transfer=$transferId stage=receiver_ready_drain_skip reason=channel_not_attached confirmed=$confirmed manifest_ready=${manifest.isNotEmpty()}",
+            )
+            return
+        }
+        if (!confirmed) {
+            Log.d(P2P_LOG_TAG, "timing session=$sessionId transfer=$transferId stage=receiver_ready_drain_skip reason=not_confirmed")
+            return
+        }
+        if (manifest.isEmpty()) {
+            Log.d(P2P_LOG_TAG, "timing session=$sessionId transfer=$transferId stage=receiver_ready_drain_skip reason=manifest_empty")
+            return
+        }
+        if (readySent) {
+            return
+        }
+        if (!channel.isOpen) {
+            Log.d(P2P_LOG_TAG, "timing session=$sessionId transfer=$transferId stage=receiver_ready_drain_skip reason=channel_closed")
+            return
+        }
         sendReady(channel)
         readySent = true
+        Log.d(P2P_LOG_TAG, "timing session=$sessionId transfer=$transferId stage=receiver_ready_sent pending_chunks=${pendingChunkFrames.size}")
         val pending = pendingChunkFrames.toList()
         pendingChunkFrames.clear()
         pending.forEach { (bytes, c) -> receive(bytes, c) }
@@ -2159,6 +2491,9 @@ private fun openQuicDirectChannel(
 
 private interface XQuicDirectServer {
     val port: Int
+    val mappedHost: String?
+    val mappedPort: Int
+    val stunProbeResultsRaw: String?
     fun close()
 }
 
@@ -2170,6 +2505,7 @@ private object XQuicDirectTransport {
         bindHost: String,
         alpn: String,
         certificateDirectory: String,
+        stunProbeTargets: List<StunProbeTarget>,
         receiver: P2PReceiver,
         sessionId: String,
     ): XQuicDirectServer? =
@@ -2177,6 +2513,7 @@ private object XQuicDirectTransport {
             bindHost = bindHost,
             alpn = alpn,
             certificateDirectory = certificateDirectory,
+            stunProbeTargets = stunProbeTargets,
             sessionId = sessionId,
             receiver = receiver,
         )
@@ -2215,6 +2552,9 @@ private class XQuicNativeBinaryChannel(private val handle: Long) : P2PBinaryChan
 private class XQuicNativeDirectServer(
     private val handle: Long,
     override val port: Int,
+    override val mappedHost: String?,
+    override val mappedPort: Int,
+    override val stunProbeResultsRaw: String?,
 ) : XQuicDirectServer {
     override fun close() {
         P2PXQuicNativeBridge.closeServer(handle)
@@ -2233,6 +2573,7 @@ private object P2PXQuicNativeBridge {
         bindHost: String,
         alpn: String,
         certificateDirectory: String,
+        stunProbeTargets: List<StunProbeTarget>,
         sessionId: String,
         receiver: P2PReceiver,
     ): XQuicDirectServer? {
@@ -2246,14 +2587,29 @@ private object P2PXQuicNativeBridge {
 
             override fun onClosed(channelHandle: Long) = Unit
         }
-        val handle = runCatching { openServer(bindHost, alpn, certificateDirectory, frameReceiver) }.getOrDefault(0L)
+        val stunTargets = stunProbeTargets
+            .joinToString("\n") { t ->
+                val hostPart = if (':' in t.host) "[${t.host}]" else t.host
+                "stun:$hostPart:${t.port}"
+            }
+        val handle = runCatching {
+            openServer(
+                bindHost,
+                alpn,
+                certificateDirectory,
+                stunTargets,
+                frameReceiver,
+            )
+        }.getOrDefault(0L)
         if (handle == 0L) return null
         val port = serverPort(handle)
         if (port !in 1..65535) {
             closeServer(handle)
             return null
         }
-        return XQuicNativeDirectServer(handle, port)
+        val mapped = mappedEndpoint(handle)?.toXQuicMappedEndpointOrNull()
+        val probeResults = stunProbeResults(handle)
+        return XQuicNativeDirectServer(handle, port, mapped?.host, mapped?.port ?: 0, probeResults)
     }
 
     fun openClient(
@@ -2304,11 +2660,18 @@ private object P2PXQuicNativeBridge {
         bindHost: String,
         alpn: String,
         certificateDirectory: String,
+        stunTargets: String,
         receiver: XQuicFrameReceiver,
     ): Long
 
     @JvmStatic
     private external fun serverPort(serverHandle: Long): Int
+
+    @JvmStatic
+    private external fun mappedEndpoint(serverHandle: Long): String?
+
+    @JvmStatic
+    internal external fun stunProbeResults(serverHandle: Long): String?
 
     @JvmStatic
     private external fun closeServerNative(serverHandle: Long)
@@ -2345,33 +2708,52 @@ private class P2PDirectServer private constructor(
             sessionId: String,
             signalingClient: SignalingWebSocketClient,
             receiver: P2PReceiver,
+            iceServers: List<IceServerConfig>,
             certificateDirectory: String,
             receiverEphemeralPublicB64: String,
             receiverAcceptSignatureB64: String,
             receiverCompletedBitmapB64: String?,
         ): P2PDirectServer? {
             val addresses = publicIpv6Addresses()
-            if (addresses.isEmpty()) return null
-            val serverSocket = runCatching {
-                ServerSocket().apply {
-                    reuseAddress = true
-                    bind(InetSocketAddress(InetAddress.getByName("::"), 0))
-                }
-            }.getOrNull()
+            val serverSocket = if (addresses.isNotEmpty()) {
+                runCatching {
+                    ServerSocket().apply {
+                        reuseAddress = true
+                        bind(InetSocketAddress(InetAddress.getByName("::"), 0))
+                    }
+                }.getOrNull()
+            } else {
+                null
+            }
+            val stunProbeTargetsList = iceServers.allStunUrls()
+                .mapNotNull { it.toStunProbeTargetOrNull() }
             val xquicServer = XQuicDirectTransport.openServer(
                 bindHost = "::",
                 alpn = P2P_XQUIC_ALPN,
                 certificateDirectory = certificateDirectory,
+                stunProbeTargets = stunProbeTargetsList,
                 receiver = receiver,
                 sessionId = sessionId,
             )
             if (serverSocket == null && xquicServer == null) return null
             val server = P2PDirectServer(serverSocket, xquicServer, Executors.newSingleThreadExecutor())
-            val endpoints = addresses.fold(org.json.JSONArray()) { array, address ->
+            val stunProbeResultsList = xquicServer?.stunProbeResultsRaw.parseStunProbeResults()
+            val stunAggregation = stunProbeResultsList.aggregateStunProbeResults()
+            val endpoints = org.json.JSONArray()
+            val selectedPunchCandidate = stunAggregation.candidates.maxByOrNull { it.priority }
+            if (selectedPunchCandidate != null) {
+                endpoints.put(
+                    JSONObject()
+                        .put("name", P2P_QUIC_UDP_PUNCH_ENDPOINT)
+                        .put("host", selectedPunchCandidate.host)
+                        .put("port", selectedPunchCandidate.port),
+                )
+            }
+            addresses.fold(endpoints) { array, address ->
                 if (xquicServer != null) {
                     array.put(
                         JSONObject()
-                            .put("name", "quic_ipv6_direct")
+                            .put("name", P2P_QUIC_IPV6_DIRECT_ENDPOINT)
                             .put("host", requireNotNull(address.hostAddress).substringBefore("%"))
                             .put("port", xquicServer.port),
                     )
@@ -2379,11 +2761,37 @@ private class P2PDirectServer private constructor(
                 if (serverSocket == null) return@fold array
                 array.put(
                     JSONObject()
-                        .put("name", "tcp_ipv6_direct")
+                        .put("name", P2P_TCP_IPV6_DIRECT_ENDPOINT)
                         .put("host", requireNotNull(address.hostAddress).substringBefore("%"))
                         .put("port", serverSocket.localPort),
                 )
             }
+            if (endpoints.length() == 0) {
+                server.close()
+                return null
+            }
+            val candidatesJson = org.json.JSONArray()
+            stunAggregation.candidates.forEach { candidate ->
+                candidatesJson.put(
+                    JSONObject()
+                        .put("id", candidate.id)
+                        .put("transport", "quic")
+                        .put("protocol", "udp")
+                        .put("type", "srflx")
+                        .put("host", candidate.host)
+                        .put("port", candidate.port)
+                        .put("local_port", xquicServer?.port ?: 0)
+                        .put("foundation", if (candidate.mappingStable) "udp4-stun-stable" else "udp4-stun-unknown")
+                        .put("priority", candidate.priority)
+                        .put("stun_server", candidate.stunServer)
+                        .put("mapping_stable", candidate.mappingStable),
+                )
+            }
+            val natDiagnosticJson = JSONObject()
+                .put("udp_probe_result", stunAggregation.udpProbeResult)
+                .put("mapping_behavior", stunAggregation.mappingBehavior)
+                .put("stun_success_count", stunAggregation.stunSuccessCount)
+                .put("stun_error_count", stunAggregation.stunErrorCount)
             signalingClient.send(
                 JSONObject()
                     .put("type", "direct_endpoint")
@@ -2391,7 +2799,9 @@ private class P2PDirectServer private constructor(
                     .put("receiver_x25519_eph_pub_b64", receiverEphemeralPublicB64)
                     .put("receiver_accept_signature_b64", receiverAcceptSignatureB64)
                     .put("completed_chunks_bitmap_b64", receiverCompletedBitmapB64 ?: "")
-                    .put("endpoints", endpoints),
+                    .put("endpoints", endpoints)
+                    .put("candidates", candidatesJson)
+                    .put("nat_diagnostic", natDiagnosticJson),
             )
             if (serverSocket != null) {
                 server.executor.execute {

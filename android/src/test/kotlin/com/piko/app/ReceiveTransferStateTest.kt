@@ -178,6 +178,53 @@ class ReceiveTransferStateTest {
     }
 
     @Test
+    fun receiveNoticeEventPassesThroughWithoutMutatingActiveReceive() {
+        val initial = PikoHomeState.initial(currentDeviceName = "Pixel")
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = "receive-notice",
+                    senderName = "MacBook",
+                    files = emptyList(),
+                    totalBytes = 0,
+                    requiresConfirmation = true,
+                ),
+            )
+
+        val afterNotice = initial.applyReceiveTransferEvent(
+            ReceiveTransferEvent.Notice(
+                transferId = "receive-notice",
+                message = "等待发送端建立连接，请稍候...",
+            ),
+        )
+
+        assertEquals(initial.activeReceive, afterNotice.activeReceive)
+        assertEquals("receive-notice", afterNotice.activeReceive.transferId)
+    }
+
+    @Test
+    fun receiveNoticeForUnrelatedTransferIsIgnored() {
+        val state = PikoHomeState.initial(currentDeviceName = "Pixel")
+            .applyReceiveTransferEvent(
+                ReceiveTransferEvent.Started(
+                    transferId = "active",
+                    senderName = "MacBook",
+                    files = emptyList(),
+                    totalBytes = 0,
+                    requiresConfirmation = true,
+                ),
+            )
+
+        val afterUnrelated = state.applyReceiveTransferEvent(
+            ReceiveTransferEvent.Notice(
+                transferId = "other",
+                message = "should-be-ignored",
+            ),
+        )
+
+        assertEquals(state, afterUnrelated)
+    }
+
+    @Test
     fun receiveHistoryDeleteDialogCopyMatchesSingleAndMultipleFiles() {
         val single = ReceiveHistoryItem(
             id = "single",

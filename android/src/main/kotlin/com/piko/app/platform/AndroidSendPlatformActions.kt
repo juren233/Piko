@@ -822,6 +822,8 @@ private class AndroidTransferClient(
             add("direct_attempt_plan：${diagnostic?.directAttemptPlan ?: "unknown"}")
             add("direct_endpoint_count：${diagnostic?.directEndpointCount ?: 0}")
             add("direct_endpoints：${diagnostic?.directEndpoints ?: "none"}")
+            add("direct_candidates：${diagnostic?.directCandidates ?: "none"}")
+            add("direct_nat_diagnostic：${diagnostic?.directNatDiagnostic ?: "none"}")
             add("direct_selected：${diagnostic?.directSelected ?: "none"}")
             add("direct_attempt_result：${diagnostic?.directAttemptResult ?: "not_attempted"}")
             add("direct_last_error：${diagnostic?.directLastError ?: "none"}")

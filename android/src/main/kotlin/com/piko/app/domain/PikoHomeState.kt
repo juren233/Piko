@@ -51,6 +51,7 @@ data class PikoHomeState(
 
             is ReceiveTransferEvent.Canceled -> copy(activeReceive = ReceiveTransferState.Idle)
             is ReceiveTransferEvent.Failed -> copy(activeReceive = ReceiveTransferState.Idle)
+            is ReceiveTransferEvent.Notice -> this
             is ReceiveTransferEvent.Completed -> {
                 val files = event.files
                 if (files.isEmpty()) {
@@ -311,6 +312,11 @@ sealed class ReceiveTransferEvent {
 
     data class Canceled(override val transferId: String) : ReceiveTransferEvent()
     data class Failed(override val transferId: String, val message: String) : ReceiveTransferEvent()
+
+    data class Notice(
+        override val transferId: String,
+        val message: String,
+    ) : ReceiveTransferEvent()
 }
 
 private val String.visibleDeviceName: String

@@ -9,12 +9,16 @@ private enum NativeP2PTiming {
     static let directTransportWaitSeconds: TimeInterval = 5
     static let initialOpenWaitSeconds: TimeInterval = 12
     static let restartOpenWaitSeconds: TimeInterval = 45
+    static let receiverWatchdogSeconds: TimeInterval = 90
 }
 
 private let nativeP2PWebRtcChunkBatchLimit = 4
 private let nativeP2PWebRtcChunkBatchBytes = 1 * 1024 * 1024
 private let nativeP2PMaxDirectFrameBytes = 8 * 1024 * 1024
 private let nativeP2PThroughputLogIntervalBytes = 32 * 1024 * 1024
+private let nativeP2PQuicUdpPunchEndpoint = "quic_udp_punch"
+private let nativeP2PQuicIpv6DirectEndpoint = "quic_ipv6_direct"
+private let nativeP2PTcpIpv6DirectEndpoint = "tcp_ipv6_direct"
 private let nativeP2PLogger = Logger(subsystem: "com.juren233.piko", category: "p2p")
 
 private struct NativeP2PTransportAttempt {
@@ -26,12 +30,185 @@ private struct NativeP2PTransportAttempt {
 private func directTransportAttemptPlan() -> [NativeP2PTransportAttempt] {
     var attempts: [NativeP2PTransportAttempt] = []
     if NativeXQuicDirectTransport.isAvailable {
-        attempts.append(NativeP2PTransportAttempt(name: "quic_ipv6_direct", timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds))
+        attempts.append(NativeP2PTransportAttempt(name: nativeP2PQuicIpv6DirectEndpoint, timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds))
+        attempts.append(NativeP2PTransportAttempt(name: nativeP2PQuicUdpPunchEndpoint, timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds))
     }
-    attempts.append(NativeP2PTransportAttempt(name: "tcp_ipv6_direct", timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds))
+    attempts.append(NativeP2PTransportAttempt(name: nativeP2PTcpIpv6DirectEndpoint, timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds))
     attempts.append(NativeP2PTransportAttempt(name: "webrtc_ipv6_host", timeoutSeconds: NativeP2PTiming.initialOpenWaitSeconds))
     attempts.append(NativeP2PTransportAttempt(name: "webrtc_stun", timeoutSeconds: NativeP2PTiming.restartOpenWaitSeconds))
     return attempts
+}
+
+private struct NativeStunProbeTarget {
+    let host: String
+    let port: Int32
+}
+
+private struct NativeStunProbeResult {
+    let serverUrl: String
+    let success: Bool
+    let mappedHost: String?
+    let mappedPort: Int
+    let error: String?
+    let elapsedMs: Int
+}
+
+private struct NativeXQuicMappedCandidate {
+    let id: String
+    let host: String
+    let port: Int
+    let stunServer: String
+    let mappingStable: Bool
+    let priority: Int
+}
+
+private struct NativeStunAggregation {
+    let candidates: [NativeXQuicMappedCandidate]
+    let udpProbeResult: String
+    let mappingBehavior: String
+    let stunSuccessCount: Int
+    let stunErrorCount: Int
+}
+
+private struct NativeXQuicMappedEndpoint {
+    let host: String
+    let port: Int
+}
+
+private extension Array where Element == NativeIceServerConfig {
+    var firstStunProbeTarget: NativeStunProbeTarget? {
+        firstNonNil { $0.urls.nativeStunProbeTarget() }
+    }
+
+    var allStunUrls: [String] {
+        compactMap { config in
+            let url = config.urls.trimmingCharacters(in: .whitespacesAndNewlines)
+            return url.lowercased().hasPrefix("stun:") && url.nativeStunProbeTarget() != nil ? url : nil
+        }
+    }
+}
+
+private extension Sequence {
+    func firstNonNil<T>(_ transform: (Element) -> T?) -> T? {
+        for item in self {
+            if let value = transform(item) {
+                return value
+            }
+        }
+        return nil
+    }
+}
+
+private extension String {
+    func nativeStunProbeTarget() -> NativeStunProbeTarget? {
+        let raw = trimmingCharacters(in: .whitespacesAndNewlines)
+        guard raw.lowercased().hasPrefix("stun:") else {
+            return nil
+        }
+        let withoutScheme = String(raw.dropFirst(5))
+        let endpoint = withoutScheme
+            .split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0]
+            .split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        guard !endpoint.isEmpty else {
+            return nil
+        }
+        if endpoint.hasPrefix("["),
+           let end = endpoint.firstIndex(of: "]") {
+            let host = String(endpoint[endpoint.index(after: endpoint.startIndex)..<end])
+            let suffix = endpoint[endpoint.index(after: end)...]
+            let portText = suffix.hasPrefix(":") ? String(suffix.dropFirst()) : ""
+            let port = Int32(portText) ?? 3478
+            return (1...65535).contains(Int(port)) && !host.isEmpty ? NativeStunProbeTarget(host: host, port: port) : nil
+        }
+        let parts = endpoint.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+        guard let hostPart = parts.first, !hostPart.isEmpty else {
+            return nil
+        }
+        let port = parts.count > 1 ? (Int32(String(parts[1])) ?? 3478) : 3478
+        return (1...65535).contains(Int(port)) ? NativeStunProbeTarget(host: String(hostPart), port: port) : nil
+    }
+
+    func nativeXQuicMappedEndpoint() -> NativeXQuicMappedEndpoint? {
+        let parts = split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              !parts[0].isEmpty,
+              let port = Int(parts[1]),
+              (1...65535).contains(port) else {
+            return nil
+        }
+        return NativeXQuicMappedEndpoint(host: String(parts[0]), port: port)
+    }
+
+    func nativeStunProbeResult() -> NativeStunProbeResult? {
+        let parts = split(separator: "|", maxSplits: 5, omittingEmptySubsequences: false)
+        guard parts.count == 6, !parts[0].isEmpty else { return nil }
+        let serverUrl = String(parts[0])
+        let success = parts[1] == "true"
+        let mappedHost = parts[2].isEmpty ? nil : String(parts[2])
+        let mappedPort = Int(parts[3]) ?? 0
+        let error = parts[4].isEmpty ? nil : String(parts[4])
+        let elapsedMs = Int(parts[5]) ?? 0
+        return NativeStunProbeResult(serverUrl: serverUrl, success: success, mappedHost: mappedHost,
+                                     mappedPort: mappedPort, error: error, elapsedMs: elapsedMs)
+    }
+}
+
+private func parseNativeStunProbeResults(_ raw: String?) -> [NativeStunProbeResult] {
+    guard let raw, !raw.isEmpty else { return [] }
+    return raw.split(separator: ";", omittingEmptySubsequences: true)
+        .compactMap { String($0).nativeStunProbeResult() }
+}
+
+private func aggregateNativeStunProbeResults(_ results: [NativeStunProbeResult]) -> NativeStunAggregation {
+    let successProbes = results.filter { $0.success && $0.mappedHost != nil && (1...65535).contains($0.mappedPort) }
+    let stunSuccessCount = successProbes.count
+    let stunErrorCount = results.filter { !$0.success }.count
+    guard !successProbes.isEmpty else {
+        return NativeStunAggregation(candidates: [], udpProbeResult: "failed",
+                                     mappingBehavior: "unknown", stunSuccessCount: 0, stunErrorCount: stunErrorCount)
+    }
+    let uniqueAddresses = Set(successProbes.map { "\($0.mappedHost!):\($0.mappedPort)" })
+    let uniqueHosts = Set(successProbes.compactMap { $0.mappedHost })
+    let mappingBehavior: String
+    if successProbes.count == 1 {
+        mappingBehavior = "unknown"
+    } else if uniqueAddresses.count == 1 {
+        mappingBehavior = "stable"
+    } else if uniqueHosts.count == 1 {
+        mappingBehavior = "port_dependent"
+    } else {
+        mappingBehavior = "address_and_port_dependent"
+    }
+    let isStable = mappingBehavior == "stable"
+    let candidatePriority: Int
+    switch mappingBehavior {
+    case "stable":
+        candidatePriority = 2_130_000_000
+    case "unknown":
+        candidatePriority = 2_000_000_000
+    default:
+        candidatePriority = 1_845_493_760
+    }
+    var candidateIndex = 0
+    var seen = Set<String>()
+    var candidates: [NativeXQuicMappedCandidate] = []
+    for probe in successProbes {
+        let key = "\(probe.mappedHost!):\(probe.mappedPort)"
+        guard !seen.contains(key) else { continue }
+        seen.insert(key)
+        candidateIndex += 1
+        candidates.append(NativeXQuicMappedCandidate(
+            id: "r-srflx-\(candidateIndex)",
+            host: probe.mappedHost!,
+            port: probe.mappedPort,
+            stunServer: probe.serverUrl,
+            mappingStable: isStable,
+            priority: candidatePriority
+        ))
+    }
+    return NativeStunAggregation(candidates: candidates, udpProbeResult: "success",
+                                  mappingBehavior: mappingBehavior, stunSuccessCount: stunSuccessCount,
+                                  stunErrorCount: stunErrorCount)
 }
 
 private func nativeP2PTimingLog(stage: String, sessionId: String, transferId: String, startedAt: Date, detail: String = "") {
@@ -53,6 +230,7 @@ final class NativeP2PTransferClient {
     private let destinationFor: (NativeFileType) -> NativeReceiveSaveDestination
     private let onReceiveState: (NativeReceiveTransferState?) -> Void
     private let onReceiveCompleted: (NativeReceiveHistoryItem) -> Void
+    private let onReceiverNotice: (String) -> Void
     private var sessions: [String: NativeWebRTCSession] = [:]
     private var receivers: [String: NativeP2PReceiver] = [:]
     private var directServers: [String: NativeP2PDirectServer] = [:]
@@ -71,7 +249,8 @@ final class NativeP2PTransferClient {
         receiveFileStore: NativeReceiveFileStore,
         destinationFor: @escaping (NativeFileType) -> NativeReceiveSaveDestination,
         onReceiveState: @escaping (NativeReceiveTransferState?) -> Void,
-        onReceiveCompleted: @escaping (NativeReceiveHistoryItem) -> Void
+        onReceiveCompleted: @escaping (NativeReceiveHistoryItem) -> Void,
+        onReceiverNotice: @escaping (String) -> Void = { _ in }
     ) {
         self.authStore = authStore
         self.identityStore = identityStore
@@ -81,6 +260,7 @@ final class NativeP2PTransferClient {
         self.destinationFor = destinationFor
         self.onReceiveState = onReceiveState
         self.onReceiveCompleted = onReceiveCompleted
+        self.onReceiverNotice = onReceiverNotice
         self.signalingClient.onMessage = { [weak self] message in
             Task { @MainActor in
                 self?.handle(message)
@@ -160,6 +340,8 @@ final class NativeP2PTransferClient {
         lines.append("direct_attempt_plan：\(diagnostic.directAttemptPlan)")
         lines.append("direct_endpoint_count：\(diagnostic.directEndpointCount)")
         lines.append("direct_endpoints：\(diagnostic.directEndpoints)")
+        lines.append("direct_candidates：\(diagnostic.directCandidates)")
+        lines.append("direct_nat_diagnostic：\(diagnostic.directNatDiagnostic)")
         lines.append("direct_selected：\(diagnostic.directSelected)")
         lines.append("direct_attempt_result：\(diagnostic.directAttemptResult)")
         lines.append("direct_last_error：\(diagnostic.directLastError)")
@@ -373,8 +555,9 @@ final class NativeP2PTransferClient {
                 do {
                     let sessionKey = try deriveSessionKey(peerEphemeralPublicB64: directHandshake.peerEphemeralPublicB64)
                     let endpoints = [
-                        directEndpoints.first { $0.name == "quic_ipv6_direct" },
-                        directEndpoints.first { $0.name == "tcp_ipv6_direct" },
+                        directEndpoints.first { $0.name == nativeP2PQuicIpv6DirectEndpoint },
+                        directEndpoints.first { $0.name == nativeP2PQuicUdpPunchEndpoint },
+                        directEndpoints.first { $0.name == nativeP2PTcpIpv6DirectEndpoint },
                     ].compactMap { $0 }
                     guard !endpoints.isEmpty else {
                         return nil
@@ -386,7 +569,7 @@ final class NativeP2PTransferClient {
                             nativeP2PTimingLog(stage: "direct_open_start", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "endpoint=\(endpoint.name)")
                             directTracker.recordAttempt(endpoint: endpoint, result: "attempting")
                             let channel: NativeP2PDirectChannel?
-                            if endpoint.name == "quic_ipv6_direct" {
+                            if endpoint.name == nativeP2PQuicIpv6DirectEndpoint || endpoint.name == nativeP2PQuicUdpPunchEndpoint {
                                 channel = await NativeXQuicDirectTransport.openClient(
                                     endpoint: endpoint,
                                     timeoutSeconds: NativeP2PTiming.directTransportWaitSeconds,
@@ -408,10 +591,19 @@ final class NativeP2PTransferClient {
                             }
                             nativeP2PTimingLog(stage: "direct_open_done", sessionId: config.sessionId, transferId: transferId, startedAt: timingStartedAt, detail: "endpoint=\(endpoint.name) result=connected duration_ms=\(durationMs)")
                             directTracker.recordAttempt(endpoint: endpoint, result: "connected")
+                            let transportName: String
+                            switch endpoint.name {
+                            case nativeP2PQuicUdpPunchEndpoint:
+                                transportName = "QUIC UDP 打洞通道"
+                            case nativeP2PQuicIpv6DirectEndpoint:
+                                transportName = "QUIC 直连通道"
+                            default:
+                                transportName = "TCP 直连通道"
+                            }
                             directRace.submit(
                                 NativePreparedP2PChannel(
                                     sessionKey: sessionKey,
-                                    transportName: endpoint.name == "quic_ipv6_direct" ? "QUIC 直连通道" : "TCP 直连通道",
+                                    transportName: transportName,
                                     completedBitmapB64: directHandshake.peerCompletedBitmapB64,
                                     send: { data in await channel.send(data) },
                                     sendBatch: nil,
@@ -958,9 +1150,11 @@ final class NativeP2PTransferClient {
             manifestHashB64: manifestHashB64,
             progressStore: progressStore,
             autoAccept: autoAccept,
+            watchdogTimeoutSeconds: NativeP2PTiming.receiverWatchdogSeconds,
             receiveFileStore: receiveFileStore,
             destinationFor: destinationFor,
             onReceiveState: onReceiveState,
+            onReceiverNotice: onReceiverNotice,
             onReceiveCompleted: { [weak self] item in
                 self?.onReceiveCompleted(item)
                 self?.receivers.removeValue(forKey: sessionId)
@@ -1022,11 +1216,18 @@ private final class NativeP2PReceiver {
     private let manifestHashB64: String
     private let progressStore: NativeTransferProgressStore
     private let autoAccept: Bool
+    private let watchdogTimeoutSeconds: TimeInterval
     private let destinationFor: (NativeFileType) -> NativeReceiveSaveDestination
     private let onReceiveState: (NativeReceiveTransferState?) -> Void
+    private let onReceiverNotice: (String) -> Void
     private let onReceiveCompleted: (NativeReceiveHistoryItem) -> Void
     private let sessionKey: Data
     var sendControl: (Data) -> Void = { _ in }
+    private var channelAttached = false
+    private var firstChunkReceived = false
+    private var channelReadyNoticeSent = false
+    private var watchdogTask: Task<Void, Never>?
+    private var watchdogStartedAt: Date?
     private var senderName = "跨网设备"
     private var files: [NativeTransferV3File] = []
     private var outputFiles: [Int: URL] = [:]
@@ -1053,9 +1254,11 @@ private final class NativeP2PReceiver {
         manifestHashB64: String,
         progressStore: NativeTransferProgressStore,
         autoAccept: Bool,
+        watchdogTimeoutSeconds: TimeInterval,
         receiveFileStore: NativeReceiveFileStore,
         destinationFor: @escaping (NativeFileType) -> NativeReceiveSaveDestination,
         onReceiveState: @escaping (NativeReceiveTransferState?) -> Void,
+        onReceiverNotice: @escaping (String) -> Void,
         onReceiveCompleted: @escaping (NativeReceiveHistoryItem) -> Void
     ) {
         self.sessionId = sessionId
@@ -1068,9 +1271,11 @@ private final class NativeP2PReceiver {
         self.manifestHashB64 = manifestHashB64
         self.progressStore = progressStore
         self.autoAccept = autoAccept
+        self.watchdogTimeoutSeconds = watchdogTimeoutSeconds
         self.receiveFileStore = receiveFileStore
         self.destinationFor = destinationFor
         self.onReceiveState = onReceiveState
+        self.onReceiverNotice = onReceiverNotice
         self.onReceiveCompleted = onReceiveCompleted
     }
 
@@ -1079,6 +1284,12 @@ private final class NativeP2PReceiver {
             Task(priority: .high) { @MainActor in
                 _ = await channel.send(data)
             }
+        }
+        channelAttached = true
+        nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_attach channel_open=true")
+        if confirmed, !firstChunkReceived, !channelReadyNoticeSent {
+            channelReadyNoticeSent = true
+            onReceiverNotice("通道已就绪，等待数据...")
         }
         sendReadyAndDrainPending()
     }
@@ -1130,6 +1341,7 @@ private final class NativeP2PReceiver {
                 publishReceiveState(requiresConfirmation: !autoAccept)
             }
             if confirmed {
+                startWatchdogIfNeeded()
                 sendReadyAndDrainPending()
             }
         case .chunk(let fileIndex, let chunkIndex, let bytes):
@@ -1144,6 +1356,11 @@ private final class NativeP2PReceiver {
                   let handle = outputHandles[fileIndex] else {
                 sendRetry(fileIndex: fileIndex, chunkIndex: chunkIndex)
                 return
+            }
+            if !firstChunkReceived {
+                firstChunkReceived = true
+                cancelWatchdog()
+                nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_first_chunk file_index=\(fileIndex, privacy: .public) chunk_index=\(chunkIndex, privacy: .public)")
             }
             if completedChunks[fileIndex]?.contains(chunkIndex) != true {
                 let offset = UInt64(chunkIndex * file.chunkSize)
@@ -1172,6 +1389,8 @@ private final class NativeP2PReceiver {
             return
         }
         confirmed = true
+        let manifestReady = !files.isEmpty
+        nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_accept_clicked manifest_ready=\(manifestReady, privacy: .public) channel_open=\(self.channelAttached, privacy: .public)")
         if files.isEmpty {
             onReceiveState(
                 NativeReceiveTransferState(
@@ -1183,14 +1402,57 @@ private final class NativeP2PReceiver {
                     requiresConfirmation: false
                 )
             )
+        } else {
+            publishReceiveState(requiresConfirmation: false)
+        }
+        startWatchdogIfNeeded()
+        onReceiverNotice("等待发送端建立连接，请稍候...")
+        if channelAttached, !channelReadyNoticeSent {
+            channelReadyNoticeSent = true
+            onReceiverNotice("通道已就绪，等待数据...")
+        }
+        sendReadyAndDrainPending()
+    }
+
+    private func startWatchdogIfNeeded() {
+        guard !firstChunkReceived, !canceled else {
             return
         }
-        publishReceiveState(requiresConfirmation: false)
-        sendReadyAndDrainPending()
+        guard watchdogTask == nil else {
+            return
+        }
+        watchdogStartedAt = Date()
+        let timeoutSeconds = watchdogTimeoutSeconds
+        watchdogTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+            guard let self else {
+                return
+            }
+            if Task.isCancelled {
+                return
+            }
+            self.onWatchdogFired()
+        }
+    }
+
+    private func cancelWatchdog() {
+        watchdogTask?.cancel()
+        watchdogTask = nil
+    }
+
+    private func onWatchdogFired() {
+        if firstChunkReceived || canceled {
+            return
+        }
+        let elapsedMs = watchdogStartedAt.map { Int(Date().timeIntervalSince($0) * 1000) } ?? -1
+        nativeP2PLogger.warning("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_watchdog_fired elapsed_ms=\(elapsedMs, privacy: .public) manifest_ready=\(!self.files.isEmpty, privacy: .public) channel_attached=\(self.channelAttached, privacy: .public) ready_sent=\(self.readySent, privacy: .public)")
+        onReceiverNotice("等待发送端建立连接超时（请检查双方网络后重试）")
+        cancel()
     }
 
     func cancel() {
         canceled = true
+        cancelWatchdog()
         pendingChunkFrames.removeAll(keepingCapacity: false)
         closeOutputHandles()
         outputFiles.removeAll(keepingCapacity: false)
@@ -1346,11 +1608,24 @@ private final class NativeP2PReceiver {
     }
 
     private func sendReadyAndDrainPending() {
-        guard !readySent, !files.isEmpty else {
+        if !channelAttached {
+            nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_ready_drain_skip reason=channel_not_attached confirmed=\(self.confirmed, privacy: .public) manifest_ready=\(!self.files.isEmpty, privacy: .public)")
+            return
+        }
+        if !confirmed {
+            nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_ready_drain_skip reason=not_confirmed")
+            return
+        }
+        if files.isEmpty {
+            nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_ready_drain_skip reason=manifest_empty")
+            return
+        }
+        if readySent {
             return
         }
         sendReady()
         readySent = true
+        nativeP2PLogger.debug("timing session=\(self.sessionId, privacy: .public) transfer=\(self.transferId, privacy: .public) stage=receiver_ready_sent pending_chunks=\(self.pendingChunkFrames.count, privacy: .public)")
         let pending = pendingChunkFrames
         pendingChunkFrames.removeAll(keepingCapacity: false)
         pending.forEach(receive)
@@ -1373,6 +1648,8 @@ private struct NativeDirectTransportDiagnostic {
     var attemptPlan: String
     var endpointCount: Int = 0
     var endpoints: String = "none"
+    var candidates: String = "none"
+    var natDiagnostic: String = "none"
     var selected: String = "none"
     var attemptResult: String = "not_attempted"
     var lastError: String = "none"
@@ -1390,11 +1667,37 @@ private func nativeDirectEndpointsDescription(_ endpoints: [NativeDirectEndpoint
     endpoints.map(nativeDirectEndpointSummary).joined(separator: ";").nilIfBlank ?? "none"
 }
 
+private func nativeDirectCandidatesDescription(_ candidates: [[String: Any]]) -> String {
+    let values = candidates.compactMap { item -> String? in
+        let type = (item["type"] as? String)?.nilIfBlank ?? "unknown"
+        let proto = (item["protocol"] as? String)?.nilIfBlank ?? "unknown"
+        let host = (item["host"] as? String)?.nilIfBlank ?? "unknown"
+        let port = item["port"].map { "\($0)" }?.nilIfBlank ?? "unknown"
+        let stable = item["mapping_stable"] as? Bool ?? false
+        let priority = item["priority"].map { "\($0)" }?.nilIfBlank ?? "0"
+        return "\(type)/\(proto)@\(host):\(port)|stable=\(stable)|priority=\(priority)"
+    }
+    return values.prefix(12).joined(separator: ";").nilIfBlank ?? "none"
+}
+
+private func nativeDirectNatDiagnosticDescription(_ diagnostic: [String: Any]?) -> String {
+    guard let diagnostic else {
+        return "none"
+    }
+    let udpProbeResult = (diagnostic["udp_probe_result"] as? String)?.nilIfBlank ?? "unknown"
+    let mappingBehavior = (diagnostic["mapping_behavior"] as? String)?.nilIfBlank ?? "unknown"
+    let stunSuccessCount = diagnostic["stun_success_count"].map { "\($0)" }?.nilIfBlank ?? "0"
+    let stunErrorCount = diagnostic["stun_error_count"].map { "\($0)" }?.nilIfBlank ?? "0"
+    return "udp_probe_result=\(udpProbeResult)|mapping_behavior=\(mappingBehavior)|stun_success_count=\(stunSuccessCount)|stun_error_count=\(stunErrorCount)"
+}
+
 private extension NativeWebRTCDiagnostic {
     mutating func applyDirect(_ direct: NativeDirectTransportDiagnostic) {
         directAttemptPlan = direct.attemptPlan
         directEndpointCount = direct.endpointCount
         directEndpoints = direct.endpoints
+        directCandidates = direct.candidates
+        directNatDiagnostic = direct.natDiagnostic
         directSelected = direct.selected
         directAttemptResult = direct.attemptResult
         directLastError = direct.lastError
@@ -1512,6 +1815,8 @@ private final class NativeDirectEndpointTracker {
                 peerCompletedBitmapB64: message["completed_chunks_bitmap_b64"] as? String
             )
         }
+        diagnostic.candidates = nativeDirectCandidatesDescription(message["candidates"] as? [[String: Any]] ?? [])
+        diagnostic.natDiagnostic = nativeDirectNatDiagnosticDescription(message["nat_diagnostic"] as? [String: Any])
         guard let rawEndpoints = message["endpoints"] as? [[String: Any]] else {
             resumeIfNeeded()
             return
@@ -1748,6 +2053,7 @@ private func piko_xquic_open_server(
     _ bindHost: UnsafePointer<CChar>,
     _ alpn: UnsafePointer<CChar>,
     _ certificateDirectory: UnsafePointer<CChar>,
+    _ stunTargets: UnsafePointer<CChar>,
     _ onFrame: NativeXQuicFrameCallback?,
     _ onClosed: NativeXQuicClosedCallback?,
     _ userData: UnsafeMutableRawPointer?
@@ -1755,6 +2061,12 @@ private func piko_xquic_open_server(
 
 @_silgen_name("piko_xquic_server_port")
 private func piko_xquic_server_port(_ serverHandle: Int64) -> Int32
+
+@_silgen_name("piko_xquic_mapped_endpoint")
+private func piko_xquic_mapped_endpoint(_ serverHandle: Int64) -> UnsafePointer<CChar>?
+
+@_silgen_name("piko_xquic_stun_probe_results")
+private func piko_xquic_stun_probe_results(_ serverHandle: Int64) -> UnsafePointer<CChar>?
 
 @_silgen_name("piko_xquic_close_server")
 private func piko_xquic_close_server(_ serverHandle: Int64)
@@ -1865,13 +2177,19 @@ private final class NativeXQuicDirectChannel: NativeP2PDirectChannel {
 @MainActor
 private final class NativeXQuicDirectServer {
     let port: UInt16
+    let mappedHost: String?
+    let mappedPort: Int
+    let stunProbeResultsRaw: String?
     private let handle: Int64
     private let retainedTarget: UnsafeMutableRawPointer
     private var closed = false
 
-    init(handle: Int64, port: UInt16, retainedTarget: UnsafeMutableRawPointer) {
+    init(handle: Int64, port: UInt16, mappedHost: String?, mappedPort: Int, stunProbeResultsRaw: String?, retainedTarget: UnsafeMutableRawPointer) {
         self.handle = handle
         self.port = port
+        self.mappedHost = mappedHost
+        self.mappedPort = mappedPort
+        self.stunProbeResultsRaw = stunProbeResultsRaw
         self.retainedTarget = retainedTarget
     }
 
@@ -1897,7 +2215,7 @@ private enum NativeXQuicDirectTransport {
 #endif
     }
 
-    static func openServer(sessionId: String, receiver: NativeP2PReceiver) -> NativeXQuicDirectServer? {
+    static func openServer(sessionId: String, iceServers: [NativeIceServerConfig], receiver: NativeP2PReceiver) -> NativeXQuicDirectServer? {
 #if PIKO_XQUIC_NATIVE
         guard isAvailable else {
             return nil
@@ -1910,10 +2228,13 @@ private enum NativeXQuicDirectTransport {
         let retainedTarget = Unmanaged.passRetained(target).toOpaque()
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
+        let stunTargetsText = iceServers.allStunUrls.joined(separator: "\n")
         let handle = "::".withCString { bindHost in
             "piko-v3".withCString { alpn in
                 cacheDirectory.path.withCString { certDir in
-                    piko_xquic_open_server(bindHost, alpn, certDir, nativeXQuicFrameCallback, nativeXQuicClosedCallback, retainedTarget)
+                    stunTargetsText.withCString { stunTargets in
+                        piko_xquic_open_server(bindHost, alpn, certDir, stunTargets, nativeXQuicFrameCallback, nativeXQuicClosedCallback, retainedTarget)
+                    }
                 }
             }
         }
@@ -1927,7 +2248,16 @@ private enum NativeXQuicDirectTransport {
             Unmanaged<NativeXQuicEventTarget>.fromOpaque(retainedTarget).release()
             return nil
         }
-        return NativeXQuicDirectServer(handle: handle, port: UInt16(port), retainedTarget: retainedTarget)
+        let mapped = piko_xquic_mapped_endpoint(handle).flatMap { String(cString: $0).nativeXQuicMappedEndpoint() }
+        let probeResultsRaw = piko_xquic_stun_probe_results(handle).flatMap { String(cString: $0) }
+        return NativeXQuicDirectServer(
+            handle: handle,
+            port: UInt16(port),
+            mappedHost: mapped?.host,
+            mappedPort: mapped?.port ?? 0,
+            stunProbeResultsRaw: probeResultsRaw,
+            retainedTarget: retainedTarget
+        )
 #else
         return nil
 #endif
@@ -1979,11 +2309,11 @@ private final class NativeP2PDirectServer {
 
     static func start(sessionId: String, signalingClient: NativeSignalingClient, receiver: NativeP2PReceiver) -> NativeP2PDirectServer? {
         let addresses = publicIpv6Addresses()
-        let xquicServer = NativeXQuicDirectTransport.openServer(sessionId: sessionId, receiver: receiver)
+        let xquicServer = NativeXQuicDirectTransport.openServer(sessionId: sessionId, iceServers: receiver.iceServers, receiver: receiver)
         guard !addresses.isEmpty,
               let port = NWEndpoint.Port(rawValue: 0),
               let listener = try? NWListener(using: .tcp, on: port) else {
-            if let xquicServer, !addresses.isEmpty {
+            if let xquicServer {
                 return startQuicOnly(
                     sessionId: sessionId,
                     signalingClient: signalingClient,
@@ -2013,14 +2343,24 @@ private final class NativeP2PDirectServer {
         listener.start(queue: .global(qos: .userInitiated))
         guard let localPort = listener.port?.rawValue else {
             listener.cancel()
+            xquicServer?.close()
             return nil
         }
         var endpoints: [[String: Any]] = []
+        let stunProbeResultsList = parseNativeStunProbeResults(xquicServer?.stunProbeResultsRaw)
+        let stunAggregation = aggregateNativeStunProbeResults(stunProbeResultsList)
         if let xquicServer {
+            if let selectedPunchCandidate = stunAggregation.candidates.max(by: { $0.priority < $1.priority }) {
+                endpoints.append([
+                    "name": nativeP2PQuicUdpPunchEndpoint,
+                    "host": selectedPunchCandidate.host,
+                    "port": selectedPunchCandidate.port,
+                ])
+            }
             endpoints.append(
                 contentsOf: addresses.map { address in
                     [
-                        "name": "quic_ipv6_direct",
+                        "name": nativeP2PQuicIpv6DirectEndpoint,
                         "host": address,
                         "port": Int(xquicServer.port),
                     ]
@@ -2030,12 +2370,33 @@ private final class NativeP2PDirectServer {
         endpoints.append(
             contentsOf: addresses.map { address in
                 [
-                    "name": "tcp_ipv6_direct",
+                    "name": nativeP2PTcpIpv6DirectEndpoint,
                     "host": address,
                     "port": Int(localPort),
                 ]
             }
         )
+        let candidatesList: [[String: Any]] = stunAggregation.candidates.map { candidate in
+            [
+                "id": candidate.id,
+                "transport": "quic",
+                "protocol": "udp",
+                "type": "srflx",
+                "host": candidate.host,
+                "port": candidate.port,
+                "local_port": xquicServer.map { Int($0.port) } ?? 0,
+                "foundation": candidate.mappingStable ? "udp4-stun-stable" : "udp4-stun-unknown",
+                "priority": candidate.priority,
+                "stun_server": candidate.stunServer,
+                "mapping_stable": candidate.mappingStable,
+            ]
+        }
+        let natDiagnostic: [String: Any] = [
+            "udp_probe_result": stunAggregation.udpProbeResult,
+            "mapping_behavior": stunAggregation.mappingBehavior,
+            "stun_success_count": stunAggregation.stunSuccessCount,
+            "stun_error_count": stunAggregation.stunErrorCount,
+        ]
         signalingClient.send([
             "type": "direct_endpoint",
             "session_id": sessionId,
@@ -2043,6 +2404,8 @@ private final class NativeP2PDirectServer {
             "receiver_accept_signature_b64": receiver.receiverAcceptSignatureB64,
             "completed_chunks_bitmap_b64": receiver.completedBitmapB64 ?? "",
             "endpoints": endpoints,
+            "candidates": candidatesList,
+            "nat_diagnostic": natDiagnostic,
         ])
         return server
     }
@@ -2062,13 +2425,50 @@ private final class NativeP2PDirectServer {
         xquicServer: NativeXQuicDirectServer
     ) -> NativeP2PDirectServer? {
         let server = NativeP2PDirectServer(listener: nil, xquicServer: xquicServer)
-        let endpoints: [[String: Any]] = addresses.map { address in
+        var endpoints: [[String: Any]] = []
+        let stunProbeResultsList = parseNativeStunProbeResults(xquicServer.stunProbeResultsRaw)
+        let stunAggregation = aggregateNativeStunProbeResults(stunProbeResultsList)
+        if let selectedPunchCandidate = stunAggregation.candidates.max(by: { $0.priority < $1.priority }) {
+            endpoints.append([
+                "name": nativeP2PQuicUdpPunchEndpoint,
+                "host": selectedPunchCandidate.host,
+                "port": selectedPunchCandidate.port,
+            ])
+        }
+        endpoints.append(
+            contentsOf: addresses.map { address in
+                [
+                    "name": nativeP2PQuicIpv6DirectEndpoint,
+                    "host": address,
+                    "port": Int(xquicServer.port),
+                ]
+            }
+        )
+        if endpoints.isEmpty {
+            xquicServer.close()
+            return nil
+        }
+        let candidatesList: [[String: Any]] = stunAggregation.candidates.map { candidate in
             [
-                "name": "quic_ipv6_direct",
-                "host": address,
-                "port": Int(xquicServer.port),
+                "id": candidate.id,
+                "transport": "quic",
+                "protocol": "udp",
+                "type": "srflx",
+                "host": candidate.host,
+                "port": candidate.port,
+                "local_port": Int(xquicServer.port),
+                "foundation": candidate.mappingStable ? "udp4-stun-stable" : "udp4-stun-unknown",
+                "priority": candidate.priority,
+                "stun_server": candidate.stunServer,
+                "mapping_stable": candidate.mappingStable,
             ]
         }
+        let natDiagnostic: [String: Any] = [
+            "udp_probe_result": stunAggregation.udpProbeResult,
+            "mapping_behavior": stunAggregation.mappingBehavior,
+            "stun_success_count": stunAggregation.stunSuccessCount,
+            "stun_error_count": stunAggregation.stunErrorCount,
+        ]
         signalingClient.send([
             "type": "direct_endpoint",
             "session_id": sessionId,
@@ -2076,6 +2476,8 @@ private final class NativeP2PDirectServer {
             "receiver_accept_signature_b64": receiver.receiverAcceptSignatureB64,
             "completed_chunks_bitmap_b64": receiver.completedBitmapB64 ?? "",
             "endpoints": endpoints,
+            "candidates": candidatesList,
+            "nat_diagnostic": natDiagnostic,
         ])
         return server
     }

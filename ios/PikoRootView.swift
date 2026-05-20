@@ -44,6 +44,10 @@ struct PikoRootView: View {
         )
     }
 
+    private var transferToastBottomPadding: CGFloat {
+        selection == .send && model.canSend ? 104 : 34
+    }
+
     var body: some View {
         ZStack {
             PikoPalette.pageBackground
@@ -108,6 +112,24 @@ struct PikoRootView: View {
             .overlay(alignment: .top) {
                 PikoCollapsingTopBar(title: selection.title, progress: currentTopBarProgress)
             }
+            .overlay(alignment: .bottom) {
+                if let message = model.transferToastMessage {
+                    NativeTransferToast(message: message)
+                        .padding(.horizontal, 24)
+                        .padding(.bottom, transferToastBottomPadding)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: model.transferToastMessage)
+        .task(id: model.transferToastMessage) {
+            guard let message = model.transferToastMessage else {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            if model.transferToastMessage == message {
+                model.transferToastMessage = nil
+            }
         }
         .onAppear {
             model.startPresence()
@@ -133,6 +155,21 @@ struct PikoRootView: View {
         } message: {
             Text(model.activeReceive?.receiveConfirmationMessage ?? "")
         }
+    }
+}
+
+private struct NativeTransferToast: View {
+    let message: String
+
+    var body: some View {
+        Text(message)
+            .font(PikoFont.compactSubtitle)
+            .foregroundStyle(.white)
+            .lineLimit(2)
+            .multilineTextAlignment(.center)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Color.black.opacity(0.78), in: Capsule())
     }
 }
 

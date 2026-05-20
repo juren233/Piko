@@ -2,17 +2,22 @@ package com.piko.app
 
 import com.piko.app.transport.P2PFailureReason
 import com.piko.app.transport.P2PTransferDiagnostic
+import com.piko.app.transport.StunProbeResult
 import com.piko.app.transport.p2pDirectTransportAttemptPlan
+import com.piko.app.transport.aggregateStunProbeResults
 import com.piko.app.transport.computeStunErrorRate
 import com.piko.app.transport.crossNetworkDiagnosis
 import com.piko.app.transport.detectRemoteOnlyMdns
 import com.piko.app.transport.detectSymmetricNatSuspect
 import com.piko.app.transport.isGatheringIncomplete
+import com.piko.app.transport.parseStunProbeResults
 import com.piko.app.transport.prioritizeP2PIceCandidateForSignaling
 import com.piko.app.transport.shouldContinueWaitingForIce
+import com.piko.app.transport.toStunProbeResultOrNull
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class P2PFailureReasonTest {
@@ -189,10 +194,11 @@ class P2PFailureReasonTest {
         val plan = p2pDirectTransportAttemptPlan(xquicAvailable = true)
 
         assertEquals(
-            listOf("quic_ipv6_direct", "tcp_ipv6_direct", "webrtc_ipv6_host", "webrtc_stun"),
+            listOf("quic_ipv6_direct", "quic_udp_punch", "tcp_ipv6_direct", "webrtc_ipv6_host", "webrtc_stun"),
             plan.map { it.name },
         )
         assertEquals(5L, plan.first { it.name == "quic_ipv6_direct" }.timeoutSeconds)
+        assertEquals(5L, plan.first { it.name == "quic_udp_punch" }.timeoutSeconds)
         assertEquals(5L, plan.first { it.name == "tcp_ipv6_direct" }.timeoutSeconds)
     }
 
@@ -287,5 +293,141 @@ class P2PFailureReasonTest {
     fun failureReasonsHaveDistinctTitles() {
         val titles = P2PFailureReason.values().map { it.title }
         assertEquals(titles.size, titles.toSet().size, "failure reason titles must be distinct")
+    }
+
+    // Multi-STUN probe result parsing and stability tests
+
+    @Test
+    fun toStunProbeResultOrNull_parsesSuccessRecord() {
+        val record = "stun:stun.cloudflare.com:3478|true|203.0.113.10|51000||250"
+        val result = record.toStunProbeResultOrNull()
+        assertNotNull(result)
+        assertEquals("stun:stun.cloudflare.com:3478", result.serverUrl)
+        assertTrue(result.success)
+        assertEquals("203.0.113.10", result.mappedHost)
+        assertEquals(51000, result.mappedPort)
+        assertEquals(null, result.error)
+        assertEquals(250L, result.elapsedMs)
+    }
+
+    @Test
+    fun toStunProbeResultOrNull_parsesFailureRecord() {
+        val record = "stun:stun.l.google.com:19302|false|||timeout|700"
+        val result = record.toStunProbeResultOrNull()
+        assertNotNull(result)
+        assertFalse(result.success)
+        assertEquals(null, result.mappedHost)
+        assertEquals("timeout", result.error)
+    }
+
+    @Test
+    fun parseStunProbeResults_parsesMultipleRecords() {
+        val raw = "stun:s1.com:3478|true|1.2.3.4|51000||200;stun:s2.com:3478|true|1.2.3.4|51000||210"
+        val results = raw.parseStunProbeResults()
+        assertEquals(2, results.size)
+        assertTrue(results.all { it.success })
+    }
+
+    @Test
+    fun parseStunProbeResults_returnsEmptyOnNullInput() {
+        assertEquals(emptyList<StunProbeResult>(), null.parseStunProbeResults())
+        assertEquals(emptyList<StunProbeResult>(), "".parseStunProbeResults())
+    }
+
+    @Test
+    fun aggregateStunProbeResults_stableWhenSameAddressFromTwoStuns() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "203.0.113.10", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "203.0.113.10", 51000, null, 210L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals("success", agg.udpProbeResult)
+        assertEquals("stable", agg.mappingBehavior)
+        assertEquals(2, agg.stunSuccessCount)
+        assertEquals(0, agg.stunErrorCount)
+        assertEquals(1, agg.candidates.size)
+        assertTrue(agg.candidates.first().mappingStable)
+    }
+
+    @Test
+    fun aggregateStunProbeResults_portDependentWhenSameHostDifferentPort() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "203.0.113.10", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "203.0.113.10", 51001, null, 210L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals("port_dependent", agg.mappingBehavior)
+        assertEquals(2, agg.candidates.size)
+    }
+
+    @Test
+    fun aggregateStunProbeResults_addressAndPortDependentWhenDifferentHosts() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "1.2.3.4", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "5.6.7.8", 51001, null, 210L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals("address_and_port_dependent", agg.mappingBehavior)
+    }
+
+    @Test
+    fun aggregateStunProbeResults_failedWhenAllProbesFail() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", false, null, 0, "timeout", 700L),
+            StunProbeResult("stun:s2.com:3478", false, null, 0, "timeout", 700L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals("failed", agg.udpProbeResult)
+        assertEquals("unknown", agg.mappingBehavior)
+        assertEquals(0, agg.stunSuccessCount)
+        assertEquals(2, agg.stunErrorCount)
+        assertTrue(agg.candidates.isEmpty())
+    }
+
+    @Test
+    fun aggregateStunProbeResults_unknownBehaviorWithSingleSuccessProbe() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "203.0.113.10", 51000, null, 200L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals("success", agg.udpProbeResult)
+        assertEquals("unknown", agg.mappingBehavior)
+        assertFalse(agg.candidates.first().mappingStable, "single-probe candidate must stay unknown, not stable")
+    }
+
+    @Test
+    fun aggregateStunProbeResults_stableCandidateHasHigherPriorityThanUnknownAndUnstable() {
+        val stable = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "1.2.3.4", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "1.2.3.4", 51000, null, 210L),
+        ).aggregateStunProbeResults()
+        val unknown = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "1.2.3.4", 51000, null, 200L),
+        ).aggregateStunProbeResults()
+        val unstable = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "1.2.3.4", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "1.2.3.4", 51001, null, 210L),
+        ).aggregateStunProbeResults()
+        assertTrue(
+            stable.candidates.first().priority > unknown.candidates.first().priority,
+            "stable candidate priority must be higher than unknown",
+        )
+        assertTrue(
+            unknown.candidates.first().priority > unstable.candidates.first().priority,
+            "unknown candidate priority must be higher than unstable",
+        )
+    }
+
+    @Test
+    fun aggregateStunProbeResults_multipleTargetsYieldMultipleCandidatesForUnstable() {
+        val results = listOf(
+            StunProbeResult("stun:s1.com:3478", true, "1.2.3.4", 51000, null, 200L),
+            StunProbeResult("stun:s2.com:3478", true, "1.2.3.4", 51001, null, 210L),
+            StunProbeResult("stun:s3.com:3478", false, null, 0, "timeout", 700L),
+        )
+        val agg = results.aggregateStunProbeResults()
+        assertEquals(2, agg.stunSuccessCount)
+        assertEquals(1, agg.stunErrorCount)
+        assertEquals(2, agg.candidates.size, "each unique address:port yields one candidate")
     }
 }

@@ -139,6 +139,9 @@ fun AndroidPikoApp() {
         signalingClient = signalingClient,
         apiBaseUrl = BuildConfig.PIKO_API_BASE_URL,
         onReceiveTransferEvent = { event ->
+            if (event is ReceiveTransferEvent.Notice) {
+                Toast.makeText(appContext, event.message, Toast.LENGTH_SHORT).show()
+            }
             mutateState { current -> current.applyReceiveTransferEvent(event) }
         },
     )

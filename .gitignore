@@ -6,6 +6,7 @@ tasks/
 # Android
 .gradle/
 .kotlin/
+android/.cxx/
 **/build/
 local.properties
 captures/
@@ -29,3 +30,6 @@ backend/migrations
 # System
 .DS_Store
 Thumbs.db
+
+# Local diagnostics
+p2p-sender*.log

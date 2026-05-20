@@ -15,11 +15,14 @@ int64_t piko_xquic_open_server(
     const char *bind_host,
     const char *alpn,
     const char *certificate_directory,
+    const char *stun_targets,
     PikoXQuicFrameCallback on_frame,
     PikoXQuicClosedCallback on_closed,
     void *user_data
 );
 int32_t piko_xquic_server_port(int64_t server_handle);
+const char *piko_xquic_mapped_endpoint(int64_t server_handle);
+const char *piko_xquic_stun_probe_results(int64_t server_handle);
 void piko_xquic_close_server(int64_t server_handle);
 int64_t piko_xquic_open_client(
     const char *host,

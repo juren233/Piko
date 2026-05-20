@@ -3,14 +3,18 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
@@ -33,6 +37,8 @@ constexpr size_t kMaxFrameBytes = 8 * 1024 * 1024;
 constexpr size_t kReadBufferBytes = 64 * 1024;
 constexpr uint32_t kContextMagic = 0x504b5843;
 constexpr uint32_t kChannelMagic = 0x504b5848;
+constexpr uint32_t kStunMagicCookie = 0x2112A442;
+constexpr int kStunProbeTimeoutMillis = 700;
 
 const char kServerKeyPem[] =
     "-----BEGIN PRIVATE KEY-----\n"
@@ -80,6 +86,9 @@ struct NativeContext {
     bool server = false;
     int fd = -1;
     int port = 0;
+    std::string mappedHost;
+    int mappedPort = 0;
+    std::string stunProbeResults;
     xqc_engine_t *engine = nullptr;
     PikoXQuicFrameCallback onFrame = nullptr;
     PikoXQuicClosedCallback onClosed = nullptr;
@@ -386,29 +395,342 @@ bool registerAlpn(xqc_engine_t *engine, const std::string &alpn) {
     return xqc_engine_register_alpn(engine, alpn.c_str(), alpn.size(), &callbacks, nullptr) == XQC_OK;
 }
 
+uint16_t readUint16(const uint8_t *data) {
+    uint16_t value = 0;
+    std::memcpy(&value, data, sizeof(value));
+    return ntohs(value);
+}
+
+void writeUint16(uint8_t *data, uint16_t value) {
+    const uint16_t network = htons(value);
+    std::memcpy(data, &network, sizeof(network));
+}
+
+bool copyAddress(const sockaddr *source, socklen_t sourceLen, bool ipv4AsMapped, sockaddr_storage *target, socklen_t *targetLen) {
+    if (source == nullptr || target == nullptr || targetLen == nullptr) return false;
+    std::memset(target, 0, sizeof(*target));
+    if (source->sa_family == AF_INET) {
+        auto ipv4 = *reinterpret_cast<const sockaddr_in *>(source);
+        if (!ipv4AsMapped) {
+            std::memcpy(target, &ipv4, sizeof(ipv4));
+            *targetLen = sizeof(ipv4);
+            return true;
+        }
+        sockaddr_in6 mapped{};
+        mapped.sin6_family = AF_INET6;
+        mapped.sin6_port = ipv4.sin_port;
+        uint8_t *bytes = reinterpret_cast<uint8_t *>(&mapped.sin6_addr);
+        bytes[10] = 0xff;
+        bytes[11] = 0xff;
+        std::memcpy(bytes + 12, &ipv4.sin_addr, sizeof(ipv4.sin_addr));
+        std::memcpy(target, &mapped, sizeof(mapped));
+        *targetLen = sizeof(mapped);
+        return true;
+    }
+    if (source->sa_family == AF_INET6 && sourceLen >= static_cast<socklen_t>(sizeof(sockaddr_in6))) {
+        std::memcpy(target, source, sizeof(sockaddr_in6));
+        *targetLen = sizeof(sockaddr_in6);
+        return true;
+    }
+    return false;
+}
+
+bool makeSocketAddress(const std::string &host, int port, bool preferIpv4, bool ipv4AsMapped, sockaddr_storage *target, socklen_t *targetLen) {
+    if (host.empty() || port <= 0 || port > 65535 || target == nullptr || targetLen == nullptr) return false;
+    sockaddr_in6 ipv6{};
+    ipv6.sin6_family = AF_INET6;
+    ipv6.sin6_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET6, host.c_str(), &ipv6.sin6_addr) == 1) {
+        std::memset(target, 0, sizeof(*target));
+        std::memcpy(target, &ipv6, sizeof(ipv6));
+        *targetLen = sizeof(ipv6);
+        return true;
+    }
+    sockaddr_in ipv4{};
+    ipv4.sin_family = AF_INET;
+    ipv4.sin_port = htons(static_cast<uint16_t>(port));
+    if (inet_pton(AF_INET, host.c_str(), &ipv4.sin_addr) == 1) {
+        return copyAddress(reinterpret_cast<sockaddr *>(&ipv4), sizeof(ipv4), ipv4AsMapped, target, targetLen);
+    }
+    addrinfo hints{};
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_family = AF_UNSPEC;
+    addrinfo *result = nullptr;
+    const std::string portText = std::to_string(port);
+    if (getaddrinfo(host.c_str(), portText.c_str(), &hints, &result) != 0 || result == nullptr) return false;
+    auto guard = std::unique_ptr<addrinfo, decltype(&freeaddrinfo)>(result, freeaddrinfo);
+    for (int pass = 0; pass < 2; pass++) {
+        const int wanted = preferIpv4 == (pass == 0) ? AF_INET : AF_INET6;
+        for (addrinfo *item = result; item != nullptr; item = item->ai_next) {
+            if (item->ai_family != wanted) continue;
+            if (copyAddress(item->ai_addr, static_cast<socklen_t>(item->ai_addrlen), ipv4AsMapped, target, targetLen)) return true;
+        }
+    }
+    return false;
+}
+
+bool mappedEndpointFromStunAttribute(const uint8_t *value, size_t length, bool xorMapped, const uint8_t *transactionId, std::string *host, int *port) {
+    if (value == nullptr || host == nullptr || port == nullptr || length < 4) return false;
+    const uint8_t family = value[1];
+    const uint16_t encodedPort = readUint16(value + 2);
+    const uint16_t decodedPort = xorMapped ? static_cast<uint16_t>(encodedPort ^ (kStunMagicCookie >> 16)) : encodedPort;
+    char text[INET6_ADDRSTRLEN]{};
+    if (family == 0x01 && length >= 8) {
+        uint32_t address = 0;
+        std::memcpy(&address, value + 4, sizeof(address));
+        if (xorMapped) {
+            const uint32_t decoded = ntohl(address) ^ kStunMagicCookie;
+            address = htonl(decoded);
+        }
+        if (inet_ntop(AF_INET, &address, text, sizeof(text)) == nullptr) return false;
+        *host = text;
+        *port = decodedPort;
+        return true;
+    }
+    if (family == 0x02 && length >= 20) {
+        uint8_t decoded[16]{};
+        std::memcpy(decoded, value + 4, sizeof(decoded));
+        if (xorMapped) {
+            const uint8_t cookie[] = {0x21, 0x12, 0xA4, 0x42};
+            for (int index = 0; index < 4; index++) decoded[index] ^= cookie[index];
+            for (int index = 0; index < 12; index++) decoded[index + 4] ^= transactionId[index];
+        }
+        if (inet_ntop(AF_INET6, decoded, text, sizeof(text)) == nullptr) return false;
+        *host = text;
+        *port = decodedPort;
+        return true;
+    }
+    return false;
+}
+
+bool parseStunMappedEndpoint(const uint8_t *packet, size_t size, const uint8_t *transactionId, std::string *host, int *port) {
+    if (packet == nullptr || transactionId == nullptr || size < 20) return false;
+    if (readUint16(packet) != 0x0101) return false;
+    const uint16_t messageLength = readUint16(packet + 2);
+    uint32_t cookie = 0;
+    std::memcpy(&cookie, packet + 4, sizeof(cookie));
+    if (ntohl(cookie) != kStunMagicCookie) return false;
+    if (std::memcmp(packet + 8, transactionId, 12) != 0) return false;
+    const size_t end = std::min(size, static_cast<size_t>(20 + messageLength));
+    size_t offset = 20;
+    while (offset + 4 <= end) {
+        const uint16_t type = readUint16(packet + offset);
+        const uint16_t length = readUint16(packet + offset + 2);
+        const size_t valueOffset = offset + 4;
+        if (valueOffset + length > end) break;
+        if ((type == 0x0020 || type == 0x0001) &&
+            mappedEndpointFromStunAttribute(packet + valueOffset, length, type == 0x0020, transactionId, host, port)) {
+            return true;
+        }
+        offset = valueOffset + ((length + 3) & ~static_cast<size_t>(3));
+    }
+    return false;
+}
+
+void fillTransactionId(uint8_t *transactionId, int fd) {
+    uint64_t seed = static_cast<uint64_t>(nowMicros()) ^ (static_cast<uint64_t>(fd) << 32);
+    for (int index = 0; index < 12; index++) {
+        seed = seed * 1103515245ULL + 12345ULL + static_cast<uint64_t>(index);
+        transactionId[index] = static_cast<uint8_t>((seed >> 24) & 0xff);
+    }
+}
+
+bool probeStunMappedEndpoint(int fd, const std::string &stunHost, int stunPort, std::string *mappedHost, int *mappedPort, std::string *error) {
+    if (error != nullptr) error->clear();
+    if (fd < 0 || stunHost.empty() || stunPort <= 0 || mappedHost == nullptr || mappedPort == nullptr) {
+        if (error != nullptr) *error = "parse_error";
+        return false;
+    }
+    sockaddr_storage stunAddress{};
+    socklen_t stunAddressLen = sizeof(stunAddress);
+    if (!makeSocketAddress(stunHost, stunPort, true, true, &stunAddress, &stunAddressLen)) {
+        if (error != nullptr) *error = "dns_error";
+        return false;
+    }
+    uint8_t transactionId[12]{};
+    fillTransactionId(transactionId, fd);
+    uint8_t request[20]{};
+    writeUint16(request, 0x0001);
+    writeUint16(request + 2, 0);
+    const uint32_t cookie = htonl(kStunMagicCookie);
+    std::memcpy(request + 4, &cookie, sizeof(cookie));
+    std::memcpy(request + 8, transactionId, sizeof(transactionId));
+    if (sendto(fd, request, sizeof(request), 0, reinterpret_cast<sockaddr *>(&stunAddress), stunAddressLen) < 0) {
+        if (error != nullptr) *error = "send_error";
+        return false;
+    }
+    uint8_t response[1024]{};
+    for (int attempt = 0; attempt < 2; attempt++) {
+        fd_set readSet;
+        FD_ZERO(&readSet);
+        FD_SET(fd, &readSet);
+        timeval tv{};
+        tv.tv_sec = 0;
+        tv.tv_usec = kStunProbeTimeoutMillis * 1000;
+        const int ready = select(fd + 1, &readSet, nullptr, nullptr, &tv);
+        if (ready <= 0 || !FD_ISSET(fd, &readSet)) continue;
+        sockaddr_storage peer{};
+        socklen_t peerLen = sizeof(peer);
+        const ssize_t size = recvfrom(fd, response, sizeof(response), 0, reinterpret_cast<sockaddr *>(&peer), &peerLen);
+        if (size <= 0) continue;
+        if (parseStunMappedEndpoint(response, static_cast<size_t>(size), transactionId, mappedHost, mappedPort)) return true;
+    }
+    if (error != nullptr) *error = "timeout";
+    return false;
+}
+
+struct StunProbeRecord {
+    std::string serverUrl;
+    bool success = false;
+    std::string mappedHost;
+    int mappedPort = 0;
+    std::string error;
+    long long elapsedMs = 0;
+};
+
+static bool parseStunUrl(const std::string &url, std::string *outHost, int *outPort) {
+    const std::string prefix = "stun:";
+    if (url.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i) {
+        if (tolower(static_cast<unsigned char>(url[i])) != prefix[i]) return false;
+    }
+    std::string rest = url.substr(prefix.size());
+    auto qPos = rest.find('?');
+    if (qPos != std::string::npos) rest = rest.substr(0, qPos);
+    auto slPos = rest.find('/');
+    if (slPos != std::string::npos) rest = rest.substr(0, slPos);
+    if (rest.empty()) return false;
+    if (rest[0] == '[') {
+        auto end = rest.find(']');
+        if (end == std::string::npos) return false;
+        *outHost = rest.substr(1, end - 1);
+        const std::string portPart = rest.substr(end + 1);
+        if (!portPart.empty() && portPart[0] == ':') {
+            const int p = std::atoi(portPart.c_str() + 1);
+            *outPort = (p > 0 && p <= 65535) ? p : 3478;
+        } else {
+            *outPort = 3478;
+        }
+    } else {
+        const auto colon = rest.rfind(':');
+        if (colon != std::string::npos) {
+            *outHost = rest.substr(0, colon);
+            const int p = std::atoi(rest.c_str() + colon + 1);
+            *outPort = (p > 0 && p <= 65535) ? p : 3478;
+        } else {
+            *outHost = rest;
+            *outPort = 3478;
+        }
+    }
+    return !outHost->empty() && *outPort > 0 && *outPort <= 65535;
+}
+
+static std::vector<StunProbeRecord> probeMultipleStun(int fd, const std::string &stunTargets) {
+    std::vector<StunProbeRecord> records;
+    size_t start = 0;
+    const size_t len = stunTargets.size();
+    while (start <= len) {
+        size_t end = stunTargets.find('\n', start);
+        if (end == std::string::npos) end = len;
+        std::string line = stunTargets.substr(start, end - start);
+        start = end + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+        while (!line.empty() && line.front() == ' ') line = line.substr(1);
+        if (line.empty()) continue;
+        StunProbeRecord rec;
+        rec.serverUrl = line;
+        std::string host;
+        int port = 0;
+        if (!parseStunUrl(line, &host, &port)) {
+            rec.error = "parse_error";
+            records.push_back(rec);
+            continue;
+        }
+        const long long probeStart = static_cast<long long>(nowMicros());
+        std::string mappedHost;
+        int mappedPort = 0;
+        std::string error;
+        rec.success = probeStunMappedEndpoint(fd, host, port, &mappedHost, &mappedPort, &error);
+        rec.elapsedMs = (static_cast<long long>(nowMicros()) - probeStart) / 1000;
+        if (rec.success) {
+            rec.mappedHost = mappedHost;
+            rec.mappedPort = mappedPort;
+        } else {
+            rec.error = error.empty() ? "timeout" : error;
+        }
+        records.push_back(rec);
+    }
+    return records;
+}
+
+static const StunProbeRecord *selectPreferredStunRecord(const std::vector<StunProbeRecord> &records) {
+    const StunProbeRecord *best = nullptr;
+    int bestCount = 0;
+    for (const auto &candidate : records) {
+        if (!candidate.success || candidate.mappedHost.empty() || candidate.mappedPort <= 0) continue;
+        const int count = static_cast<int>(std::count_if(records.begin(), records.end(), [&](const StunProbeRecord &record) {
+            return record.success &&
+                   record.mappedHost == candidate.mappedHost &&
+                   record.mappedPort == candidate.mappedPort;
+        }));
+        if (best == nullptr || count > bestCount) {
+            best = &candidate;
+            bestCount = count;
+        }
+    }
+    return best;
+}
+
+static std::string serializeStunProbeResults(const std::vector<StunProbeRecord> &records) {
+    std::string result;
+    for (size_t i = 0; i < records.size(); ++i) {
+        if (i > 0) result += ";";
+        const auto &r = records[i];
+        result += r.serverUrl + "|" + (r.success ? "true" : "false") + "|" +
+                  r.mappedHost + "|" + std::to_string(r.mappedPort) + "|" +
+                  r.error + "|" + std::to_string(r.elapsedMs);
+    }
+    return result;
+}
+
 int bindUdpSocket(const std::string &host, int port, sockaddr_storage *localAddr, socklen_t *localLen) {
-    int fd = socket(AF_INET6, SOCK_DGRAM, 0);
+    sockaddr_storage bindAddress{};
+    socklen_t bindAddressLen = sizeof(bindAddress);
+    if (host.empty() || host == "::") {
+        sockaddr_in6 any{};
+        any.sin6_family = AF_INET6;
+        any.sin6_port = htons(static_cast<uint16_t>(port));
+        any.sin6_addr = in6addr_any;
+        std::memcpy(&bindAddress, &any, sizeof(any));
+        bindAddressLen = sizeof(any);
+    } else if (host == "0.0.0.0") {
+        sockaddr_in any{};
+        any.sin_family = AF_INET;
+        any.sin_port = htons(static_cast<uint16_t>(port));
+        any.sin_addr.s_addr = htonl(INADDR_ANY);
+        std::memcpy(&bindAddress, &any, sizeof(any));
+        bindAddressLen = sizeof(any);
+    } else if (!makeSocketAddress(host, port, false, false, &bindAddress, &bindAddressLen)) {
+        return -1;
+    }
+    int fd = socket(bindAddress.ss_family, SOCK_DGRAM, 0);
     if (fd < 0) return -1;
     int yes = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
-    sockaddr_in6 addr{};
-    addr.sin6_family = AF_INET6;
-    addr.sin6_port = htons(static_cast<uint16_t>(port));
-    if (host.empty() || host == "::") {
-        addr.sin6_addr = in6addr_any;
-    } else if (inet_pton(AF_INET6, host.c_str(), &addr.sin6_addr) != 1) {
-        close(fd);
-        return -1;
+    if (bindAddress.ss_family == AF_INET6) {
+        int no = 0;
+        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &no, sizeof(no));
     }
-    if (bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+    if (bind(fd, reinterpret_cast<sockaddr *>(&bindAddress), bindAddressLen) != 0) {
         close(fd);
         return -1;
     }
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-    *localLen = sizeof(addr);
-    if (getsockname(fd, reinterpret_cast<sockaddr *>(&addr), localLen) == 0) {
-        std::memcpy(localAddr, &addr, *localLen);
+    *localLen = sizeof(*localAddr);
+    if (getsockname(fd, reinterpret_cast<sockaddr *>(localAddr), localLen) != 0) {
+        *localLen = bindAddressLen;
+        std::memcpy(localAddr, &bindAddress, bindAddressLen);
     }
     return fd;
 }
@@ -498,12 +820,14 @@ extern "C" int64_t piko_xquic_open_server(
     const char *bind_host,
     const char *alpn,
     const char *certificate_directory,
+    const char *stun_targets,
     PikoXQuicFrameCallback on_frame,
     PikoXQuicClosedCallback on_closed,
     void *user_data
 ) {
     const std::string bindHostText = safeString(bind_host);
     const std::string alpnText = safeString(alpn);
+    const std::string stunTargetsText = safeString(stun_targets);
     std::string keyPath;
     std::string certPath;
     if (!ensureServerCertificate(safeString(certificate_directory), &keyPath, &certPath)) return 0;
@@ -518,6 +842,16 @@ extern "C" int64_t piko_xquic_open_server(
     if (ctx->fd < 0) return 0;
     if (local.ss_family == AF_INET6) {
         ctx->port = ntohs(reinterpret_cast<sockaddr_in6 *>(&local)->sin6_port);
+    } else if (local.ss_family == AF_INET) {
+        ctx->port = ntohs(reinterpret_cast<sockaddr_in *>(&local)->sin_port);
+    }
+    if (!stunTargetsText.empty()) {
+        const auto probeRecords = probeMultipleStun(ctx->fd, stunTargetsText);
+        ctx->stunProbeResults = serializeStunProbeResults(probeRecords);
+        if (const StunProbeRecord *selected = selectPreferredStunRecord(probeRecords)) {
+            ctx->mappedHost = selected->mappedHost;
+            ctx->mappedPort = selected->mappedPort;
+        }
     }
     ctx->engine = createEngine(ctx.get(), true, keyPath, certPath);
     if (ctx->engine == nullptr || !registerAlpn(ctx->engine, alpnText)) {
@@ -536,6 +870,24 @@ extern "C" int32_t piko_xquic_server_port(int64_t server_handle) {
     std::lock_guard<std::mutex> lock(gRegistryMutex);
     auto it = gContexts.find(server_handle);
     return it == gContexts.end() ? 0 : it->second->port;
+}
+
+extern "C" const char *piko_xquic_mapped_endpoint(int64_t server_handle) {
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    auto it = gContexts.find(server_handle);
+    if (it == gContexts.end() || it->second->mappedHost.empty() || it->second->mappedPort <= 0) return nullptr;
+    static thread_local std::string value;
+    value = it->second->mappedHost + "|" + std::to_string(it->second->mappedPort);
+    return value.c_str();
+}
+
+extern "C" const char *piko_xquic_stun_probe_results(int64_t server_handle) {
+    std::lock_guard<std::mutex> lock(gRegistryMutex);
+    auto it = gContexts.find(server_handle);
+    if (it == gContexts.end() || it->second->stunProbeResults.empty()) return nullptr;
+    static thread_local std::string value;
+    value = it->second->stunProbeResults;
+    return value.c_str();
 }
 
 extern "C" void piko_xquic_close_server(int64_t server_handle) {
@@ -559,17 +911,16 @@ extern "C" int64_t piko_xquic_open_client(
 ) {
     const std::string hostText = safeString(host);
     const std::string alpnText = safeString(alpn);
-    sockaddr_in6 peer{};
-    peer.sin6_family = AF_INET6;
-    peer.sin6_port = htons(static_cast<uint16_t>(port));
-    if (inet_pton(AF_INET6, hostText.c_str(), &peer.sin6_addr) != 1) return 0;
+    sockaddr_storage peer{};
+    socklen_t peerLen = sizeof(peer);
+    if (!makeSocketAddress(hostText, static_cast<int>(port), false, false, &peer, &peerLen)) return 0;
     sockaddr_storage local{};
     socklen_t localLen = sizeof(local);
     auto ctx = std::make_shared<NativeContext>();
     ctx->onFrame = on_frame;
     ctx->onClosed = on_closed;
     ctx->userData = user_data;
-    ctx->fd = bindUdpSocket("::", 0, &local, &localLen);
+    ctx->fd = bindUdpSocket(peer.ss_family == AF_INET ? "0.0.0.0" : "::", 0, &local, &localLen);
     if (ctx->fd < 0) return 0;
     ctx->engine = createEngine(ctx.get(), false, "", "");
     if (ctx->engine == nullptr || !registerAlpn(ctx->engine, alpnText)) {
@@ -592,7 +943,7 @@ extern "C" int64_t piko_xquic_open_client(
         0,
         &ssl,
         reinterpret_cast<sockaddr *>(&peer),
-        sizeof(peer),
+        peerLen,
         alpnText.c_str(),
         channel.get()
     );
