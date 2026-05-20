@@ -665,8 +665,10 @@ class P2PTransferClient(
             return null
         }
         fun openDirectRaceChannel(): P2PPreparedChannel? {
-            val directEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)
-            logTiming("direct_endpoint_wait_done", "count=${directEndpoints.size}")
+            val receivedDirectEndpoints = peer.awaitDirectEndpoints(P2P_DIRECT_ENDPOINT_WAIT_SECONDS)
+            val allowedDirectEndpointNames = p2pDirectTransportAttemptPlan().map { it.name }.toSet()
+            val directEndpoints = receivedDirectEndpoints.filter { it.name in allowedDirectEndpointNames }
+            logTiming("direct_endpoint_wait_done", "count=${directEndpoints.size} received_count=${receivedDirectEndpoints.size}")
             val quicEndpoint = directEndpoints.firstOrNull { it.name == P2P_QUIC_IPV6_DIRECT_ENDPOINT }
             val quicPunchEndpoint = directEndpoints.firstOrNull { it.name == P2P_QUIC_UDP_PUNCH_ENDPOINT }
             val tcpEndpoint = directEndpoints.firstOrNull { it.name == P2P_TCP_IPV6_DIRECT_ENDPOINT }
@@ -715,7 +717,7 @@ class P2PTransferClient(
             }
             logTiming("webrtc_offer_sent")
             if (!peer.awaitOpen(P2P_INITIAL_OPEN_TIMEOUT_SECONDS)) {
-                if (peer.isAborted) {
+                if (peer.isPeerCanceled) {
                     throw P2PTransferFailure(
                         stage = "data_channel_open",
                         transferId = transferId,
@@ -880,7 +882,7 @@ class P2PTransferClient(
         }
         logTiming("manifest_sent", "chunk_size_bytes=${TransferProtocolV3.chunkSize} in_flight_window=${ackWindow.currentWindow} max_in_flight_window=$P2P_MAX_IN_FLIGHT_CHUNKS")
         if (!receiverReadyLatch.await(120, TimeUnit.SECONDS) || peer.isAborted) {
-            val abortedByPeer = peer.isAborted
+            val abortedByPeer = peer.isPeerCanceled
             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_RECEIVER_READY_TIMEOUT：等待接收端确认超时"
             val diagnostic = peer.diagnosticSnapshot().copy(sendFailure = reason)
             peer.close()
@@ -947,7 +949,7 @@ class P2PTransferClient(
                         }
                         sentFrames[chunkKey] = chunkFrame
                         if (!ackWindow.acquire(30, TimeUnit.SECONDS) || peer.isAborted) {
-                            val abortedByPeer = peer.isAborted
+                            val abortedByPeer = peer.isPeerCanceled
                             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
                             val baseDiagnostic = peer.diagnosticSnapshot()
                             val diagnostic = baseDiagnostic.copy(
@@ -1016,7 +1018,7 @@ class P2PTransferClient(
             }
         }
         if (totalChunks > 0 && (!ackLatch.await(30, TimeUnit.SECONDS) || peer.isAborted)) {
-            val abortedByPeer = peer.isAborted
+            val abortedByPeer = peer.isPeerCanceled
             val reason = if (abortedByPeer) "对方已取消接收" else "P2P_ACK_TIMEOUT：跨网传输确认超时"
             val baseDiagnostic = peer.diagnosticSnapshot()
             val diagnostic = baseDiagnostic.copy(
@@ -1143,6 +1145,7 @@ class P2PTransferClient(
                 }
             }
             "bye" -> {
+                peers[sessionId]?.markPeerCanceled()
                 closeReceiveSession(sessionId)
             }
         }
@@ -1380,8 +1383,9 @@ class P2PTransferClient(
         private var directAttemptResult = "not_attempted"
         @Volatile
         private var directLastError = "none"
-        private var aborted = false
         private val closed = AtomicBoolean(false)
+        @Volatile
+        private var peerCanceled = false
         private val peerConnectionLock = Any()
         @Volatile
         private var abortCallback: (() -> Unit)? = null
@@ -1410,10 +1414,16 @@ class P2PTransferClient(
                             PeerConnection.IceConnectionState.CONNECTED,
                             PeerConnection.IceConnectionState.COMPLETED ->
                                 notifyConnectionStageOnce("ice_connected", "ICE 协商完成，准备建立数据通道")
-                            PeerConnection.IceConnectionState.FAILED ->
-                                notifyConnectionStageOnce("ice_failed", "ICE 协商失败，正在重试（请检查 STUN/网络）")
-                            PeerConnection.IceConnectionState.DISCONNECTED ->
-                                notifyConnectionStageOnce("ice_disconnected", "ICE 连接断开，等待恢复")
+                            PeerConnection.IceConnectionState.FAILED -> {
+                                if (!isWebRtcDataChannelOpen()) {
+                                    notifyConnectionStageOnce("ice_failed", "ICE 协商失败，正在重试（请检查 STUN/网络）")
+                                }
+                            }
+                            PeerConnection.IceConnectionState.DISCONNECTED -> {
+                                if (!isWebRtcDataChannelOpen()) {
+                                    notifyConnectionStageOnce("ice_disconnected", "ICE 连接断开，等待恢复")
+                                }
+                            }
                             else -> Unit
                         }
                     }
@@ -1423,8 +1433,11 @@ class P2PTransferClient(
                         when (state) {
                             PeerConnection.PeerConnectionState.CONNECTED ->
                                 notifyConnectionStageOnce("peer_connected", "WebRTC 通道已连接")
-                            PeerConnection.PeerConnectionState.FAILED ->
-                                notifyConnectionStageOnce("peer_failed", "WebRTC 连接失败（请检查双方网络）")
+                            PeerConnection.PeerConnectionState.FAILED -> {
+                                if (!isWebRtcDataChannelOpen()) {
+                                    notifyConnectionStageOnce("peer_failed", "WebRTC 连接失败（请检查双方网络）")
+                                }
+                            }
                             else -> Unit
                         }
                     }
@@ -1596,7 +1609,7 @@ class P2PTransferClient(
 
         fun awaitOpen(seconds: Long): Boolean {
             val opened = openLatch.await(seconds, TimeUnit.SECONDS)
-            return opened && !aborted
+            return opened && !closed.get()
         }
 
         fun triggerIceRestart() {
@@ -1611,7 +1624,7 @@ class P2PTransferClient(
 
         fun awaitPeerHandshake(): P2PPeerHandshake {
             check(peerEphemeralLatch.await(10, TimeUnit.SECONDS)) { "接收方临时公钥等待超时" }
-            check(!aborted) { "对方已取消接收" }
+            check(!closed.get()) { if (peerCanceled) "对方已取消接收" else "P2P 会话已关闭" }
             return P2PPeerHandshake(
                 ephemeralPublicB64 = requireNotNull(peerEphemeralPublicB64) { "接收方临时公钥缺失" },
                 acceptSignatureB64 = requireNotNull(peerAcceptSignatureB64) { "接收方签名缺失" },
@@ -1659,14 +1672,22 @@ class P2PTransferClient(
         }
 
         val isAborted: Boolean
-            get() = aborted
+            get() = closed.get()
+
+        val isPeerCanceled: Boolean
+            get() = peerCanceled
 
         val isClosed: Boolean
             get() = closed.get()
 
         fun setAbortCallback(callback: () -> Unit) {
             abortCallback = callback
-            if (aborted) callback()
+            if (closed.get()) callback()
+        }
+
+        fun markPeerCanceled() {
+            peerCanceled = true
+            close()
         }
 
         fun diagnosticSnapshot(): P2PTransferDiagnostic = P2PTransferDiagnostic(
@@ -1708,7 +1729,6 @@ class P2PTransferClient(
 
         fun close() {
             if (!closed.compareAndSet(false, true)) return
-            aborted = true
             openLatch.countDown()
             peerEphemeralLatch.countDown()
             directEndpointLatch.countDown()
@@ -1720,6 +1740,9 @@ class P2PTransferClient(
                 peerConnection.dispose()
             }
         }
+
+        private fun isWebRtcDataChannelOpen(): Boolean =
+            dataChannelState.equals(DataChannel.State.OPEN.name, ignoreCase = true)
 
         private fun flushPendingIceCandidates() {
             while (true) {

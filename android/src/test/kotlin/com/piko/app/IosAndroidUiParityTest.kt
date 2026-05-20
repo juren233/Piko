@@ -1054,6 +1054,27 @@ class IosAndroidUiParityTest {
     }
 
     @Test
+    fun webRtcOpenDataChannelDoesNotCloseSessionOnTransientIceFailure() {
+        val androidClient = readAndroid("transport/P2PTransferClient.kt")
+        val iosWebRtc = readIos("NativeWebRTCEngine.swift")
+
+        assertTrue("postChannelCloseIfTerminal(\"error\")" in iosWebRtc)
+        assertTrue("channel.readyState === \"closed\" || channel.readyState === \"closing\"" in iosWebRtc)
+        assertFalse(
+            "channel.onerror = () => {\n        post({ kind: \"data_channel_state\", value: channel.readyState });\n        post({ kind: \"close\" });\n      };" in iosWebRtc,
+            "iOS WebRTC must not close the native session on a transient channel error while readyState is still open",
+        )
+
+        assertTrue("private fun isWebRtcDataChannelOpen()" in androidClient)
+        assertTrue("if (!isWebRtcDataChannelOpen())" in androidClient)
+        assertTrue("peerCanceled" in androidClient)
+        assertTrue("fun markPeerCanceled()" in androidClient)
+        assertTrue("val allowedDirectEndpointNames = p2pDirectTransportAttemptPlan().map { it.name }.toSet()" in androidClient)
+        assertTrue("receivedDirectEndpoints.filter { it.name in allowedDirectEndpointNames }" in androidClient)
+        assertFalse("val isAborted: Boolean\n            get() = aborted" in androidClient)
+    }
+
+    @Test
     fun iosWebRtcSplitsLargeFramesIntoTransportFragments() {
         val iosWebRtc = readIos("NativeWebRTCEngine.swift")
 

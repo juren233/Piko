@@ -710,18 +710,18 @@ final class NativeWebRTCSession: NSObject {
       channel = nextChannel;
       channel.binaryType = "arraybuffer";
       post({ kind: "data_channel_state", value: channel.readyState });
+      const postChannelCloseIfTerminal = (reason) => {
+        post({ kind: "data_channel_state", value: channel.readyState });
+        if (channel.readyState === "closed" || channel.readyState === "closing") {
+          post({ kind: "close", reason });
+        }
+      };
       channel.onopen = () => {
         post({ kind: "data_channel_state", value: channel.readyState });
         post({ kind: "open" });
       };
-      channel.onclose = () => {
-        post({ kind: "data_channel_state", value: channel.readyState });
-        post({ kind: "close" });
-      };
-      channel.onerror = () => {
-        post({ kind: "data_channel_state", value: channel.readyState });
-        post({ kind: "close" });
-      };
+      channel.onclose = () => postChannelCloseIfTerminal("close");
+      channel.onerror = () => postChannelCloseIfTerminal("error");
       channel.onmessage = async (event) => {
         const buffer = event.data instanceof ArrayBuffer ? event.data : await event.data.arrayBuffer();
         for (const frame of acceptFragment(new Uint8Array(buffer))) {
